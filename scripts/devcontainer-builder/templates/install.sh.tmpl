@@ -8,7 +8,8 @@
 #                                                  # 安装开始前自动 docker load
 #                                                  # 同目录的镜像归档 tgz
 #   bash install.sh -d | --default                 # 一键默认安装：自动启用 --load，
-#                                                  # 无需传路径，固定解压到 ../src/
+#                                                  # 无需传路径，项目根固定为 ../，
+#                                                  # 应用源码放入 ../src/
 #   bash install.sh -h | --help                    # 查看用法、选项与退出码
 # （Artifact 的 zip 解压后可能丢失可执行权限，统一用 `bash install.sh` 调用）
 #
@@ -24,7 +25,8 @@
 #      ——所有 make、build.sh 命令此后都在项目根目录执行
 #   4. 在 SRC_ROOT/wheels/ 下创建离线安装头 requirements.txt
 #      （内容 --no-index --find-links=./，缺失时才创建）
-#   5. 若 SRC_ROOT 没有 main.py 且启动命令为默认值，复制占位 main.py
+#   5. 准备应用源码目录 SRC_ROOT/src（compose 默认把 ./src/ 挂载为 /app）；
+#      若其中没有 main.py 且启动命令为默认值，复制占位 main.py 到该目录
 set -euo pipefail
 
 NEEDS_MAIN_PY={{NEEDS_MAIN_PY}}   # 1 = prod_command 为默认 python main.py
@@ -52,12 +54,13 @@ build.sh、Dockerfile、docker-compose.yml 以及 .dockerignore / .gitignore。
 
 ${C_BOLD}参数:${C_RESET}
   SRC_ROOT              项目根目录（必须已存在）。根目录操作文件安装到 SRC_ROOT，
-                        原始副本与模板安装到 <SRC_ROOT>/docs/devcontainer。
+                        原始副本与模板安装到 <SRC_ROOT>/docs/devcontainer；
+                        应用源码放在 <SRC_ROOT>/src（compose 默认挂载为 /app）。
 
 ${C_BOLD}选项:${C_RESET}
   -d, --default         默认安装：自动启用 --load，且无需指定 SRC_ROOT，
-                        固定使用 ../src/。该选项为顶级覆盖：忽略同时给出的
-                        SRC_ROOT 及其它相关自定义设置。
+                        项目根固定为 ../，应用源码放入 ../src/。该选项为
+                        顶级覆盖：忽略同时给出的 SRC_ROOT 及其它相关自定义设置。
   --load                安装开始前自动在脚本所在目录查找
                         devcontainer-docker-images_*.tgz 并执行 docker load
                         （等效于手动 docker load -i 该归档）。
@@ -66,7 +69,7 @@ ${C_BOLD}选项:${C_RESET}
 ${C_BOLD}示例:${C_RESET}
   bash install.sh ../              # 在项目根目录的 dist/ 中安装到上一级项目根
   bash install.sh --load ../       # 同上，并在安装前自动导入镜像
-  bash install.sh -d               # 一键默认：自动导入镜像并安装到 ../src/
+  bash install.sh -d               # 一键默认：自动导入镜像，安装到 ../（源码在 ../src/）
   bash install.sh -h               # 查看本帮助
 
 ${C_BOLD}退出码:${C_RESET}
@@ -94,13 +97,14 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 if [ "$DEFAULT_MODE" = "1" ]; then
-    # -d/--default 为顶级覆盖：强制自动导入镜像，并固定使用默认解压路径
-    # ../src/（与 CWD 相对，等价于 --load ../src/），忽略用户给出的路径与相关选项。
+    # -d/--default 为顶级覆盖：强制自动导入镜像，并固定项目根为 ../（与 CWD
+    # 相对），应用源码放入 ../src/（compose 默认把 ./src/ 挂载为 /app），
+    # 忽略用户给出的路径与相关选项。
     LOAD_IMAGES=1
     if [ "$#" -gt 0 ]; then
-        note "-d/--default 已忽略自定义路径: $*（固定使用 ../src/）"
+        note "-d/--default 已忽略自定义路径: $*（固定使用 ../ 作为项目根，源码目录 ../src/）"
     fi
-    SRC_ROOT="../src/"
+    SRC_ROOT="../"
 else
     [ "$#" -eq 1 ] || usage
     SRC_ROOT=$1
@@ -149,6 +153,7 @@ TGZ=${tgzs[0]}
 
 DEST="$SRC_ROOT/docs/devcontainer"
 COMPOSE_FILE="$SRC_ROOT/docker-compose.yml"
+SRC_DIR="$SRC_ROOT/src"   # 应用源码目录（compose 默认把 ./src/ 挂载为 /app）
 
 # 复制到项目根目录的根目录操作文件：包内文件名 -> 根目录文件名
 # （Dockerfile.addon 改名 Dockerfile、README.md 改名 README-devcontainer.md，
@@ -247,9 +252,12 @@ if [ ! -e "$REQ_FILE" ]; then
     ok "已创建 $REQ_FILE（离线安装头）"
 fi
 
-if [ "$NEEDS_MAIN_PY" = "1" ] && [ ! -e "$SRC_ROOT/main.py" ]; then
-    cp "$DEST/main.py" "$SRC_ROOT/main.py"
-    ok "已创建占位入口 $SRC_ROOT/main.py（make up 默认运行 python main.py，请替换为真实入口）"
+# 应用源码目录（compose 默认把项目根下的 src/ 挂载为 /app）
+mkdir -p "$SRC_DIR"
+ok "已准备源码目录 $SRC_DIR"
+if [ "$NEEDS_MAIN_PY" = "1" ] && [ ! -e "$SRC_DIR/main.py" ]; then
+    cp "$DEST/main.py" "$SRC_DIR/main.py"
+    ok "已创建占位入口 $SRC_DIR/main.py（make up 默认运行 python main.py，请替换为真实入口）"
 fi
 
 # npm 离线包目录（默认项目根目录 packages/）：提前创建，避免 docker 以 root
@@ -269,6 +277,7 @@ fi
 echo ""
 printf '%s\n' "${C_GREEN}${C_BOLD}== 安装完成 ==${C_RESET}"
 echo "项目根目录: ${C_BOLD}$SRC_ROOT${C_RESET}"
+echo "源码目录: ${C_BOLD}$SRC_DIR${C_RESET}"
 if [ "$LOAD_IMAGES" = "1" ]; then
     if [ "$DEFAULT_MODE" = "1" ]; then
         echo "镜像: 已导入（-d/--default）"
