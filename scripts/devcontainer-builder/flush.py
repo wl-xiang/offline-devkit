@@ -15,6 +15,10 @@
     2. 展示将要发生什么，等待手动输入 y 确认（-y 跳过）
     3. 清空 ./src 目录下的所有内容
     4. 按打包方法解压压缩包内容到 ./src（不会自动运行任何代码）
+
+兼容性:
+    有意不使用 f-string 等 Python 3.6+ 语法，并给 open/tarfile/ZipFile/
+    shutil 传入 str(path)——部署服务器自带的 python3 可能只有 3.5。
 """
 
 import argparse
@@ -32,13 +36,13 @@ SRC_DIR = "src"
 
 
 def die(msg):
-    print(f"错误: {msg}", file=sys.stderr)
+    print("错误: {0}".format(msg), file=sys.stderr)
     sys.exit(1)
 
 
 def sha256_of(path):
     h = hashlib.sha256()
-    with open(path, "rb") as f:
+    with open(str(path), "rb") as f:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
@@ -47,13 +51,13 @@ def sha256_of(path):
 def extract(archive, fmt, dest_tmp):
     """解压到临时目录，返回内容根（压缩包只有单个顶层目录时进入该目录）。"""
     if fmt == "tgz":
-        with tarfile.open(archive, "r:gz") as tar:
+        with tarfile.open(str(archive), "r:gz") as tar:
             try:
                 tar.extractall(dest_tmp, filter="data")
             except TypeError:  # 兼容未实现 extraction filter 的旧版 Python
                 tar.extractall(dest_tmp)
     else:
-        with ZipFile(archive) as zf:
+        with ZipFile(str(archive)) as zf:
             zf.extractall(dest_tmp)
     entries = list(Path(dest_tmp).iterdir())
     if len(entries) == 1 and entries[0].is_dir():
@@ -75,41 +79,53 @@ def main():
     meta_path = here / SYNC_JSON
     if not meta_path.is_file():
         die(
-            f"未找到 {meta_path}（请在与 src 压缩包、sync.json 同级的目录中运行 flush.py）"
+            "未找到 {0}（请在与 src 压缩包、sync.json 同级的目录中运行 flush.py）".format(
+                meta_path
+            )
         )
     try:
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
-        die(f"sync.json 解析失败: {e}")
+        die("sync.json 解析失败: {0}".format(e))
 
     fmt = str(meta.get("format", "")).strip().lower()
     filename = str(meta.get("filename", "")).strip()
     digest = str(meta.get("sha256", "")).strip().lower()
     if fmt not in ("tgz", "zip"):
-        die(f"sync.json 的打包方法无法识别: {meta.get('format')!r}（仅支持 tgz / zip）")
+        die(
+            "sync.json 的打包方法无法识别: {0!r}（仅支持 tgz / zip）".format(
+                meta.get("format")
+            )
+        )
     if not filename:
         die("sync.json 缺少 filename 字段")
     archive = here / filename
     if not archive.is_file():
-        die(f"压缩包不存在: {archive}")
+        die("压缩包不存在: {0}".format(archive))
 
     # SHA256 校验（与 sync.json 中记录的 checksum 对比，损坏即中止）
     actual = sha256_of(archive)
     if digest and actual != digest:
         die(
             "SHA256 校验失败，文件可能损坏或不完整，已中止:\n"
-            f"  sync.json: {digest}\n"
-            f"  实际:      {actual}"
+            "  sync.json: {0}\n"
+            "  实际:      {1}".format(digest, actual)
         )
     checksum_note = "已通过校验" if digest else "sync.json 未提供 sha256，跳过校验"
 
     # 2. 展示将要发生什么，等待手动确认
     src = here / SRC_DIR
     print("== 执行 flush 将发生 ==")
-    print(f"  压缩包: {archive.name}（{fmt}，打包时间 {meta.get('time', '未知')}）")
-    print(f"  SHA256: {checksum_note}")
-    print(f"  目标目录: {src.resolve()}")
-    print(f"  将清空 {SRC_DIR}/ 下的所有内容，再解压新代码（不会自动运行任何代码）")
+    print(
+        "  压缩包: {0}（{1}，打包时间 {2}）".format(
+            archive.name, fmt, meta.get("time", "未知")
+        )
+    )
+    print("  SHA256: {0}".format(checksum_note))
+    print("  目标目录: {0}".format(src.resolve()))
+    print(
+        "  将清空 {0}/ 下的所有内容，再解压新代码（不会自动运行任何代码）".format(SRC_DIR)
+    )
     if not args.yes:
         try:
             answer = input("确认执行 flush? 输入 y 继续: ")
@@ -123,7 +139,7 @@ def main():
     src.mkdir(exist_ok=True)
     for entry in src.iterdir():
         if entry.is_dir() and not entry.is_symlink():
-            shutil.rmtree(entry)
+            shutil.rmtree(str(entry))
         else:
             entry.unlink()
 
@@ -131,9 +147,9 @@ def main():
     with tempfile.TemporaryDirectory(prefix="flush-") as tmp:
         top = extract(archive, fmt, tmp)
         for item in sorted(top.iterdir()):
-            shutil.move(str(item), src / item.name)
+            shutil.move(str(item), str(src / item.name))
 
-    print(f"== flush 完成: 新代码已就位 {src.resolve()} ==")
+    print("== flush 完成: 新代码已就位 {0} ==".format(src.resolve()))
     return 0
 
 
