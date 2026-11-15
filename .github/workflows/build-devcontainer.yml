@@ -193,7 +193,7 @@ jobs:
           APP_PORT: ${{ inputs.app_port }}
           ENV_FILE: ${{ inputs.env_file }}
           SELINUX_RELABEL: ${{ inputs.selinux_relabel }}
-          # 原始输入透传（供 workflow-params.json 快照记录；上方 ENABLE_NGINX 等
+          # 原始输入透传（供 workflow-params.jsonc 快照记录；上方 ENABLE_NGINX 等
           # 为 contains/等值 派生布尔，不含原始值）
           SIDECARS: ${{ inputs.sidecars }}
           APP_DEPENDS_ON: ${{ inputs.app_depends_on }}
@@ -292,10 +292,14 @@ jobs:
             echo "::error::readme.html 未生成"
             exit 1
           fi
-          echo "--- workflow-params.json (workflow 输入参数快照，JSONC) ---"
-          test -s "${{ steps.build.outputs.workflow_params_json }}" \
-            || { echo "::error::workflow-params.json 未生成"; exit 1; }
-          python - "${{ steps.build.outputs.workflow_params_json }}" <<'PY'
+          echo "--- workflow-params.jsonc (workflow 输入参数快照，JSONC) ---"
+          test -s "${{ steps.build.outputs.workflow_params_jsonc }}" \
+            || { echo "::error::workflow-params.jsonc 未生成"; exit 1; }
+          case "${{ steps.build.outputs.workflow_params_jsonc }}" in
+            *.jsonc) ;;
+            *) echo "::error::workflow-params 快照必须输出为 .jsonc 文件"; exit 1 ;;
+          esac
+          python - "${{ steps.build.outputs.workflow_params_jsonc }}" <<'PY'
           import json, sys
           from pathlib import Path
 
@@ -372,16 +376,16 @@ jobs:
               default, kind = DEFAULTS[name]
               default_value = (default.lower() == "true") if kind == "boolean" else default
               assert value != default_value, (name, value, default)
-          print("workflow-params.json OK "
+          print("workflow-params.jsonc OK "
                 f"(minimal={len(data['minimal'])}, normal={len(data['normal'])}, "
                 f"full={len(full)})")
           PY
-          # install.sh 只按固定清单安装文件，不应引用 workflow-params.json
+          # install.sh 只按固定清单安装文件，不应引用 workflow-params.jsonc
           if grep -q 'workflow-params' "${{ steps.build.outputs.install_sh }}"; then
-            echo "::error::install.sh 不应引用 workflow-params.json（该文件不参与安装）"
+            echo "::error::install.sh 不应引用 workflow-params.jsonc（该文件不参与安装）"
             exit 1
           fi
-          sha256sum "${{ steps.build.outputs.workflow_params_json }}"
+          sha256sum "${{ steps.build.outputs.workflow_params_jsonc }}"
           echo "--- build.sh (from src tgz) ---"
           tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/build.sh > /tmp/build.sh
           bash -n /tmp/build.sh
@@ -516,8 +520,8 @@ jobs:
       # 避免 tgz 再被 zip 二次压缩。唯一产物
       # <image_prefix>_devcontainer_<架构>_<时间戳>（架构 amd64/arm64），
       # zip 内含镜像归档 tgz、src tgz、install.sh、readme.html 与
-      # workflow-params.json 五个文件
-      - name: Upload bundle artifact (docker images tgz + src tgz + install.sh + readme.html + workflow-params.json)
+      # workflow-params.jsonc 五个文件
+      - name: Upload bundle artifact (docker images tgz + src tgz + install.sh + readme.html + workflow-params.jsonc)
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.build.outputs.bundle_name }}
@@ -526,6 +530,6 @@ jobs:
             ${{ steps.build.outputs.src_tgz }}
             ${{ steps.build.outputs.install_sh }}
             ${{ steps.build.outputs.readme_html }}
-            ${{ steps.build.outputs.workflow_params_json }}
+            ${{ steps.build.outputs.workflow_params_jsonc }}
           compression-level: 0
           if-no-files-found: error

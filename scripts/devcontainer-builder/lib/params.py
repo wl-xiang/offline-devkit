@@ -548,7 +548,7 @@ def validate(p):
 
 
 # ---------------------------------------------------------------------------
-# Workflow 输入参数快照（workflow-params.json）
+# Workflow 输入参数快照（workflow-params.jsonc）
 #
 # 与 .github/workflows/build-devcontainer.yml 的 workflow_dispatch inputs
 # 一一对应：(输入名, 环境变量, 类型, workflow 默认值)。新增/修改 workflow
@@ -613,7 +613,7 @@ def workflow_inputs_snapshot():
     return {"minimal": minimal, "normal": normal, "full": full}
 
 
-# workflow-params.json 为 JSONC：每个 section 前加一行极简注释
+# workflow-params.jsonc 为 JSONC：每个 section 前加一行极简注释
 WORKFLOW_SECTION_COMMENTS = (
     ("minimal", "minimal：只保留用户实际改动过的输入（省略默认值与空值）"),
     ("normal", "normal：省略留空字符串与未勾选的 checkbox"),

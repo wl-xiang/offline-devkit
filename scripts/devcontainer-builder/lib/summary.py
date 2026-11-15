@@ -37,12 +37,31 @@ def build_markdown(p, results):
     images_tgz = results.get("images_tgz")
     install_sh = results.get("install_sh")
     readme_html = results.get("readme_html")
-    workflow_params_json = results.get("workflow_params_json")
+    workflow_params_jsonc = results.get("workflow_params_jsonc")
     skipped_docker = results.get("skipped_docker", False)
     bundle_name = p.bundle_name
 
     out = []
     out.append("## 离线开发环境构建摘要")
+    out.append("")
+
+    # workflow-params.jsonc 的 minimal section：只含用户实际改动过的输入。
+    # 放在摘要最前面，确保运行页面一眼可见（完整快照见产物）。
+    minimal_params = results.get("workflow_params_minimal")
+    out.append("### 本次改动输入（workflow-params.jsonc minimal）")
+    out.append("")
+    if minimal_params:
+        out.append("| 参数 | 值 |")
+        out.append("| --- | --- |")
+        for name, value in minimal_params.items():
+            out.append(f"| `{name}` | {_param_cell(value)} |")
+    else:
+        out.append("- (无，全部为默认值)")
+    out.append("")
+    out.append("> 完整快照见产物 `workflow-params.jsonc`（JSONC，每个 section 带一行注释）。")
+    out.append("")
+
+    out.append("### 构建参数")
     out.append("")
     out.append("| 项目 | 值 |")
     out.append("| --- | --- |")
@@ -91,21 +110,6 @@ def build_markdown(p, results):
     out.append(f"| 应用端口 (host:container) | {('`' + p.app_port + '`') if p.has_app_port else '(未指定)'} |")
     out.append(f"| env_file | {', '.join(p.env_file_list) if p.env_file_list else '(无)'} |")
     out.append(f"| SELinux 重打标签 (:z) | {_yes_no(p.selinux_relabel)} |")
-    out.append("")
-
-    # workflow-params.json 的 minimal section：只含用户实际改动过的输入
-    minimal_params = results.get("workflow_params_minimal")
-    out.append("### 本次改动输入（workflow-params.json minimal）")
-    out.append("")
-    if minimal_params:
-        out.append("| 参数 | 值 |")
-        out.append("| --- | --- |")
-        for name, value in minimal_params.items():
-            out.append(f"| `{name}` | {_param_cell(value)} |")
-    else:
-        out.append("- (无，全部为默认值)")
-    out.append("")
-    out.append("> 完整快照见产物 `workflow-params.json`（JSONC，每个 section 带一行注释）。")
     out.append("")
 
     out.append("### pip 包清单（含预装组件）")
@@ -184,12 +188,12 @@ def build_markdown(p, results):
         out.append(
             f"| {readme_html.name}（安装说明） | {human_size(readme_html.stat().st_size)} | (HTML) |"
         )
-    if workflow_params_json:
+    if workflow_params_jsonc:
         out.append(
-            f"| {workflow_params_json.name}（workflow 输入参数快照 JSONC，带注释，"
+            f"| {workflow_params_jsonc.name}（workflow 输入参数快照 JSONC，带注释，"
             "install.sh 不安装它） "
-            f"| {human_size(workflow_params_json.stat().st_size)} "
-            f"| `{sha256_of(workflow_params_json)}` |"
+            f"| {human_size(workflow_params_jsonc.stat().st_size)} "
+            f"| `{sha256_of(workflow_params_jsonc)}` |"
         )
     out.append("")
 
@@ -198,7 +202,7 @@ def build_markdown(p, results):
     out.append("1. 从本次运行页面底部 **Artifacts** 下载唯一产物"
                f" **{bundle_name}**（zip 仅为封装、不压缩，解压得到"
                " 镜像归档 tgz、src tgz、install.sh、readme.html 与"
-               " workflow-params.json 五个文件），"
+               " workflow-params.jsonc 五个文件），"
                "传输到与目标平台一致的内网机器，并用上表 SHA256 校验完整性。")
     out.append("")
     out.append("2. **把 artifact zip 包放到你的项目根目录 `dist/` 文件夹下**"
@@ -364,10 +368,10 @@ def emit(p, results):
         readme_html = results.get("readme_html")
         if readme_html:
             entries.append(("readme_html", str(readme_html)))
-        workflow_params_json = results.get("workflow_params_json")
-        if workflow_params_json:
-            entries.append(("workflow_params_json", str(workflow_params_json)))
-            entries.append(("workflow_params_name", workflow_params_json.name))
+        workflow_params_jsonc = results.get("workflow_params_jsonc")
+        if workflow_params_jsonc:
+            entries.append(("workflow_params_jsonc", str(workflow_params_jsonc)))
+            entries.append(("workflow_params_name", workflow_params_jsonc.name))
         entries.append(("images", ",".join(results.get("images") or [])))
         with open(output_path, "a", encoding="utf-8") as f:
             for key, value in entries:
