@@ -611,3 +611,43 @@ def workflow_inputs_snapshot():
         if value != default_value and value != "":
             minimal[name] = value
     return {"minimal": minimal, "normal": normal, "full": full}
+
+
+# workflow-params.json 为 JSONC：每个 section 前加一行极简注释
+WORKFLOW_SECTION_COMMENTS = (
+    ("minimal", "minimal：只保留用户实际改动过的输入（省略默认值与空值）"),
+    ("normal", "normal：省略留空字符串与未勾选的 checkbox"),
+    ("full", "full：全部输入（留空字符串记 \"\"，未勾选 checkbox 记 false）"),
+)
+
+
+def _jsonc_section(name, values):
+    """渲染单个 section（两空格缩进；值仅含字符串/布尔）。"""
+    if not values:
+        return [f'  "{name}": {{}}']
+    lines = [f'  "{name}": {{']
+    items = list(values.items())
+    for index, (key, value) in enumerate(items):
+        comma = "," if index < len(items) - 1 else ""
+        lines.append(
+            f"    {json.dumps(key, ensure_ascii=False)}: "
+            f"{json.dumps(value, ensure_ascii=False)}{comma}"
+        )
+    lines.append("  }")
+    return lines
+
+
+def workflow_params_jsonc(snapshot):
+    """把 workflow_inputs_snapshot() 的结果渲染为带注释的 JSONC 文本。"""
+    blocks = []
+    for name, comment in WORKFLOW_SECTION_COMMENTS:
+        block = [f"  // {comment}"]
+        block.extend(_jsonc_section(name, snapshot[name]))
+        blocks.append(block)
+    for block in blocks[:-1]:
+        block[-1] += ","  # section 之间加逗号（section 前的注释行不受影响）
+    lines = ["{"]
+    for block in blocks:
+        lines.extend(block)
+    lines.append("}")
+    return "\n".join(lines) + "\n"

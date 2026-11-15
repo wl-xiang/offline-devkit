@@ -282,11 +282,37 @@ jobs:
             echo "::error::readme.html 未生成"
             exit 1
           fi
-          echo "--- workflow-params.json (workflow 输入参数快照) ---"
+          echo "--- workflow-params.json (workflow 输入参数快照，JSONC) ---"
           test -s "${{ steps.build.outputs.workflow_params_json }}" \
             || { echo "::error::workflow-params.json 未生成"; exit 1; }
           python - "${{ steps.build.outputs.workflow_params_json }}" <<'PY'
           import json, sys
+          from pathlib import Path
+
+          def strip_jsonc(text):
+              """去掉 JSONC 的 // 行注释（跳过字符串内部）。"""
+              out, in_string, escape, i = [], False, False, 0
+              while i < len(text):
+                  ch = text[i]
+                  if in_string:
+                      out.append(ch)
+                      if escape:
+                          escape = False
+                      elif ch == "\\":
+                          escape = True
+                      elif ch == '"':
+                          in_string = False
+                  elif ch == '"':
+                      in_string = True
+                      out.append(ch)
+                  elif ch == "/" and text[i + 1:i + 2] == "/":
+                      end = text.find("\n", i)
+                      i = len(text) if end == -1 else end
+                      continue
+                  else:
+                      out.append(ch)
+                  i += 1
+              return "".join(out)
 
           # workflow inputs 默认值（与 build-devcontainer.yml 的 inputs 保持同步）
           DEFAULTS = {
@@ -312,7 +338,11 @@ jobs:
               "env_file": ("", "string"),
               "selinux_relabel": ("false", "boolean"),
           }
-          data = json.load(open(sys.argv[1], encoding="utf-8"))
+          text = Path(sys.argv[1]).read_text(encoding="utf-8")
+          # JSONC：每个 section 前必须有一行极简注释
+          for section in ("minimal", "normal", "full"):
+              assert f"// {section}" in text, f"缺少 {section} 注释"
+          data = json.loads(strip_jsonc(text))
           assert list(data) == ["minimal", "normal", "full"], list(data)
           full = data["full"]
           assert list(full) == list(DEFAULTS), list(full)

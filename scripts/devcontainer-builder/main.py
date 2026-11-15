@@ -19,7 +19,6 @@
 本地联调可设置 DEVCONTAINER_SKIP_DOCKER=1 跳过 docker 步骤。
 """
 
-import json
 import os
 import shutil
 import sys
@@ -131,11 +130,12 @@ def main():
     print(f"== 安装说明: {readme_html} ==")
 
     # workflow 输入参数快照：与 install.sh / readme.html 同级（zip 顶层），
-    # 仅随 Artifact 分发；install.sh 不会把它安装进项目
+    # 仅随 Artifact 分发；install.sh 不会把它安装进项目。
+    # JSONC 格式（每个 section 前带一行极简注释）。
     workflow_params_json = REPO_ROOT / "dist" / "workflow-params.json"
+    workflow_params_snapshot = params_mod.workflow_inputs_snapshot()
     workflow_params_json.write_text(
-        json.dumps(params_mod.workflow_inputs_snapshot(),
-                   ensure_ascii=False, indent=2) + "\n",
+        params_mod.workflow_params_jsonc(workflow_params_snapshot),
         encoding="utf-8",
     )
     print(f"== workflow 参数快照: {workflow_params_json} ==")
@@ -151,6 +151,8 @@ def main():
         "install_sh": install_sh,
         "readme_html": readme_html,
         "workflow_params_json": workflow_params_json,
+        # minimal 只含用户实际改动过的输入，直接展示在构建摘要中
+        "workflow_params_minimal": workflow_params_snapshot["minimal"],
         "images": images,
         "wheels_count": wheels_count,
         "skipped_docker": skip_docker,
