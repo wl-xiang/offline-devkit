@@ -11,28 +11,30 @@
     SYNC_REMOTE_USER        SSH 用户名（必填）
     SYNC_REMOTE_PASSWORD    SSH 密码（必填）
     SYNC_REMOTE_PATH        远端项目部署路径（必填）
-    SYNC_ARCHIVE_FORMAT     代码打包方式 tgz | zip（留空默认 tgz）
 
 流程:
     1. pwd 取当前项目根目录的名称，然后到上一层目录执行打包
-    2. 把项目文件夹打包为 src-buddle.tgz / src-buddle.zip
-    3. 生成 sync.json：打包方法、打包时间、打包文件名、打包文件 SHA256
+    2. 把项目文件夹打包为 buddle_<根目录名>_<mmdd-HHMM>.tgz
+    3. 生成 sync.env（KEY=value 格式）：打包时间、打包文件名、打包文件 SHA256
     4. 展示将要发生什么，等待手动输入 y 确认（-y 跳过）
-    5. 通过 SFTP 把压缩包与 sync.json 上传到远端指定目录
-       （上传后请在部署服务器上运行 flush.py 完成解压部署）
+    5. 通过 SFTP 把压缩包与 sync.env 上传到远端指定目录
+       （上传后请在部署服务器上运行 flush.sh 完成解压部署）
+
+说明:
+    打包方式固定 tgz（部署均为 Linux 平台）；sync.env 用 KEY=value 而非
+    JSON，以便部署服务器端用纯 shell 解析（flush.sh 无任何解释器依赖）。
 """
 
 import argparse
 import hashlib
-import json
 import os
 import sys
 import tarfile
 from datetime import datetime
 from pathlib import Path
-from zipfile import ZIP_DEFLATED, ZipFile
 
-ARCHIVE_STEM = "src-buddle"
+ARCHIVE_PREFIX = "buddle"
+META_NAME = "sync.env"
 
 ENV_KEYS = (
     "SYNC_REMOTE_HOST",
@@ -40,7 +42,6 @@ ENV_KEYS = (
     "SYNC_REMOTE_USER",
     "SYNC_REMOTE_PASSWORD",
     "SYNC_REMOTE_PATH",
-    "SYNC_ARCHIVE_FORMAT",
 )
 
 
@@ -86,16 +87,12 @@ def load_config():
         port = int(env["SYNC_REMOTE_PORT"]) if env["SYNC_REMOTE_PORT"] else 22
     except ValueError:
         die(f"SYNC_REMOTE_PORT 必须是整数，当前: {env['SYNC_REMOTE_PORT']!r}")
-    fmt = env["SYNC_ARCHIVE_FORMAT"].lower() or "tgz"
-    if fmt not in ("tgz", "zip"):
-        die(f"SYNC_ARCHIVE_FORMAT 仅支持 tgz / zip，当前: {fmt}")
     return {
         "host": env["SYNC_REMOTE_HOST"],
         "port": port,
         "user": env["SYNC_REMOTE_USER"],
         "password": env["SYNC_REMOTE_PASSWORD"],
         "path": env["SYNC_REMOTE_PATH"],
-        "format": fmt,
     }
 
 
@@ -109,13 +106,8 @@ def sha256_of(path):
 
 def pack(project_dir, out_file):
     """在上一层目录把项目文件夹打包（顶层目录名 = 项目根目录名）。"""
-    if out_file.suffix == ".zip":
-        with ZipFile(out_file, "w", ZIP_DEFLATED) as zf:
-            for p in sorted(project_dir.rglob("*")):
-                zf.write(p, p.relative_to(project_dir.parent))
-    else:
-        with tarfile.open(out_file, "w:gz") as tar:
-            tar.add(project_dir, arcname=project_dir.name)
+    with tarfile.open(out_file, "w:gz") as tar:
+        tar.add(project_dir, arcname=project_dir.name)
 
 
 def ensure_remote_dir(sftp, remote_path):
@@ -176,31 +168,34 @@ def main():
     parent = project_dir.parent
 
     # 2. cd 到上一层目录执行打包（压缩包放在项目目录旁，避免打进自身）
-    archive = parent / f"{ARCHIVE_STEM}.{'tgz' if cfg['format'] == 'tgz' else 'zip'}"
-    print(f"== 打包 {project_dir.name}/ ({cfg['format']}) ==")
+    #    文件名: buddle_<根目录名>_<mmdd-HHMM>.tgz
+    now = datetime.now().astimezone()
+    ts = now.strftime("%m%d-%H%M")
+    archive = parent / f"{ARCHIVE_PREFIX}_{project_dir.name}_{ts}.tgz"
+    print(f"== 打包 {project_dir.name}/ (tgz) ==")
     pack(project_dir, archive)
     digest = sha256_of(archive)
 
-    # 3. 生成 sync.json（与压缩包同目录，随后一并上传）
-    payload = {
-        "format": cfg["format"],
-        "time": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "filename": archive.name,
-        "sha256": digest,
-    }
-    sync_json = parent / "sync.json"
-    sync_json.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    # 3. 生成 sync.env（KEY=value 格式，与压缩包同目录，随后一并上传；
+    #    由部署服务器上的 flush.sh 逐行解析）
+    payload_time = now.isoformat(timespec="seconds")
+    sync_env = parent / META_NAME
+    sync_env.write_text(
+        "# 由 sync.py 自动生成，KEY=value 格式（# 开头为注释），供 flush.sh 解析\n"
+        f"SYNC_PACK_TIME={payload_time}\n"
+        f"SYNC_FILENAME={archive.name}\n"
+        f"SYNC_SHA256={digest}\n",
+        encoding="utf-8",
     )
     print(f"  {archive}  ({archive.stat().st_size / 1024 / 1024:.1f} MB)")
     print(f"  SHA256: {digest}")
-    print(f"  {sync_json}")
+    print(f"  {sync_env}")
 
     # 4. 展示将要发生什么，等待手动确认
     print("== 执行 sync 将发生 ==")
-    print(f"  打包方式: {cfg['format']}")
-    print(f"  打包时间: {payload['time']}")
-    print(f"  上传文件: {archive.name} 与 sync.json")
+    print("  打包方式: tgz")
+    print(f"  打包时间: {payload_time}")
+    print(f"  上传文件: {archive.name} 与 sync.env")
     print(f"  目标服务器: {cfg['user']}@{cfg['host']}:{cfg['port']}")
     print(f"  部署目录: {cfg['path']}")
     if not args.yes:
@@ -212,9 +207,9 @@ def main():
         if answer.strip().lower() != "y":
             die("已取消")
 
-    # 5. SFTP 上传压缩包与 sync.json
-    upload(cfg, [archive, sync_json])
-    print("== 上传完成，请在部署服务器上运行 flush.py 完成解压部署 ==")
+    # 5. SFTP 上传压缩包与 sync.env
+    upload(cfg, [archive, sync_env])
+    print("== 上传完成，请在部署服务器上运行 flush.sh 完成解压部署 ==")
     return 0
 
 

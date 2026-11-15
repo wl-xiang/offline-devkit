@@ -15,9 +15,9 @@ TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 BUILDER_DIR = TEMPLATES_DIR.parent
 
 # 静态部署辅助文件：随 src 产物分发，由 install.sh 安装到项目根目录
-# （sync.py 在本地项目根执行，flush.py 在部署服务器项目根执行，
+# （sync.py 在本地项目根执行，flush.sh 在部署服务器项目根执行，
 #   .env.example 是二者共用的环境变量模板）
-DEPLOY_FILES = (".env.example", "flush.py", "sync.py")
+DEPLOY_FILES = (".env.example", "flush.sh", "sync.py")
 
 # compose 中的 dev 服务（profile=dev，仅 make shell/lint/compile/test 时激活）
 # build.dockerfile 指向 docs/devcontainer/Dockerfile（联网重建版 Dockerfile 位于

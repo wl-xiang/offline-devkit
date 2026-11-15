@@ -20,7 +20,7 @@
 #      后缀的 docker-compose.yml（模板内 ${SRC_ROOT:-./src/} 与
 #      ${SRC_ROOT_NAME:-app} 由 docker compose 运行时解析，默认 ./src/）
 #   3. 把 Makefile / build.sh / Dockerfile.addon(改名为 Dockerfile) /
-#      README.md(改名为 README-devcontainer.md) / sync.py / flush.py 复制到
+#      README.md(改名为 README-devcontainer.md) / sync.py / flush.sh 复制到
 #      INSTALL_PATH，并安装/合并 .dockerignore 与 .gitignore；
 #      另安装 .env.example（仅缺失时，已存在则保留原文件）
 #      ——所有 make、build.sh 命令此后都在项目根目录执行
@@ -52,7 +52,7 @@ ${C_BOLD}用法:${C_RESET} bash $0 [--load] <INSTALL_PATH>
 
 在项目根目录安装离线 devcontainer 开发环境：解压源码/模板包，安装 Makefile、
 build.sh、Dockerfile、docker-compose.yml、.dockerignore / .gitignore，以及部署
-辅助脚本 sync.py / flush.py 与环境变量模板 .env.example。
+辅助脚本 sync.py / flush.sh 与环境变量模板 .env.example。
 
 ${C_BOLD}参数:${C_RESET}
   INSTALL_PATH          项目根目录（必须已存在）。根目录操作文件安装到 INSTALL_PATH，
@@ -159,8 +159,8 @@ SRC_DIR="$INSTALL_PATH/src"   # 应用源码目录（compose 默认把 ./src/ �
 
 # 复制到项目根目录的根目录操作文件：包内文件名 -> 根目录文件名
 # （Dockerfile.addon 改名 Dockerfile、README.md 改名 README-devcontainer.md，
-#  避免与项目自己的 README.md 冲突；sync.py / flush.py 为部署辅助脚本）
-COPY_ROOT_FILES=("Makefile:Makefile" "build.sh:build.sh" "Dockerfile.addon:Dockerfile" "README.md:README-devcontainer.md" "sync.py:sync.py" "flush.py:flush.py")
+#  避免与项目自己的 README.md 冲突；sync.py / flush.sh 为部署辅助脚本）
+COPY_ROOT_FILES=("Makefile:Makefile" "build.sh:build.sh" "Dockerfile.addon:Dockerfile" "README.md:README-devcontainer.md" "sync.py:sync.py" "flush.sh:flush.sh")
 
 # ---------- 前置校验：先全部检查，再动手写盘（失败不留半套安装） ----------
 fail=0
@@ -206,15 +206,15 @@ for pair in "${COPY_ROOT_FILES[@]}"; do
     ok "已创建 $INSTALL_PATH/$dst_name ${C_DIM}(来自 $src_name)${C_RESET}"
 done
 # zip/tar 传输可能丢失可执行位，显式恢复
-chmod 755 "$INSTALL_PATH/build.sh"
+chmod 755 "$INSTALL_PATH/build.sh" "$INSTALL_PATH/flush.sh"
 
-# .env.example：sync.py / flush.py 的环境变量模板。仅在缺失时安装——
+# .env.example：sync.py / flush.sh 的环境变量模板。仅在缺失时安装——
 # 项目通常已有自己的 .env.example，已存在时保留原文件、不中断安装
 if [ -e "$INSTALL_PATH/.env.example" ]; then
     note "$INSTALL_PATH/.env.example 已存在，保留原文件（部署脚本变量可参考 $DEST/.env.example）"
 else
     cp "$DEST/.env.example" "$INSTALL_PATH/.env.example"
-    ok "已创建 $INSTALL_PATH/.env.example（sync.py / flush.py 环境变量模板）"
+    ok "已创建 $INSTALL_PATH/.env.example（sync.py / flush.sh 环境变量模板）"
 fi
 
 # ---------- compose 命令检测：v2 插件优先，仅有 v1 独立版时改写 Makefile ----------
