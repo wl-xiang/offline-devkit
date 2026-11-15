@@ -216,8 +216,9 @@ def build_markdown(p, results):
     out.append("")
     out.append("   install.sh 会把 `Makefile` / `build.sh` / `Dockerfile`"
                "（由 Dockerfile.addon 改名）/ `README-devcontainer.md`（由"
-               " README.md 改名）/ `.dockerignore` / `.gitignore` 安装到项目"
-               "根目录（同名文件已存在时终止安装，不覆盖），把 src 解压到"
+               " README.md 改名）/ `sync.py` / `flush.py` / `.dockerignore` /"
+               " `.gitignore` 安装到项目根目录（同名文件已存在时终止安装，不覆盖；"
+               "`.env.example` 仅在缺失时安装），把 src 解压到"
                " `<项目根>/docs/devcontainer`（原始副本，用于重置），把"
                " `docker-compose.yml` 复制到项目根目录，并在缺少 `main.py` 时"
                "放置占位入口。")

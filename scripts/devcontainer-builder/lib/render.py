@@ -6,11 +6,18 @@
 """
 
 import json
+import shutil
 from pathlib import Path
 
 from .params import NPM_PACKAGES_CONTAINER_DIR, Params
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
+BUILDER_DIR = TEMPLATES_DIR.parent
+
+# 静态部署辅助文件：随 src 产物分发，由 install.sh 安装到项目根目录
+# （sync.py 在本地项目根执行，flush.py 在部署服务器项目根执行，
+#   .env.example 是二者共用的环境变量模板）
+DEPLOY_FILES = (".env.example", "flush.py", "sync.py")
 
 # compose 中的 dev 服务（profile=dev，仅 make shell/lint/compile/test 时激活）
 # build.dockerfile 指向 docs/devcontainer/Dockerfile（联网重建版 Dockerfile 位于
@@ -1092,6 +1099,9 @@ def render_all(p, staging):
         (staging / name).write_text(content, encoding="utf-8")
     # 保留可执行位（tar 会随包保留；artifact zip 解压可能丢失，文档引导 bash 调用）
     (staging / "build.sh").chmod(0o755)
+    # 部署辅助文件（静态复制，不渲染）：随 src 产物分发，install.sh 安装到项目根目录
+    for name in DEPLOY_FILES:
+        shutil.copy2(BUILDER_DIR / name, staging / name)
     if p.enable_nginx and p.has_app_port:
         conf_dir = staging / "nginx" / "conf.d"
         conf_dir.mkdir(parents=True, exist_ok=True)

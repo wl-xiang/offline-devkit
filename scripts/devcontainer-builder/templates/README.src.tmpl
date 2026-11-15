@@ -8,7 +8,8 @@
 
 - **项目根目录**：`Makefile`、`Dockerfile`（离线补装用，由 Dockerfile.addon 改名）、
   `build.sh`、`README-devcontainer.md`（本文件副本）、`.dockerignore`、`.gitignore`、
-  `docker-compose.yml`、`wheels/`（离线补装 wheel，含离线安装头 requirements.txt）。
+  `docker-compose.yml`、`wheels/`（离线补装 wheel，含离线安装头 requirements.txt）、
+  `sync.py` / `flush.py` / `.env.example`（部署辅助脚本与环境变量模板）。
   —— 你日常操作的位置。
 - **`src/`**：应用源码目录，由 compose 默认挂载为容器内 `/app`；install.sh 会
   自动创建该目录并按需放入占位 `main.py`。
@@ -108,6 +109,9 @@ make down         # 停止
   所在目录；此方式装进容器可写层，重建容器后失效，持久生效仍需 build.sh）。
 - `make build` 需要联网（apt/pip 源），离线机器请勿使用；镜像请统一通过
   `devcontainer-docker-images_{{ARCH}}_{{TS}}.tgz` 导入。
+- **部署辅助脚本**（安装到项目根目录）：把 `.env.example` 复制为 `.env` 并填写远端
+  连接信息（`.env` 已被 `.gitignore` 忽略），在本地项目根执行 `python sync.py`
+  打包并 SFTP 上传；在部署服务器项目根执行 `python flush.py`，校验并解压替换 `src/`。
 - `make check` 可离线自检镜像是否已导入、架构是否匹配。
 - `make help` 查看全部可用目标。
 {{DEV_TOOLS_NOTE}}
