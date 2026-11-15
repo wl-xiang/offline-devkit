@@ -1,0 +1,356 @@
+#!/usr/bin/env python3
+"""把本地项目打包并推送到远端部署服务器（SSH/SFTP，用户名 + 密码认证）。
+
+用法（在本地项目根目录内执行）:
+    ./publish-bundle              # 打包 + 展示计划 + 输入 y 确认后上传
+    ./publish-bundle -y           # 跳过交互确认直接上传
+    ./publish-bundle -i           # 打包时按 .gitignore 忽略文件
+    ./publish-bundle -i --rm      # 同上，且上传结束后删除本地 bundle
+
+选项:
+    -y, --yes      跳过交互确认直接执行
+    -i, --ignore   读取项目根目录 .gitignore，打包时忽略其中指定的文件/目录
+                   （同时排除 .git/ 目录；规则支持注释、! 取反、尾 / 目录限定、
+                   / 锚定、** 通配）
+        --rm       上传操作结束后删除本地 bundle 文件（无论传输成功与否）
+    -h, --help     打印本用法
+
+环境变量（见同目录 .env.example，可复制为 .env 填写）:
+    SYNC_REMOTE_HOST        远端服务器 IP / 主机名（必填）
+    SYNC_REMOTE_PORT        SSH 端口（留空默认 22）
+    SYNC_REMOTE_USER        SSH 用户名（必填）
+    SYNC_REMOTE_PASSWORD    SSH 密码（必填）
+    SYNC_REMOTE_PATH        远端项目部署路径（必填）
+
+流程:
+    1. pwd 取当前项目根目录的名称，然后到上一层目录执行打包
+    2. 把项目文件夹打包为 bundle_<根目录名>_<mmdd-HHMM>.tgz
+    3. 展示将要发生什么，等待手动输入 y 确认（-y 跳过）
+    4. 通过 SFTP 把压缩包上传到远端指定目录
+       （上传后请在部署服务器上运行 stage-bundle 完成解压部署）
+
+说明:
+    - 打包方式固定 tgz（部署均为 Linux 平台）
+    - 不生成 sync.env 元信息文件；部署服务器端的 stage-bundle 直接取部署
+      目录下最新的 bundle_*.tgz
+    - 不带 -i 时保持原始打包行为（包含项目目录下所有文件）
+"""
+
+import argparse
+import hashlib
+import os
+import re
+import sys
+import tarfile
+from datetime import datetime
+from pathlib import Path
+
+ARCHIVE_PREFIX = "bundle"
+
+ENV_KEYS = (
+    "SYNC_REMOTE_HOST",
+    "SYNC_REMOTE_PORT",
+    "SYNC_REMOTE_USER",
+    "SYNC_REMOTE_PASSWORD",
+    "SYNC_REMOTE_PATH",
+)
+
+
+def die(msg):
+    print(f"错误: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def load_env():
+    """加载 .env（先当前目录，再脚本所在目录）；已有的进程环境变量优先。"""
+    for candidate in (Path.cwd() / ".env", Path(__file__).resolve().parent / ".env"):
+        if not candidate.is_file():
+            continue
+        for raw in candidate.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+def load_config():
+    env = {k: os.environ.get(k, "").strip() for k in ENV_KEYS}
+    missing = [
+        k
+        for k in (
+            "SYNC_REMOTE_HOST",
+            "SYNC_REMOTE_USER",
+            "SYNC_REMOTE_PASSWORD",
+            "SYNC_REMOTE_PATH",
+        )
+        if not env[k]
+    ]
+    if missing:
+        die(
+            "缺少必填环境变量: " + ", ".join(missing)
+            + "（参考 .env.example，复制为 .env 填写）"
+        )
+    try:
+        port = int(env["SYNC_REMOTE_PORT"]) if env["SYNC_REMOTE_PORT"] else 22
+    except ValueError:
+        die(f"SYNC_REMOTE_PORT 必须是整数，当前: {env['SYNC_REMOTE_PORT']!r}")
+    return {
+        "host": env["SYNC_REMOTE_HOST"],
+        "port": port,
+        "user": env["SYNC_REMOTE_USER"],
+        "password": env["SYNC_REMOTE_PASSWORD"],
+        "path": env["SYNC_REMOTE_PATH"],
+    }
+
+
+def sha256_of(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+# ---------- -i 忽略规则：最小 .gitignore 实现 ----------
+
+def _ignore_regex(pat):
+    """把一条 gitignore 模式翻译为 fullmatch 用的正则。
+
+    支持常用语法：* ? [..] 不跨 /；段首 **/ 与 /** 匹配任意层级；
+    \\ 转义按字面处理；其余字符按字面处理。
+    """
+    if pat == "**":
+        return re.compile(r".+")
+    out = ""
+    i = 0
+    n = len(pat)
+    while i < n:
+        c = pat[i]
+        if c == "\\" and i + 1 < n:
+            out += re.escape(pat[i + 1])
+            i += 2
+        elif pat.startswith("/**/", i):
+            out += "/(?:.*/)?"
+            i += 4
+        elif pat.startswith("/**", i):
+            out += "/.*"
+            i += 3
+        elif pat.startswith("**/", i):
+            out += "(?:[^/]+/)*"
+            i += 3
+        elif c == "*":
+            out += "[^/]*"
+            i += 1
+        elif c == "?":
+            out += "[^/]"
+            i += 1
+        elif c == "[":
+            end = pat.find("]", i + 1)
+            if end == -1:
+                out += re.escape("[")
+                i += 1
+            else:
+                inner = pat[i + 1 : end]
+                if not inner:
+                    out += re.escape("[]")
+                elif inner.startswith("!"):
+                    out += "[^" + inner[1:] + "]"
+                else:
+                    out += "[" + inner + "]"
+                i = end + 1
+        else:
+            out += re.escape(c)
+            i += 1
+    return re.compile(out)
+
+
+def load_ignore(project_dir):
+    """读取项目根目录 .gitignore，返回规则列表
+    (模式, 是否取反, 仅目录, 是否锚定, 正则)；无论是否存在都排除 .git/。"""
+    patterns = [(".git", False, True, True, re.compile(r"\.git"))]
+    path = project_dir / ".gitignore"
+    if not path.is_file():
+        print("  注意: 未找到 .gitignore，仅排除 .git/ 目录")
+        return patterns
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.rstrip()
+        if not line or line.startswith("#"):
+            continue
+        negated = line.startswith("!")
+        if negated:
+            line = line[1:]
+            if not line:
+                continue
+        dir_only = line.endswith("/")
+        if dir_only:
+            line = line.rstrip("/")
+            if not line:
+                continue
+        anchored = line.startswith("/") or "/" in line
+        line = line.lstrip("/")
+        if not line:
+            continue
+        patterns.append((line, negated, dir_only, anchored, _ignore_regex(line)))
+    return patterns
+
+
+def _is_ignored(rel, is_dir, patterns):
+    """gitignore 语义：按文件顺序最后一条命中的规则决定是否忽略。"""
+    ignored = False
+    for _pat, negated, dir_only, anchored, regex in patterns:
+        if dir_only and not is_dir:
+            continue
+        target = rel if anchored else rel.rpartition("/")[2]
+        if regex.fullmatch(target):
+            ignored = not negated
+    return ignored
+
+
+def _walk_filtered(top, patterns):
+    """自顶向下遍历项目目录；被忽略的目录整棵剪枝。
+    产出 (绝对路径, 相对 posix 路径)。"""
+    stack = [("", top)]
+    while stack:
+        rel, d = stack.pop()
+        for entry in sorted(d.iterdir()):
+            erel = f"{rel}/{entry.name}" if rel else entry.name
+            eis_dir = entry.is_dir() and not entry.is_symlink()
+            if _is_ignored(erel, eis_dir, patterns):
+                continue
+            yield entry, erel
+            if eis_dir:
+                stack.append((erel, entry))
+
+
+def pack(project_dir, out_file, patterns=None):
+    """在上一层目录把项目文件夹打包（顶层目录名 = 项目根目录名）。
+
+    patterns 为 None 时整目录递归打包（原始行为）；否则按忽略规则剪枝。
+    """
+    root_name = project_dir.name
+    with tarfile.open(out_file, "w:gz") as tar:
+        if patterns is None:
+            tar.add(project_dir, arcname=root_name)
+            return
+        for entry, rel in _walk_filtered(project_dir, patterns):
+            tar.add(entry, arcname=f"{root_name}/{rel}", recursive=False)
+
+
+def ensure_remote_dir(sftp, remote_path):
+    """远端目录不存在时逐级创建（等效 mkdir -p，仅支持 POSIX 路径）。"""
+    cur = ""
+    for part in [p for p in remote_path.rstrip("/").split("/") if p]:
+        cur += "/" + part
+        try:
+            sftp.stat(cur)
+        except FileNotFoundError:
+            sftp.mkdir(cur)
+
+
+def upload(cfg, local_files):
+    try:
+        import paramiko
+    except ImportError:
+        die("需要 paramiko 库: pip install paramiko")
+
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    print(f"== 连接 {cfg['user']}@{cfg['host']}:{cfg['port']} ==")
+    client.connect(
+        cfg["host"],
+        port=cfg["port"],
+        username=cfg["user"],
+        password=cfg["password"],
+        timeout=15,
+    )
+    try:
+        sftp = client.open_sftp()
+        ensure_remote_dir(sftp, cfg["path"])
+        for local in local_files:
+            remote = cfg["path"].rstrip("/") + "/" + local.name
+            print(f"  上传 {local.name} -> {remote}")
+            sftp.put(str(local), remote)
+        sftp.close()
+    finally:
+        client.close()
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="打包本地项目并通过 SFTP 推送到远端部署服务器"
+    )
+    parser.add_argument(
+        "-y", "--yes", action="store_true", help="跳过交互确认直接执行"
+    )
+    parser.add_argument(
+        "-i",
+        "--ignore",
+        action="store_true",
+        help="按项目根目录 .gitignore 忽略文件（同时排除 .git/ 目录）",
+    )
+    parser.add_argument(
+        "--rm",
+        action="store_true",
+        help="上传操作结束后删除本地 bundle 文件（无论传输成功与否）",
+    )
+    args = parser.parse_args()
+
+    load_env()
+    cfg = load_config()
+
+    # 1. pwd 获取当前项目根目录名称
+    project_dir = Path.cwd().resolve()
+    if project_dir.parent == project_dir:
+        die("请在项目目录内运行 publish-bundle（当前位于文件系统根目录）")
+    parent = project_dir.parent
+
+    # 2. cd 到上一层目录执行打包（压缩包放在项目目录旁，避免打进自身）
+    #    文件名: bundle_<根目录名>_<mmdd-HHMM>.tgz
+    now = datetime.now().astimezone()
+    ts = now.strftime("%m%d-%H%M")
+    archive = parent / f"{ARCHIVE_PREFIX}_{project_dir.name}_{ts}.tgz"
+    patterns = load_ignore(project_dir) if args.ignore else None
+    print(f"== 打包 {project_dir.name}/ (tgz) ==")
+    pack(project_dir, archive, patterns)
+    digest = sha256_of(archive)
+    print(f"  {archive}  ({archive.stat().st_size / 1024 / 1024:.1f} MB)")
+    print(f"  SHA256: {digest}")
+
+    # 3. 展示将要发生什么，等待手动确认
+    pack_time = now.isoformat(timespec="seconds")
+    print("== 执行 publish 将发生 ==")
+    print("  打包方式: tgz")
+    print(f"  打包时间: {pack_time}")
+    print(f"  上传文件: {archive.name}")
+    if args.rm:
+        print(f"  传输后删除本地 bundle: {archive.name}（无论传输成功与否）")
+    print(f"  目标服务器: {cfg['user']}@{cfg['host']}:{cfg['port']}")
+    print(f"  部署目录: {cfg['path']}")
+    if not args.yes:
+        try:
+            answer = input("确认执行 publish? 输入 y 继续: ")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            die("已取消")
+        if answer.strip().lower() != "y":
+            die("已取消")
+
+    # 4. SFTP 上传压缩包（--rm: 无论传输成功与否，结束后删除本地 bundle）
+    if args.rm:
+        try:
+            upload(cfg, [archive])
+        finally:
+            archive.unlink()
+            print("== 已按 --rm 删除本地 bundle ==")
+    else:
+        upload(cfg, [archive])
+    print("== 上传完成，请在部署服务器上运行 stage-bundle 完成解压部署 ==")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

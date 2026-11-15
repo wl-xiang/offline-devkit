@@ -1,0 +1,220 @@
+#!/bin/sh
+# 部署服务器端脚本：把当前目录下最新的 bundle_*.tgz 解压替换到 ./src 目录。
+# 纯 POSIX sh 实现——部署服务器无需 python/jq：tgz 解压只需 tar，SHA256 只需
+# sha256sum，均为 Linux 系统自带（find -printf 为 GNU 扩展，Linux 均可用）。
+#
+# 用法（在部署目录中执行，目录下应有 publish-bundle 上传的 bundle_*.tgz）:
+#     ./stage-bundle              # 取最新 bundle，展示计划后解压替换 ./src
+#     ./stage-bundle -y           # 跳过交互确认直接执行
+#     ./stage-bundle -c           # 保留最新一份 bundle，删除其余
+#     ./stage-bundle --clean-all  # 删除全部 bundle 与遗留 sync.env
+#     ./stage-bundle -h           # 打印用法
+#
+# 协议说明:
+#     部署目录固定为 ./src —— 与 install.sh 默认把源码放入 ../src/
+#     （项目根 ../ 下的 src）一致
+#     （compose 模板中 ${SRC_ROOT:-./src/} 把该目录挂载为容器内 /app）。
+#     "最新"按文件修改时间判断（bundle 文件名自带 mmdd-HHMM 时间戳）。
+#     不读取元信息文件；SHA256 仅打印，供与 publish-bundle 的输出人工核对。
+#
+# 流程（默认模式）:
+#     1. 找到当前目录下最新的 bundle_*.tgz，计算 SHA256
+#     2. 展示将要发生什么，等待手动输入 y 确认（-y 跳过）
+#     3. 清空 ./src 目录下的所有内容
+#     4. 解压压缩包内容到 ./src（不会自动运行任何代码）
+
+set -eu
+
+SRC_DIR="src"
+
+usage() {
+    cat <<'USAGE'
+用法: ./stage-bundle [选项]
+
+把当前目录下最新的 bundle_*.tgz 解压替换到 ./src 目录（不会自动运行任何代码）。
+部署目录固定为 ./src —— compose 模板中 ${SRC_ROOT:-./src/} 把该目录挂载为容器内 /app。
+
+选项:
+  （无参数）        取最新 bundle_*.tgz，展示计划并确认后解压替换 ./src
+  -y, --yes         跳过交互确认直接执行
+  -c, --clean       保留最新一份 bundle_*.tgz，删除其余 bundle
+      --clean-all   删除全部 bundle_*.tgz 与遗留 sync.env
+  -h, --help        显示本帮助并退出
+
+示例:
+  ./stage-bundle                # 常规部署：最新 bundle -> ./src
+  ./stage-bundle -y             # 自动确认，直接部署
+  ./stage-bundle -c             # 部署目录瘦身：只保留最新一份 bundle
+  ./stage-bundle --clean-all    # 清空所有 bundle
+USAGE
+}
+
+die() {
+    printf '错误: %s\n' "$*" >&2
+    exit 1
+}
+
+# 当前目录下按修改时间最新的一份 bundle_*.tgz（带 ./ 前缀；无则输出空）
+find_newest_bundle() {
+    find . -maxdepth 1 -type f -name 'bundle_*.tgz' -printf '%T@ %p\n' 2>/dev/null \
+        | sort -rn | head -n 1 | cut -d ' ' -f2-
+}
+
+confirm() {
+    if [ "$assume_yes" -eq 1 ]; then
+        return 0
+    fi
+    printf '%s' "$1"
+    IFS= read -r answer || { printf '\n'; return 1; }
+    answer=$(printf '%s' "$answer" | tr -d ' \t' | tr '[:upper:]' '[:lower:]')
+    [ "$answer" = "y" ]
+}
+
+# ---------- 参数 ----------
+assume_yes=0
+do_clean=0
+do_clean_all=0
+while [ "$#" -gt 0 ]; do
+    case $1 in
+        -y|--yes)    assume_yes=1 ;;
+        -c|--clean)  do_clean=1 ;;
+        --clean-all) do_clean_all=1 ;;
+        -h|--help)   usage; exit 0 ;;
+        *)           die "未知参数: $1（用 -h 查看用法）" ;;
+    esac
+    shift
+done
+if [ "$do_clean" -eq 1 ] && [ "$do_clean_all" -eq 1 ]; then
+    die "-c/--clean 与 --clean-all 不能同时使用"
+fi
+
+# ---------- 清理模式：--clean-all ----------
+if [ "$do_clean_all" -eq 1 ]; then
+    printf '%s\n' "== --clean-all 将删除 =="
+    found=0
+    for f in bundle_*.tgz; do
+        [ -e "$f" ] || continue
+        printf '  %s\n' "$f"
+        found=$((found + 1))
+    done
+    if [ -e sync.env ]; then
+        printf '  %s\n' "sync.env（旧版遗留元信息文件）"
+        found=$((found + 1))
+    fi
+    if [ "$found" -eq 0 ]; then
+        printf '%s\n' "== 当前目录没有可清理的 bundle / sync.env =="
+        exit 0
+    fi
+    if ! confirm "确认删除以上 $found 个文件? 输入 y 继续: "; then
+        die "已取消"
+    fi
+    for f in bundle_*.tgz; do
+        [ -e "$f" ] || continue
+        rm -f -- "$f"
+    done
+    if [ -e sync.env ]; then
+        rm -f -- sync.env
+    fi
+    printf '%s\n' "== 清理完成 =="
+    exit 0
+fi
+
+# ---------- 清理模式：--clean（保留最新一份） ----------
+if [ "$do_clean" -eq 1 ]; then
+    newest=$(find_newest_bundle)
+    if [ -z "$newest" ]; then
+        die "当前目录没有 bundle_*.tgz"
+    fi
+    newest=${newest#./}
+    printf '%s\n' "== --clean 将保留最新 bundle，删除其余 =="
+    printf '  保留: %s\n' "$newest"
+    found=0
+    for f in bundle_*.tgz; do
+        [ -e "$f" ] || continue
+        if [ "$f" = "$newest" ]; then
+            continue
+        fi
+        printf '  删除: %s\n' "$f"
+        found=$((found + 1))
+    done
+    if [ "$found" -eq 0 ]; then
+        printf '%s\n' "== 只有最新一份 bundle，无需清理 =="
+        exit 0
+    fi
+    if ! confirm "确认删除以上 $found 个文件? 输入 y 继续: "; then
+        die "已取消"
+    fi
+    for f in bundle_*.tgz; do
+        [ -e "$f" ] || continue
+        if [ "$f" = "$newest" ]; then
+            continue
+        fi
+        rm -f -- "$f"
+    done
+    printf '%s\n' "== 清理完成 =="
+    exit 0
+fi
+
+# ---------- 默认模式：取最新 bundle 解压替换 ./src ----------
+
+# 1. 找最新 bundle 并计算 SHA256
+archive=$(find_newest_bundle)
+if [ -z "$archive" ]; then
+    die "未找到 bundle_*.tgz（请先在本地项目根运行 publish-bundle 上传，或用 -h 查看用法）"
+fi
+archive=${archive#./}
+total=0
+for f in bundle_*.tgz; do
+    [ -e "$f" ] || continue
+    total=$((total + 1))
+done
+
+command -v sha256sum >/dev/null 2>&1 || die "缺少 sha256sum 命令（coreutils）"
+digest=$(sha256sum "$archive" | awk '{print $1}')
+
+# 2. 展示将要发生什么，等待手动确认
+src="$PWD/$SRC_DIR"
+printf '%s\n' "== 执行 stage 将发生 =="
+printf '  压缩包: %s（最新一份，目录下共 %d 份）\n' "$archive" "$total"
+printf '  SHA256: %s（可与 publish-bundle 的输出人工核对）\n' "$digest"
+printf '  目标目录: %s\n' "$src"
+printf '  将清空 %s/ 下的所有内容，再解压新代码（不会自动运行任何代码）\n' "$SRC_DIR"
+if ! confirm "确认执行 stage? 输入 y 继续: "; then
+    die "已取消"
+fi
+
+# 3. 清空 ./src 下的所有内容（目录不存在则创建）
+mkdir -p "$src"
+(
+    cd "$src"
+    for f in .[!.]* ..?* *; do
+        [ -e "$f" ] || [ -L "$f" ] || continue
+        rm -rf -- "$f"
+    done
+)
+
+# 4. 解压到临时目录，剥掉单层顶层目录后把内容移入 ./src
+tmp=$(mktemp -d)
+trap 'rm -rf -- "$tmp"' EXIT
+trap 'exit 1' INT TERM
+
+tar -xzf "$archive" -C "$tmp"
+
+# publish-bundle 打包时顶层固定为项目根目录名：仅一个顶层条目且为目录时进入该目录
+top=$tmp
+if [ "$(find "$tmp" -mindepth 1 -maxdepth 1 | wc -l)" -eq 1 ]; then
+    single=$(find "$tmp" -mindepth 1 -maxdepth 1)
+    if [ -d "$single" ]; then
+        top=$single
+    fi
+fi
+
+(
+    cd "$top"
+    for f in .[!.]* ..?* *; do
+        [ -e "$f" ] || [ -L "$f" ] || continue
+        mv -- "$f" "$src/"
+    done
+)
+
+printf '%s\n' "== stage 完成: 新代码已就位 $src =="
