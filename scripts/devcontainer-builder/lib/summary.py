@@ -12,6 +12,15 @@ def _yes_no(flag):
     return "是" if flag else "否"
 
 
+def _param_cell(value):
+    """minimal 参数值渲染为表格单元格（布尔用小写 JSON 形式）。"""
+    if isinstance(value, bool):
+        text = "true" if value else "false"
+    else:
+        text = str(value).replace("|", "\\|").replace("\n", " ")
+    return f"`{text}`"
+
+
 def sha256_of(path):
     digest = hashlib.sha256()
     with open(path, "rb") as f:
@@ -82,6 +91,21 @@ def build_markdown(p, results):
     out.append(f"| 应用端口 (host:container) | {('`' + p.app_port + '`') if p.has_app_port else '(未指定)'} |")
     out.append(f"| env_file | {', '.join(p.env_file_list) if p.env_file_list else '(无)'} |")
     out.append(f"| SELinux 重打标签 (:z) | {_yes_no(p.selinux_relabel)} |")
+    out.append("")
+
+    # workflow-params.json 的 minimal section：只含用户实际改动过的输入
+    minimal_params = results.get("workflow_params_minimal")
+    out.append("### 本次改动输入（workflow-params.json minimal）")
+    out.append("")
+    if minimal_params:
+        out.append("| 参数 | 值 |")
+        out.append("| --- | --- |")
+        for name, value in minimal_params.items():
+            out.append(f"| `{name}` | {_param_cell(value)} |")
+    else:
+        out.append("- (无，全部为默认值)")
+    out.append("")
+    out.append("> 完整快照见产物 `workflow-params.json`（JSONC，每个 section 带一行注释）。")
     out.append("")
 
     out.append("### pip 包清单（含预装组件）")
@@ -162,7 +186,7 @@ def build_markdown(p, results):
         )
     if workflow_params_json:
         out.append(
-            f"| {workflow_params_json.name}（workflow 输入参数快照，"
+            f"| {workflow_params_json.name}（workflow 输入参数快照 JSONC，带注释，"
             "install.sh 不安装它） "
             f"| {human_size(workflow_params_json.stat().st_size)} "
             f"| `{sha256_of(workflow_params_json)}` |"

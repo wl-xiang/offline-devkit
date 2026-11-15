@@ -55,12 +55,13 @@ make up (python main.py)
    - `readme.html`：简易安装说明（把 zip 放到项目根目录 `dist/` 解压后
      `bash install.sh ../`；加 `--load` 可在安装开始前自动 `docker load`
      镜像归档）
-   - `workflow-params.json`：本次运行的 workflow 输入参数快照（详见下文）
+   - `workflow-params.json`：本次运行的 workflow 输入参数快照（JSONC，带注释，详见下文）
 
    > Artifacts 只能是 zip 封装，工作流已设置 `compression-level: 0`（仅存储、
    > 不再二次压缩），解压 zip 即得到产物文件。"Bundle" 专指这个外部 zip 产物；
    > 内部用于 `docker load` 的 tgz 文件名为 "Docker Images"。
-3. Summary 页同时给出本次构建的完整摘要与内网使用步骤。
+3. Summary 页同时给出本次构建的完整摘要（含 workflow-params.json 的 minimal
+   改动输入）与内网使用步骤。
 
 ### 触发参数（Inputs）
 
@@ -122,18 +123,19 @@ zip 内含以下五个文件（`compression-level: 0`，仅存储不再二次压
 | `devcontainer-src_<架构>_<时间戳>.tgz` | 运行时源码包 |
 | `install.sh` | 安装脚本（与 src tgz 放同一目录） |
 | `readme.html` | 简易安装说明（建议把 zip 放到项目根目录 `dist/` 下解压后 `bash install.sh ../`；`--load` 可自动导入镜像） |
-| `workflow-params.json` | 本次运行的 workflow 输入参数快照（仅供追溯，`install.sh` 不安装它） |
+| `workflow-params.json` | 本次运行的 workflow 输入参数快照（JSONC，带注释；仅供追溯，`install.sh` 不安装它） |
 
 #### workflow-params.json
 
-记录本次运行在 GitHub 前端输入的原始参数值，顶层分三个 section（键顺序与
-workflow inputs 定义顺序一致）：
+JSONC 格式（支持 `//` 注释），每个 section 前带一行注释说明。记录本次运行在
+GitHub 前端输入的原始参数值，顶层分三个 section（键顺序与 workflow inputs
+定义顺序一致）：
 
 - `full`（全量版）：记录全部 21 个输入——留空字符串记 `""`，未勾选的
   checkbox 记 `false`；
 - `normal`（正常版）：省略留空字符串与默认值（未勾选）checkbox；
 - `minimal`（精简版）：再省略取默认值的参数（含 choice），只保留用户实际
-  改动过的输入。
+  改动过的输入。该 section 同时以表格形式输出到运行页面的 **Summary**。
 
 值为前端提交的原始字符串（checkbox 解析为布尔，其余不做规范化，如
 `app_port` 只写 `3000` 时原样记录）。该文件仅用于追溯本次构建的输入，
