@@ -395,8 +395,10 @@
 
       <div class="tip">
         <strong>安装前须知：</strong>项目根目录若已存在 <code>Makefile</code>、<code>build.sh</code>、
-        <code>Dockerfile</code> 或 <code>docker-compose.yml</code>，安装会终止且不会覆盖；
-        请先移动或重命名这些文件。
+        <code>Dockerfile</code>、<code>sync.py</code>、<code>flush.py</code> 或
+        <code>docker-compose.yml</code>，安装会终止且不会覆盖；
+        请先移动或重命名这些文件。<code>.env.example</code> 仅在缺失时安装，
+        已存在则保留原文件。
       </div>
     </section>
 
@@ -464,7 +466,7 @@
       <h2><span class="step-dot">05</span>install.sh 做了什么</h2>
       <ul class="checks">
         <li>解压 src 包到 <code>&lt;项目根&gt;/docs/devcontainer</code>（原始文件副本，仅用于把改坏的根目录文件复制回去重置）。</li>
-        <li>把 <code>Makefile</code> / <code>build.sh</code> / <code>Dockerfile</code> / <code>README-devcontainer.md</code> / <code>.dockerignore</code> / <code>.gitignore</code> 安装到项目根目录，已存在同名文件时终止安装。</li>
+        <li>把 <code>Makefile</code> / <code>build.sh</code> / <code>Dockerfile</code> / <code>README-devcontainer.md</code> / <code>sync.py</code> / <code>flush.py</code> / <code>.dockerignore</code> / <code>.gitignore</code> 安装到项目根目录，已存在同名文件时终止安装（<code>.env.example</code> 仅在缺失时安装）。</li>
         <li>复制 compose 模板到项目根目录为 <code>docker-compose.yml</code>。</li>
         <li>创建 <code>wheels/requirements.txt</code> 离线安装头，把 wheel 放进 <code>wheels/</code> 后即可离线安装 Python 包。</li>
       </ul>
