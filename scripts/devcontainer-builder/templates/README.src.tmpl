@@ -10,6 +10,8 @@
   `build.sh`、`README-devcontainer.md`（本文件副本）、`.dockerignore`、`.gitignore`、
   `docker-compose.yml`、`wheels/`（离线补装 wheel，含离线安装头 requirements.txt）。
   —— 你日常操作的位置。
+- **`src/`**：应用源码目录，由 compose 默认挂载为容器内 `/app`；install.sh 会
+  自动创建该目录并按需放入占位 `main.py`。
 - **`docs/devcontainer/`**：上述文件的**原始副本** + `docker-compose.yml.tpl` +
   nginx 配置等。只在根目录文件被改坏时，从这里复制回去重置；
   **不要在该目录下直接运行任何脚本**（脚本按执行时的工作目录解析路径）。
@@ -39,6 +41,7 @@ CPU 架构与上表平台一致。
 # 1. 导入镜像 + 安装（在 dist/ 中执行，参数 ../ 即项目根目录）
 #    --load 会在安装开始前自动 docker load 同目录的镜像归档（一步到位）
 bash install.sh --load ../
+#    （一键默认写法：bash install.sh -d —— 项目根固定为 ../，源码放入 ../src/）
 #    （等价的两步写法：
 #      cd dist && docker load -i devcontainer-docker-images_{{ARCH}}_{{TS}}.tgz
 #      bash install.sh ../
@@ -85,8 +88,8 @@ make down         # 停止
   挂载目录不会出现 root 属主文件（`.pytest_cache` / `.ruff_cache` 等）。
   容器内需要 root 时（如 `pip install` 到系统目录）：
   `make shell HOST_UID=0 HOST_GID=0`。
-- 若项目根目录原本没有 `main.py`，install.sh 会复制一个占位入口（`make up`
-  默认运行 `python main.py`）。请替换为你的真实应用入口。
+- 若应用源码目录 `src/` 下原本没有 `main.py`，install.sh 会复制一个占位入口到
+  `src/main.py`（`make up` 默认运行 `python main.py`）。请替换为你的真实应用入口。
 - `.dockerignore` / `.gitignore` 由 install.sh 安装到项目根目录（已存在时仅
   追加缺失条目）：构建上下文与 git 忽略 `dist/`（bundle 产物）、`wheels/`
   （离线补装 wheel）、`.addon-build/`（补装构建临时目录）等，避免大文件进入

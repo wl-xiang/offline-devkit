@@ -29,7 +29,7 @@ scripts/devcontainer-builder/
     ├── nginx.conf.tmpl            # nginx 反代配置（启用 nginx 且指定 app_port 时）
     ├── Makefile.tmpl              # make 目标（安装到项目根，路径按 pwd 解析）
     ├── requirements.txt.tmpl      # pip 包清单（含预装组件）
-    ├── main.py.tmpl               # 占位入口（install.sh 在应用根目录无 main.py 时复制）
+    ├── main.py.tmpl               # 占位入口（install.sh 在应用源码目录 src/ 无 main.py 时复制）
     ├── install.sh.tmpl            # 安装脚本（复制/改名根目录操作文件、合并忽略文件、wheels 安装头）
     ├── Dockerfile.addon.tmpl      # 离线补装：基于现有镜像生成 addon 阶段（wheels 进 /tmp 同层删；
     │                              #  install.sh 复制到项目根时改名 Dockerfile）
@@ -112,7 +112,9 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   `README-devcontainer.md`）复制到项目根，安装/合并 `.dockerignore` 与
   `.gitignore`（已存在时仅追加缺失条目）；创建 `<根>/wheels/requirements.txt`
   离线安装头（`--no-index --find-links=./`，pip 按该文件所在目录解析相对
-  find-links）；缺少 main.py 且 prod_command 为默认值时放置占位入口。
+  find-links）；创建应用源码目录 `<根>/src/`（compose 默认挂载为 /app），缺少
+  main.py 且 prod_command 为默认值时在其中放置占位入口。`-d/--default` 为
+  一键写法：项目根固定为 `../`，源码放入 `../src/`。
   Makefile/build.sh 的全部路径按**执行时 pwd** 解析，原始副本与根目录文件
   可互换。模板内 `${SRC_ROOT:-./src/}`（默认 `./src/`，挂载为 /app）与
   `${SRC_ROOT_NAME:-app}`（compose 项目名后缀）由 docker compose 运行时解析。

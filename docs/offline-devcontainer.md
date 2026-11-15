@@ -158,7 +158,7 @@ devcontainer-src/
 │                                #  为 Dockerfile 安装到项目根目录，供离线补装用）
 ├── docker-compose.yml.tpl       # compose 模板（install.sh 原样复制到项目根为 docker-compose.yml）
 ├── Makefile                     # check/up/down/shell/lint/compile/test 等（复制到项目根）
-├── main.py                      # 占位入口（应用根目录无 main.py 时由 install.sh 复制）
+├── main.py                      # 占位入口（install.sh 复制到 <项目根>/src/）
 ├── requirements.txt             # pip 包清单
 ├── Dockerfile.addon             # 离线补装：基于现有镜像把 wheels/ 打进 addon 镜像
 │                                # （复制到项目根目录时改名为 Dockerfile）
@@ -190,6 +190,7 @@ BuildKit bind mount 参与，不落入任何镜像层），运行容器内没有
 bash install.sh ../              # 参数 = 你的项目根目录（dist/ 的上级）
 bash install.sh --load ../       # 加 --load：安装开始前自动 docker load
                                  # 同目录的镜像归档 tgz（无需再手动 load）
+bash install.sh -d               # 一键默认：项目根固定为 ../，源码放入 ../src/
 ```
 
 脚本会（先做全部前置检查、再写盘，任一检查失败都不会留下半套安装）：
@@ -210,8 +211,9 @@ bash install.sh --load ../       # 加 --load：安装开始前自动 docker loa
    `--no-index --find-links=./`，仅缺失时创建）。pip 会把 `--find-links=./`
    解析到该文件所在目录：把 wheel 放进 `wheels/` 后，容器内外均可用
    `pip install -r wheels/requirements.txt <包名>` 离线安装；
-6. 项目根目录没有 `main.py` 且启动命令为默认的 `python main.py` 时，复制
-   占位 `main.py` 到项目根目录（不覆盖已有文件）；
+6. 创建应用源码目录 `<项目根>/src/`（compose 默认把 `./src/` 挂载为容器内
+   `/app`）；该目录没有 `main.py` 且启动命令为默认的 `python main.py` 时，
+   复制占位 `main.py` 到 `<项目根>/src/main.py`（不覆盖已有文件）；
 7. 检测 compose 命令：有 `docker compose` 插件时不改 Makefile；只有
    `docker-compose` 时把 Makefile 的 `COMPOSE` 改为 `docker-compose`；
    两者都没有时保持默认，并在结束时给出红色警告。
@@ -472,8 +474,8 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
   运行 compose 前设置环境变量覆盖（如 `SRC_ROOT=/data/other`）。
 - 项目根目录的 `docker-compose.yml` 是用户可改的副本，`.tpl` 保持原样；
   `docker-compose.yml` 已存在时 install.sh 报错退出，不会覆盖。
-- 应用根目录没有 `main.py` 且启动命令为默认值时，install.sh 复制占位
-  `main.py` 到项目根目录，保证 `make up` 开箱即用（否则 `python main.py`
+- 应用源码目录 `src/` 没有 `main.py` 且启动命令为默认值时，install.sh 复制
+  占位 `main.py` 到 `src/`，保证 `make up` 开箱即用（否则 `python main.py`
   立即退出，配合 `restart: unless-stopped` 会无限重启）。
 
 ### 根目录操作文件与原始副本（docs/devcontainer）

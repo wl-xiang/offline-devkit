@@ -6,7 +6,8 @@
     python flush.py -y       # 跳过交互确认直接执行
 
 协议说明:
-    部署目录固定为 ./src —— 与 install.sh 的默认安装路径 ../src/ 一致
+    部署目录固定为 ./src —— 与 install.sh 默认把源码放入 ../src/
+    （项目根 ../ 下的 src）一致
     （compose 模板中 ${SRC_ROOT:-./src/} 把该目录挂载为容器内 /app）。
 
 流程:

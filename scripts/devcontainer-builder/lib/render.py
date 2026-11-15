@@ -563,7 +563,8 @@ def render_gitignore(p):
 
 
 def render_main_py():
-    """占位入口：install.sh 在应用根目录无 main.py 且启动命令为默认值时复制。"""
+    """占位入口：install.sh 在应用源码目录 <项目根>/src 无 main.py 且启动
+    命令为默认值时复制过去。"""
     return _load("main.py.tmpl")
 
 
