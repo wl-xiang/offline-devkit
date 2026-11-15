@@ -28,6 +28,9 @@ def build_markdown(p, results):
     images_tgz = results.get("images_tgz")
     install_sh = results.get("install_sh")
     readme_html = results.get("readme_html")
+    sync_py = results.get("sync_py")
+    flush_py = results.get("flush_py")
+    env_example = results.get("env_example")
     skipped_docker = results.get("skipped_docker", False)
     bundle_name = p.bundle_name
 
@@ -135,7 +138,7 @@ def build_markdown(p, results):
     out.append("### 产物清单")
     out.append("")
     out.append(f"唯一 Artifact：**{bundle_name}**（zip 封装、仅存储不压缩，"
-               "解压即得以下四个文件）")
+               "解压即得以下七个文件）")
     out.append("")
     out.append("| 文件 | 大小 | SHA256 |")
     out.append("| --- | --- | --- |")
@@ -159,13 +162,29 @@ def build_markdown(p, results):
         out.append(
             f"| {readme_html.name}（安装说明） | {human_size(readme_html.stat().st_size)} | (HTML) |"
         )
+    if sync_py:
+        out.append(
+            f"| {sync_py.name}（代码同步：本地打包并 SFTP 推送到远端部署服务器，需 paramiko） "
+            f"| {human_size(sync_py.stat().st_size)} | `{sha256_of(sync_py)}` |"
+        )
+    if flush_py:
+        out.append(
+            f"| {flush_py.name}（部署服务器端：校验 sync.json 后解压替换到 ./src） "
+            f"| {human_size(flush_py.stat().st_size)} | `{sha256_of(flush_py)}` |"
+        )
+    if env_example:
+        out.append(
+            f"| {env_example.name}（sync.py 环境变量模板，复制为 .env 填写） "
+            f"| {human_size(env_example.stat().st_size)} | - |"
+        )
     out.append("")
 
     out.append("### 内网使用步骤")
     out.append("")
     out.append("1. 从本次运行页面底部 **Artifacts** 下载唯一产物"
                f" **{bundle_name}**（zip 仅为封装、不压缩，解压得到"
-               " 镜像归档 tgz、src tgz、install.sh 与 readme.html 四个文件），"
+               " 镜像归档 tgz、src tgz、install.sh、readme.html、sync.py、"
+               " flush.py 与 .env.example 七个文件），"
                "传输到与目标平台一致的内网机器，并用上表 SHA256 校验完整性。")
     out.append("")
     out.append("2. **把 artifact zip 包放到你的项目根目录 `dist/` 文件夹下**"
@@ -330,6 +349,10 @@ def emit(p, results):
         readme_html = results.get("readme_html")
         if readme_html:
             entries.append(("readme_html", str(readme_html)))
+        for key in ("sync_py", "flush_py", "env_example"):
+            value = results.get(key)
+            if value:
+                entries.append((key, str(value)))
         entries.append(("images", ",".join(results.get("images") or [])))
         with open(output_path, "a", encoding="utf-8") as f:
             for key, value in entries:

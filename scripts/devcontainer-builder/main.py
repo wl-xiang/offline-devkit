@@ -11,9 +11,12 @@
     5. lib/package.py 打包 devcontainer-src_<arch>_<ts>.tgz；镜像归档
        devcontainer-docker-images_<arch>_<ts>.tgz 已在上一步直出；
        install.sh 与 readme.html 写入 dist/
-    6. lib/summary.py 写 GITHUB_STEP_SUMMARY / GITHUB_OUTPUT，
+    6. sync.py / flush.py / .env.example 原样复制到 dist/（随 bundle 分发的
+       代码同步部署脚本与环境变量模板）
+    7. lib/summary.py 写 GITHUB_STEP_SUMMARY / GITHUB_OUTPUT，
        上传唯一 Artifact：<image_prefix>_devcontainer_<arch>_<ts>（zip，内含镜像归档
-       tgz、src tgz、install.sh 与 readme.html 四个文件）
+       tgz、src tgz、install.sh、readme.html、sync.py、flush.py 与
+       .env.example 七个文件）
 
 本地联调可设置 DEVCONTAINER_SKIP_DOCKER=1 跳过 docker 步骤。
 """
@@ -128,6 +131,20 @@ def main():
     )
     print(f"== 安装说明: {readme_html} ==")
 
+    # 代码同步部署脚本与环境变量模板：仓库内原样复制到 dist/，随 bundle 分发
+    # （sync.py 在本地打包并 SFTP 推送到远端；flush.py 在部署服务器端解压到 ./src）
+    script_dir = Path(__file__).resolve().parent
+    sync_py = REPO_ROOT / "dist" / "sync.py"
+    flush_py = REPO_ROOT / "dist" / "flush.py"
+    env_example = REPO_ROOT / "dist" / ".env.example"
+    for name, dst in (
+        ("sync.py", sync_py),
+        ("flush.py", flush_py),
+        (".env.example", env_example),
+    ):
+        shutil.copyfile(script_dir / name, dst)
+    print(f"== 部署脚本: {sync_py} / {flush_py} / {env_example} ==")
+
     if images_tgz is not None:
         print(f"== 镜像归档产物: {images_tgz} "
               f"({package_mod.human_size(images_tgz.stat().st_size)}) ==")
@@ -138,6 +155,9 @@ def main():
         "images_tgz": images_tgz,
         "install_sh": install_sh,
         "readme_html": readme_html,
+        "sync_py": sync_py,
+        "flush_py": flush_py,
+        "env_example": env_example,
         "images": images,
         "wheels_count": wheels_count,
         "skipped_docker": skip_docker,

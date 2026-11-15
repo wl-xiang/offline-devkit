@@ -47,7 +47,7 @@ make up (python main.py)
    **Run workflow**。
 2. 填写参数后运行。运行完成后在 **Summary** 底部 **Artifacts** 下载唯一产物
    `<image_prefix>_devcontainer_<架构>_<时间戳>.zip`（架构为 `amd64` / `arm64`，
-   时间戳为 UTC+8），zip 解压得到四个文件：
+   时间戳为 UTC+8），zip 解压得到七个文件：
    - `devcontainer-docker-images_<架构>_<时间戳>.tgz`：Docker Images 镜像归档
      （gzip 压缩的 `docker save` 输出，可直接 `docker load`）
    - `devcontainer-src_<架构>_<时间戳>.tgz`：运行时源码包
@@ -55,6 +55,11 @@ make up (python main.py)
    - `readme.html`：简易安装说明（把 zip 放到项目根目录 `dist/` 解压后
      `bash install.sh ../`；加 `--load` 可在安装开始前自动 `docker load`
      镜像归档）
+   - `sync.py`：代码同步脚本（本地项目根目录运行：打包 src-buddle 压缩包并
+     连同 sync.json 经 SFTP 推送到远端部署服务器，需 `pip install paramiko`）
+   - `flush.py`：部署服务器端脚本（在压缩包与 sync.json 所在目录运行：校验
+     SHA256 并经确认后把压缩包解压替换到 `./src`）
+   - `.env.example`：sync.py 环境变量模板（复制为 `.env` 填写远端 SSH 信息）
 
    > Artifacts 只能是 zip 封装，工作流已设置 `compression-level: 0`（仅存储、
    > 不再二次压缩），解压 zip 即得到产物文件。"Bundle" 专指这个外部 zip 产物；
@@ -113,7 +118,7 @@ make up (python main.py)
 
 唯一 Artifact 为 `<image_prefix>_devcontainer_<架构>_<yyyymmdd-HHMMSS>.zip`
 （架构为 `amd64` / `arm64`，时间戳 UTC+8），
-zip 内含以下四个文件（`compression-level: 0`，仅存储不再二次压缩）：
+zip 内含以下七个文件（`compression-level: 0`，仅存储不再二次压缩）：
 
 | 文件 | 用途 |
 |------|------|
@@ -121,6 +126,9 @@ zip 内含以下四个文件（`compression-level: 0`，仅存储不再二次压
 | `devcontainer-src_<架构>_<时间戳>.tgz` | 运行时源码包 |
 | `install.sh` | 安装脚本（与 src tgz 放同一目录） |
 | `readme.html` | 简易安装说明（建议把 zip 放到项目根目录 `dist/` 下解压后 `bash install.sh ../`；`--load` 可自动导入镜像） |
+| `sync.py` | 代码同步脚本（本地打包 src-buddle 压缩包并经 SFTP 推送到远端部署服务器，需 paramiko） |
+| `flush.py` | 部署服务器端脚本（读取 sync.json，校验 SHA256 后解压替换到 `./src`） |
+| `.env.example` | sync.py 环境变量模板（远端 SSH 主机/端口/用户/密码/部署路径/打包方式） |
 
 ### devcontainer-docker-images_<架构>_<yyyymmdd-HHMMSS>.tgz
 
