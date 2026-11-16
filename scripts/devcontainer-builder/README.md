@@ -72,8 +72,8 @@ scripts/devcontainer-builder/
 | `APP_PORT` | `3000:3000` | 端口映射 `host:container`（单端口等价同端口）；启用 nginx 时只暴露容器端口 |
 | `ENV_FILE` | 空 | 注入 app 服务的 env 文件，逗号/空格分隔 |
 | `SELINUX_RELABEL` | `false` | 挂载追加 `:z`（SELinux Enforcing 主机） |
-| `MOUNT_HOST_TIMEZONE` | `false` | app/dev 服务只读挂载宿主机 `/etc/localtime` 与 `/etc/timezone`（容器时间跟随宿主机） |
-| `ENABLE_TZ_SHANGHAI` | `false` | 镜像内设置 `TZ=Asia/Shanghai`（UTC+8，构建期补装 tzdata） |
+| `MOUNT_HOST_TIMEZONE` | `true` | app/dev 服务只读挂载宿主机 `/etc/localtime` 与 `/etc/timezone`（容器时间跟随宿主机） |
+| `ENABLE_TZ_SHANGHAI` | `true` | 镜像内设置 `TZ=Asia/Shanghai`（UTC+8，构建期补装 tzdata） |
 | `DEVCONTAINER_SKIP_DOCKER` | 空 | 置 `1` 跳过 docker 步骤（本地联调） |
 
 ## 本地运行

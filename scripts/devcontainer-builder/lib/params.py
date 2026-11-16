@@ -433,8 +433,8 @@ def load():
         npm_custom_registry_url=_env("NPM_CUSTOM_REGISTRY_URL", ""),
         npm_packages_dir=_env("NPM_PACKAGES_DIR", "packages"),
         selinux_relabel=_env_bool("SELINUX_RELABEL", False),
-        mount_host_timezone=_env_bool("MOUNT_HOST_TIMEZONE", False),
-        enable_tz_shanghai=_env_bool("ENABLE_TZ_SHANGHAI", False),
+        mount_host_timezone=_env_bool("MOUNT_HOST_TIMEZONE", True),
+        enable_tz_shanghai=_env_bool("ENABLE_TZ_SHANGHAI", True),
         image_tag=_env("IMAGE_TAG", "latest"),
         ts=datetime.now(TZ_CN).strftime("%Y%m%d-%H%M%S"),
     )
@@ -599,8 +599,8 @@ WORKFLOW_INPUTS = (
     ("app_port", "APP_PORT", "string", "3000:3000"),
     ("env_file", "ENV_FILE", "string", ""),
     ("selinux_relabel", "SELINUX_RELABEL", "boolean", "false"),
-    ("mount_host_timezone", "MOUNT_HOST_TIMEZONE", "boolean", "false"),
-    ("enable_tz_shanghai", "ENABLE_TZ_SHANGHAI", "boolean", "false"),
+    ("mount_host_timezone", "MOUNT_HOST_TIMEZONE", "boolean", "true"),
+    ("enable_tz_shanghai", "ENABLE_TZ_SHANGHAI", "boolean", "true"),
 )
 
 
