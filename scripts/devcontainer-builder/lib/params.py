@@ -106,6 +106,13 @@ IMAGE_PREFIX_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 
 BOOL_TRUE = {"1", "true", "yes", "on"}
 
+# 勾选 mount_host_timezone 时映射进容器（只读）的宿主机时区配置文件
+TIMEZONE_MOUNTS = ("/etc/localtime:/etc/localtime:ro",
+                   "/etc/timezone:/etc/timezone:ro")
+
+# 勾选 enable_tz_shanghai 时写入镜像的时区（UTC+8）
+TZ_SHANGHAI = "Asia/Shanghai"
+
 
 class ParamError(ValueError):
     """参数校验失败。"""
@@ -155,6 +162,8 @@ class Params:
     npm_custom_registry_url: str
     npm_packages_dir: str
     selinux_relabel: bool
+    mount_host_timezone: bool
+    enable_tz_shanghai: bool
     image_tag: str
     ts: str
 
@@ -371,6 +380,16 @@ class Params:
         return f"{src}:/app{':z' if self.selinux_relabel else ''}"
 
     @property
+    def timezone_volumes(self):
+        """宿主机时区配置只读挂载（勾选 mount_host_timezone 时生效）。"""
+        return list(TIMEZONE_MOUNTS) if self.mount_host_timezone else []
+
+    @property
+    def tz_env(self):
+        """镜像内时区：勾选 enable_tz_shanghai 时为 Asia/Shanghai，否则空。"""
+        return TZ_SHANGHAI if self.enable_tz_shanghai else ""
+
+    @property
     def prod_command_args(self):
         return shlex.split(self.prod_command)
 
@@ -414,6 +433,8 @@ def load():
         npm_custom_registry_url=_env("NPM_CUSTOM_REGISTRY_URL", ""),
         npm_packages_dir=_env("NPM_PACKAGES_DIR", "packages"),
         selinux_relabel=_env_bool("SELINUX_RELABEL", False),
+        mount_host_timezone=_env_bool("MOUNT_HOST_TIMEZONE", True),
+        enable_tz_shanghai=_env_bool("ENABLE_TZ_SHANGHAI", True),
         image_tag=_env("IMAGE_TAG", "latest"),
         ts=datetime.now(TZ_CN).strftime("%Y%m%d-%H%M%S"),
     )
@@ -578,6 +599,8 @@ WORKFLOW_INPUTS = (
     ("app_port", "APP_PORT", "string", "3000:3000"),
     ("env_file", "ENV_FILE", "string", ""),
     ("selinux_relabel", "SELINUX_RELABEL", "boolean", "false"),
+    ("mount_host_timezone", "MOUNT_HOST_TIMEZONE", "boolean", "true"),
+    ("enable_tz_shanghai", "ENABLE_TZ_SHANGHAI", "boolean", "true"),
 )
 
 
