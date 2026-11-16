@@ -5,7 +5,7 @@
     - 只打包项目根目录下 ./src 的全部内容（真正的 SRC Bundle，不携带项目
       其它文件，不会污染远端源码目录）
     - 产物写入本地 ./bundles/（被 .gitignore 忽略）:
-        bundles/bundle_<项目名>_<mmdd-HHMMSS>.tgz   源码包
+        bundles/bundle_<项目名>_<mmdd-HHMM>.tgz     源码包
         bundles/bundle.meta                          元信息（KV，与 .env 同格式）
     - bundle.meta 与 tgz 一起上传到远端 <SYNC_REMOTE_PATH>/bundles/，
       stage-bundle 据此校验完整性（BUNDLE_FILE 匹配 + SHA256 比对）
@@ -407,9 +407,9 @@ def main():
     bundles_dir.mkdir(exist_ok=True)
 
     # 2. 打包 src/ 内容 + 生成 bundle.meta
-    #    文件名: bundle_<根目录名>_<mmdd-HHMMSS>.tgz（"最新"按文件名时间戳判定）
+    #    文件名: bundle_<根目录名>_<mmdd-HHMM>.tgz（"最新"按文件名时间戳判定）
     now = datetime.now(TZ_CN)
-    ts = now.strftime("%m%d-%H%M%S")
+    ts = now.strftime("%m%d-%H%M")
     archive = bundles_dir / f"{ARCHIVE_PREFIX}_{project_dir.name}_{ts}.tgz"
     patterns = None if args.no_ignore else load_ignore(project_dir)
     pack_mode = "full" if args.no_ignore else "gitignore"

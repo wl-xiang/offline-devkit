@@ -14,7 +14,7 @@
 # 协议说明:
 #     bundle 与 bundle.meta 固定位于 ./bundles/（publish-bundle 上传到远端
 #     <项目路径>/bundles/）："最新"按 bundle 文件名中的时间戳判定
-#     （bundle_<项目名>_<mmdd-HHMMSS>.tgz），不依赖文件修改时间。
+#     （bundle_<项目名>_<mmdd-HHMM>.tgz），不依赖文件修改时间。
 #     bundle.meta 记录 BUNDLE_FILE / SHA256 等元信息，stage 前强制校验：
 #     meta 与最新 bundle 文件名必须一致，且 SHA256 必须匹配，否则拒绝部署。
 #     部署目录固定为 ./src —— 与 install.sh 默认把源码放入 ../src/
@@ -27,7 +27,7 @@
 #     3. 展示计划，等待手动输入 y 确认（-y 跳过）
 #     4. 前置钩子: 自动 make down 下线服务（失败仅告警，不阻塞）
 #     5. 解压到临时目录（bundle 损坏在此暴露，尚未触碰 ./src）
-#     6. 备份旧版本到 bundles/backup_src_<mmdd-HHMMSS>.tgz，再清空 ./src
+#     6. 备份旧版本到 bundles/backup_src_<mmdd-HHMM>.tgz，再清空 ./src
 #     7. 把新代码移入 ./src（不会自动运行任何代码，完成后提示手动 make up）
 
 set -eu
@@ -243,7 +243,7 @@ if [ "$(find "$tmp" -mindepth 1 -maxdepth 1 | wc -l)" -eq 1 ]; then
 fi
 
 # 6. 备份旧版本，再清空 ./src
-ts=$(date +%m%d-%H%M%S)
+ts=$(date +%m%d-%H%M)
 backup="$BUNDLES_DIR/backup_src_$ts.tgz"
 if [ -d "$src" ] && [ -n "$(ls -A "$src" 2>/dev/null)" ]; then
     mkdir -p "$BUNDLES_DIR"
