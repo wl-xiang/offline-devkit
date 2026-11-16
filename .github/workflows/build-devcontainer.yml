@@ -253,7 +253,7 @@ jobs:
           grep -q 'devcontainer-src/.gitignore$' /tmp/src_tgz.list \
             || { echo "::error::src 包缺少 .gitignore"; exit 1; }
           # 部署辅助脚本与环境变量模板（install.sh 安装到项目根目录）
-          for f in sync.py flush.py .env.example; do
+          for f in publish-bundle stage-bundle .env.example; do
             grep -q "devcontainer-src/$f$" /tmp/src_tgz.list \
               || { echo "::error::src 包缺少 $f"; exit 1; }
           done
@@ -278,7 +278,7 @@ jobs:
             grep -q 'SRC_DIR="$INSTALL_PATH/src"' "${{ steps.build.outputs.install_sh }}" \
               || { echo "::error::install.sh 未把应用源码放入 <项目根>/src"; exit 1; }
             # 部署辅助脚本与环境变量模板必须安装到项目根目录
-            for f in sync.py flush.py .env.example; do
+            for f in publish-bundle stage-bundle .env.example; do
               grep -q "$f" "${{ steps.build.outputs.install_sh }}" \
                 || { echo "::error::install.sh 未安装 $f 到项目根目录"; exit 1; }
             done
