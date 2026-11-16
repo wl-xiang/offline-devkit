@@ -127,6 +127,16 @@ on:
         type: boolean
         required: true
         default: false
+      mount_host_timezone:
+        description: 'Map host timezone config into containers: bind-mount /etc/localtime and /etc/timezone read-only into the app/dev services (container time follows the host)'
+        type: boolean
+        required: true
+        default: false
+      enable_tz_shanghai:
+        description: 'Set TZ=Asia/Shanghai (UTC+8) inside the image (installs tzdata at build time; ignored by containers when mount_host_timezone overrides the clock)'
+        type: boolean
+        required: true
+        default: false
 
 permissions:
   contents: read
@@ -193,6 +203,8 @@ jobs:
           APP_PORT: ${{ inputs.app_port }}
           ENV_FILE: ${{ inputs.env_file }}
           SELINUX_RELABEL: ${{ inputs.selinux_relabel }}
+          MOUNT_HOST_TIMEZONE: ${{ inputs.mount_host_timezone }}
+          ENABLE_TZ_SHANGHAI: ${{ inputs.enable_tz_shanghai }}
           # 原始输入透传（供 workflow-params.jsonc 快照记录；上方 ENABLE_NGINX 等
           # 为 contains/等值 派生布尔，不含原始值）
           SIDECARS: ${{ inputs.sidecars }}
@@ -351,6 +363,8 @@ jobs:
               "app_port": ("3000:3000", "string"),
               "env_file": ("", "string"),
               "selinux_relabel": ("false", "boolean"),
+              "mount_host_timezone": ("false", "boolean"),
+              "enable_tz_shanghai": ("false", "boolean"),
           }
           text = Path(sys.argv[1]).read_text(encoding="utf-8")
           # JSONC：每个 section 前必须有一行极简注释

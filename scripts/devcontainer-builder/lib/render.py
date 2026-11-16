@@ -199,6 +199,7 @@ def _base_mapping(p):
         "ORACLE_COMPOSE_HINT": _oracle_compose_hint(p),
         "EXTRA_VOLUMES": _extra_volumes(p),
         "APP_ENV_BLOCK": _env_block(p),
+        "TZ_ENV_BLOCK": _tz_env_block(p),
         # ---- Node.js / npm 前端离线开发 ----
         "NODE_ENABLED": "1" if p.enable_node else "0",
         "NODE_VERSION": p.node_version,
@@ -259,13 +260,22 @@ def _oracle_compose_hint(p):
 
 
 def _extra_volumes(p):
-    """app/dev 服务额外的只读挂载（Oracle 客户端、npm 离线包）。"""
+    """app/dev 服务额外的只读挂载（Oracle 客户端、npm 离线包、宿主机时区）。"""
     lines = []
     if p.oracle_client_mount:
         lines.append(f"      - {p.oracle_client_mount}\n")
     if p.npm_packages_mount:
         lines.append(f"      - {p.npm_packages_mount}\n")
+    for volume in p.timezone_volumes:
+        lines.append(f"      - {volume}\n")
     return "".join(lines)
+
+
+def _tz_env_block(p):
+    """镜像内时区：勾选 enable_tz_shanghai 时写入 ENV TZ（配合 tzdata 生效）。"""
+    if not p.tz_env:
+        return ""
+    return f"ENV TZ={p.tz_env}\n"
 
 
 def _escape_dollar(value):
@@ -394,7 +404,10 @@ def render_dockerfile(p, local_wheels=True):
                 else "docs/devcontainer/requirements.txt")
     base = {
         **_base_mapping(p),
-        "APT_BLOCK": _apt_block(p.apt_package_list),
+        # 勾选 enable_tz_shanghai 时补装 tzdata（slim 镜像不带，TZ 环境变量才生效）
+        "APT_BLOCK": _apt_block(
+            p.apt_package_list + (["tzdata"] if p.enable_tz_shanghai else [])
+        ),
         "CUSTOM_INSTALL_BLOCK": _custom_install_block(p.custom_install_cmd),
         "INSTALL_BLOCK": _install_block(local_wheels, req_path),
         "DEV_PIP_BLOCK": _dev_pip_block(p, local_wheels),

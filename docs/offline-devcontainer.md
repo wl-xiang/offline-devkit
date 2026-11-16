@@ -88,6 +88,8 @@ make up (python main.py)
 | `app_port` | string | `host:container` 或单个端口号 | `3000:3000` | 应用端口映射：写成 `3000:3000` 表示宿主机 3000 → 容器 3000；只写 `3000` 等价于 `3000:3000`；空 = 不映射。启用 nginx 时 app 仅容器网络暴露容器端口，由 nginx 反代 |
 | `env_file` | string | 逗号/空格分隔 | 空 | **注入 app 服务的环境变量文件**（等价 compose `env_file`）：文件中的变量会进入 app 容器，常用于放置数据库密码、密钥等不适合写进 `preset_envs` 的配置。相对项目根或绝对路径（如 `.env`） |
 | `selinux_relabel` | boolean | — | `false` | 给 `/app` 挂载追加 `:z` 重打标签（SELinux Enforcing 主机需要） |
+| `mount_host_timezone` | boolean | — | `false` | app/dev 服务只读挂载宿主机 `/etc/localtime` 与 `/etc/timezone`（容器时间跟随宿主机；同时勾选 `enable_tz_shanghai` 时挂载优先） |
+| `enable_tz_shanghai` | boolean | — | `false` | 镜像内指定 `TZ=Asia/Shanghai`（UTC+8），构建期自动补装 `tzdata` |
 
 > **固定值（不再作为输入暴露）**：`glibc_version=2.28`（manylinux 标签）、
 > `pip_mirror=Official (pypi.org)`、Node.js `24`、

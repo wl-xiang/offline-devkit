@@ -110,6 +110,14 @@ def build_markdown(p, results):
     out.append(f"| 应用端口 (host:container) | {('`' + p.app_port + '`') if p.has_app_port else '(未指定)'} |")
     out.append(f"| env_file | {', '.join(p.env_file_list) if p.env_file_list else '(无)'} |")
     out.append(f"| SELinux 重打标签 (:z) | {_yes_no(p.selinux_relabel)} |")
+    if p.timezone_volumes:
+        out.append(
+            "| 宿主机时区挂载 | `/etc/localtime` + `/etc/timezone`（只读） |"
+        )
+    else:
+        out.append("| 宿主机时区挂载 | 未启用 |")
+    tz_summary = f"`TZ={p.tz_env}`（UTC+8，镜像内）" if p.tz_env else "未启用"
+    out.append(f"| 镜像内时区 (TZ) | {tz_summary} |")
     out.append("")
 
     out.append("### pip 包清单（含预装组件）")
