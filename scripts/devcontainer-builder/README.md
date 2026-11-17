@@ -147,7 +147,11 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   `npm_packages` 构建期从官方 npm 源全局安装；Npm Download 产物目录由 compose
   只读挂载到 `/opt/npm-packages`，配合 `make npm-install` 离线安装前端依赖。
   两者的 pip 包并入 requirements.txt 与 pip download（用户显式列出同名包时
-  以用户声明为准），环境变量与 workflow inputs 一一对应。
+  以用户声明为准），环境变量与 workflow inputs 一一对应；
+  `enable_playwright` → 追加 pip 包 `playwright`，并在 INSTALL 之后执行
+  `playwright install --with-deps chromium`（有头/无头共用同一浏览器；
+  `PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright` 固定浏览器目录，容器内
+  任意用户可用，playwright CLI 全局安装于 /usr/local/bin）。
 - **预设环境变量**：`preset_envs`（单个 `》` 分隔的 `KEY=VALUE`）渲染为 compose
   app/dev 服务的 `environment`；与 Oracle 默认变量合并（同名覆盖），值中的
   `$` 转义为 `$$` 保证按字面量注入。
