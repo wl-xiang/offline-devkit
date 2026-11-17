@@ -1,10 +1,13 @@
 # ---- Playwright：chromium 浏览器（有头/无头共用同一浏览器二进制） ----
 # pip 包已经 requirements.txt 安装；此处下载浏览器与系统依赖。
 # PLAYWRIGHT_BROWSERS_PATH 固定到 /opt/ms-playwright：浏览器不落在 $HOME/.cache，
-# 容器内任意用户（compose 以 HOST_UID:HOST_GID 运行）都能直接使用；
-# --with-deps 会自动 apt 安装 chromium 运行所需的系统库（含有头模式依赖）。
+# 容器内任意用户（compose 以 HOST_UID:HOST_GID 运行）都能直接使用。
+# libatomic1 必须先装：playwright CLI 自带的 node 驱动依赖 libatomic.so.1，
+# slim 镜像缺该库时 CLI 无法启动，--with-deps 的自动装依赖也就无从执行。
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
 RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends libatomic1; \
     playwright install --with-deps chromium; \
     chmod -R a+rX /opt/ms-playwright; \
     apt-get clean; \
