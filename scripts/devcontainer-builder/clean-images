@@ -6,9 +6,10 @@
 # docker load -i 重新导入镜像归档。
 #
 # 用法（在项目根目录执行）:
-#     ./clean-images          # 列出镜像，确认后删除
-#     ./clean-images -y       # 跳过确认直接删除
-#     ./clean-images -h       # 查看帮助
+#     ./clean-images           # 列出 compose 声明的镜像，确认后删除
+#     ./clean-images --no-name # 清除名称与 Tag 均为 <none> 的悬空镜像
+#     ./clean-images -y        # 跳过确认直接删除
+#     ./clean-images -h        # 查看帮助
 
 set -euo pipefail
 
@@ -16,19 +17,23 @@ COMPOSE_FILE="$(cd "$(dirname "$0")" && pwd -P)/docker-compose.yml"
 
 usage() {
     cat <<'EOF'
-用法: ./clean-images [-y|--yes] [-h|--help]
+用法: ./clean-images [-y|--yes] [--no-name] [-h|--help]
 
-删除本 DevContainer 使用的全部镜像：镜像清单取自脚本同目录
+删除本 DevContainer 使用的镜像：镜像清单取自脚本同目录
 docker-compose.yml 的 services 声明（app / dev / nginx / postgres 等
 服务的 image: 值），镜像不存在时自动跳过。
 
 选项:
+  --no-name    清除 Docker images 中名称（REPOSITORY）与 Tag 均为 <none>
+               的悬空镜像（dangling images，通常是旧构建残留）；该模式
+               不需要 docker-compose.yml
   -y, --yes    跳过确认，直接删除
   -h, --help   显示本帮助并退出
 
 示例:
-  ./clean-images        # 确认后清除 compose 中声明的镜像
-  ./clean-images -y     # 直接清除（适合脚本 / CI）
+  ./clean-images                  # 确认后清除 compose 中声明的镜像
+  ./clean-images --no-name        # 清除 <none>:<none> 悬空镜像
+  ./clean-images --no-name -y     # 直接清除悬空镜像（适合脚本 / CI）
 
 说明:
   镜像被运行中的容器占用时无法删除，请先执行 make down。
@@ -37,14 +42,51 @@ EOF
 }
 
 assume_yes=0
+no_name=0
 while [ "$#" -gt 0 ]; do
     case "$1" in
         -y|--yes)  assume_yes=1 ;;
+        --no-name) no_name=1 ;;
         -h|--help) usage; exit 0 ;;
         *)         printf '错误: 未知参数: %s（用 -h 查看用法）\n' "$1" >&2; exit 2 ;;
     esac
     shift
 done
+
+command -v docker >/dev/null 2>&1 \
+    || { printf '错误: 未检测到 docker 命令\n' >&2; exit 1; }
+
+# ---------- --no-name：名称与 Tag 均为 <none> 的悬空镜像 ----------
+if [ "$no_name" -eq 1 ]; then
+    mapfile -t dangling < <(docker images --filter dangling=true --format '{{.ID}}' | sort -u)
+    if [ "${#dangling[@]}" -eq 0 ]; then
+        printf '== 没有名称与 Tag 均为 <none> 的镜像，无需清理 ==\n'
+        exit 0
+    fi
+    printf '== 悬空镜像清单（REPOSITORY 与 TAG 均为 <none>）==\n'
+    docker images --filter dangling=true --format '  {{.ID}}  {{.Repository}}:{{.Tag}}  {{.Size}}'
+    if [ "$assume_yes" -ne 1 ]; then
+        printf '确认删除以上 %d 个镜像? 输入 y 继续: ' "${#dangling[@]}"
+        IFS= read -r answer || { printf '\n'; printf '已取消\n'; exit 1; }
+        answer=$(printf '%s' "$answer" | tr '[:upper:]' '[:lower:]')
+        [ "$answer" = "y" ] || { printf '已取消\n'; exit 1; }
+    fi
+    failed=0
+    for img in "${dangling[@]}"; do
+        if docker rmi -f "$img" >/dev/null; then
+            printf '  已删除  %s\n' "$img"
+        else
+            printf '  失败    %s（可能仍被容器使用，请先 make down）\n' "$img" >&2
+            failed=1
+        fi
+    done
+    if [ "$failed" -ne 0 ]; then
+        printf '== 部分镜像删除失败 ==\n' >&2
+        exit 1
+    fi
+    printf '== 清理完成 ==\n'
+    exit 0
+fi
 
 [ -f "$COMPOSE_FILE" ] \
     || { printf '错误: 未找到 %s（请在项目根目录使用 ./clean-images）\n' "$COMPOSE_FILE" >&2; exit 1; }
@@ -83,9 +125,6 @@ if [ "${#images[@]}" -eq 0 ]; then
     printf '错误: %s 的 services 下未找到 image 声明\n' "$COMPOSE_FILE" >&2
     exit 1
 fi
-
-command -v docker >/dev/null 2>&1 \
-    || { printf '错误: 未检测到 docker 命令\n' >&2; exit 1; }
 
 # 仅处理本机真实存在的镜像，不存在的直接跳过
 existing=()

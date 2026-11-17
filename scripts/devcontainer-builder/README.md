@@ -112,7 +112,7 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   重置，不在该目录运行脚本）；把 compose 模板原样复制到项目根为
   `docker-compose.yml`（仅去掉 `.tpl` 后缀，不做渲染）；把 `Makefile` /
   `build.sh` / `Dockerfile.addon`（改名 `Dockerfile`）/ `README.md`（改名
-  `README-devcontainer.md`）/ `publish-bundle` / `stage-bundle` / `clean-images`
+  `README-devcontainer.md`）/ `publish-bundle.sh` / `stage-bundle.sh` / `clean-images`
   复制到项目根，安装/合并 `.dockerignore` 与
   `.gitignore`（已存在时仅追加缺失条目）；创建 `<根>/wheels/requirements.txt`
   离线安装头（`--no-index --find-links=./`，pip 按该文件所在目录解析相对
@@ -127,8 +127,9 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
 - **clean-images**：安装到项目根的 `./clean-images` 从同目录
   `docker-compose.yml` 的 services 声明中解析 `image:` 值（app / dev /
   nginx / postgres 等），确认后用 `docker rmi -f` 逐个删除；本机不存在的
-  镜像自动跳过，`-y` 跳过确认。清除后可用 `install.sh --load-only` 或
-  `docker load -i` 重新导入镜像归档。
+  镜像自动跳过，`-y` 跳过确认。`--no-name` 改为清除 REPOSITORY 与 TAG 均为
+  `<none>` 的悬空镜像（不需要 compose 文件）。清除后可用
+  `install.sh --load-only` 或 `docker load -i` 重新导入镜像归档。
 - **离线补装（build.sh + Dockerfile.addon→根目录 Dockerfile）**：wheel 放
   项目根 `wheels/`，项目根执行 `bash build.sh` 基于现有镜像逐个
   `docker build --target` 生成 addon 新镜像（prod `<前缀>:<后缀>` / dev
