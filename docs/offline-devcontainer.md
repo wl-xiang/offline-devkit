@@ -194,6 +194,7 @@ BuildKit bind mount 参与，不落入任何镜像层），运行容器内没有
 bash install.sh ../              # 参数 = 你的项目根目录（dist/ 的上级）
 bash install.sh --load ../       # 加 --load：安装开始前自动 docker load
                                  # 同目录的镜像归档 tgz（无需再手动 load）
+bash install.sh --load-only      # 只导入镜像归档，不做任何安装操作
 bash install.sh -d               # 一键默认：项目根固定为 ../，源码放入 ../src/
 ```
 
@@ -206,7 +207,8 @@ bash install.sh -d               # 一键默认：项目根固定为 ../，源�
    `.tpl` 后缀的 `docker-compose.yml`（不做任何渲染；目标文件已存在则报错，
    避免覆盖你自己的 compose 配置）；
 3. 把 `Makefile`、`build.sh`、`Dockerfile.addon`（改名 `Dockerfile`）、
-   `README.md`（改名 `README-devcontainer.md`）复制到项目根目录——所有
+   `README.md`（改名 `README-devcontainer.md`）以及部署辅助脚本
+   `publish-bundle` / `stage-bundle` / `clean-images` 复制到项目根目录——所有
    make / build.sh 命令此后都在项目根目录执行；目标文件已存在时报错终止，
    不会覆盖你自己的同名文件；
 4. 把 `.dockerignore` 与 `.gitignore` 安装到项目根目录：文件不存在时创建；
@@ -228,6 +230,20 @@ bash install.sh -d               # 一键默认：项目根固定为 ../，源�
 > 自动合并也会产生同样问题。复制到项目根目录的 `docker-compose.yml` 是
 > compose 实际使用的运行文件，可放心手工修改；`${SRC_ROOT:-./src/}` /
 > `${SRC_ROOT_NAME:-app}` 也可在运行 `docker compose` 时用环境变量覆盖。
+
+### clean-images（一键清除镜像）
+
+安装到项目根目录的 `./clean-images` 从同目录 `docker-compose.yml` 的 services
+声明中读取镜像清单（app / dev / nginx / postgres 等服务的 `image:`），确认后
+逐个执行 `docker rmi -f`；本机不存在的镜像自动跳过，`-y` 跳过确认：
+
+```bash
+./clean-images        # 列出 compose 中声明的镜像，确认后删除
+./clean-images -y     # 直接删除（适合脚本 / CI）
+```
+
+镜像被运行中的容器占用时无法删除，请先 `make down`。清除后可用
+`bash dist/install.sh --load-only` 或 `docker load -i` 重新导入镜像归档。
 
 ## 内网使用步骤
 

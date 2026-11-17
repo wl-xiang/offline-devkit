@@ -106,12 +106,14 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
 
 - **install.sh + 根目录操作文件**：install.sh 先做全部前置检查再写盘（docs/
   devcontainer 不存在、compose 与根目录操作文件无同名冲突），可选 `--load`
-  在安装开始前自动 docker load 同目录的镜像归档，然后：解压 src
+  在安装开始前自动 docker load 同目录的镜像归档（`--load-only` 则只导入镜像、
+  不做任何安装），然后：解压 src
   到 `<根>/docs/devcontainer/`（**原始副本**，仅用于把改坏的根目录文件复制回
   重置，不在该目录运行脚本）；把 compose 模板原样复制到项目根为
   `docker-compose.yml`（仅去掉 `.tpl` 后缀，不做渲染）；把 `Makefile` /
   `build.sh` / `Dockerfile.addon`（改名 `Dockerfile`）/ `README.md`（改名
-  `README-devcontainer.md`）复制到项目根，安装/合并 `.dockerignore` 与
+  `README-devcontainer.md`）/ `publish-bundle` / `stage-bundle` / `clean-images`
+  复制到项目根，安装/合并 `.dockerignore` 与
   `.gitignore`（已存在时仅追加缺失条目）；创建 `<根>/wheels/requirements.txt`
   离线安装头（`--no-index --find-links=./`，pip 按该文件所在目录解析相对
   find-links）；创建应用源码目录 `<根>/src/`（compose 默认挂载为 /app），缺少
@@ -122,6 +124,11 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   `${SRC_ROOT_NAME:-app}`（compose 项目名后缀）由 docker compose 运行时解析。
   install.sh 会检测 compose 命令：仅有 `docker-compose`（v1）时把 Makefile 的
   `COMPOSE` 改为 `docker-compose`；两者都没有时保持默认并输出红色警告。
+- **clean-images**：安装到项目根的 `./clean-images` 从同目录
+  `docker-compose.yml` 的 services 声明中解析 `image:` 值（app / dev /
+  nginx / postgres 等），确认后用 `docker rmi -f` 逐个删除；本机不存在的
+  镜像自动跳过，`-y` 跳过确认。清除后可用 `install.sh --load-only` 或
+  `docker load -i` 重新导入镜像归档。
 - **离线补装（build.sh + Dockerfile.addon→根目录 Dockerfile）**：wheel 放
   项目根 `wheels/`，项目根执行 `bash build.sh` 基于现有镜像逐个
   `docker build --target` 生成 addon 新镜像（prod `<前缀>:<后缀>` / dev
@@ -190,7 +197,8 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   load 用）、`devcontainer-src_<架构>_<时间戳>.tgz`、`install.sh`、`readme.html`
   与 `workflow-params.jsonc` 五个文件；"Bundle" 专指该外部 zip，镜像归档文件名用 "Docker Images"。
   安装方式：zip 放项目根 `dist/` 解压后 `bash install.sh ../`（加 `--load`
-  可在安装开始前自动 docker load 同目录的镜像归档 tgz）。
+  可在安装开始前自动 docker load 同目录的镜像归档 tgz；`--load-only` 只导入
+  镜像、不做安装）。
 - **镜像瘦身**：基础镜像 slim-bookworm；apt 安装后同层 `apt-get clean` 并清理
   lists/archives；pip 统一 `--no-compile`（不生成 `.pyc`）；Node 仅复制
   node/npm 并删除 npm 自带 docs/man；Oracle `full` 模式的 wget/unzip 只用于

@@ -7,6 +7,8 @@
 #   bash install.sh --load /path/to/your/project-root
 #                                                  # 安装开始前自动 docker load
 #                                                  # 同目录的镜像归档 tgz
+#   bash install.sh --load-only                    # 只执行 docker load 同目录的
+#                                                  # 镜像归档，不做任何安装操作
 #   bash install.sh -d | --default                 # 一键默认安装：自动启用 --load，
 #                                                  # 无需传路径，项目根固定为 ../，
 #                                                  # 应用源码放入 ../src/
@@ -20,8 +22,8 @@
 #      后缀的 docker-compose.yml（模板内 ${SRC_ROOT:-./src/} 与
 #      ${SRC_ROOT_NAME:-app} 由 docker compose 运行时解析，默认 ./src/）
 #   3. 把 Makefile / build.sh / Dockerfile.addon(改名为 Dockerfile) /
-#      README.md(改名为 README-devcontainer.md) / publish-bundle / stage-bundle 复制到
-#      INSTALL_PATH，并安装/合并 .dockerignore 与 .gitignore；
+#      README.md(改名为 README-devcontainer.md) / publish-bundle / stage-bundle /
+#      clean-images 复制到 INSTALL_PATH，并安装/合并 .dockerignore 与 .gitignore；
 #      另安装 .env.example（仅缺失时，已存在则保留原文件）
 #      ——所有 make、build.sh 命令此后都在项目根目录执行
 #   4. 在 INSTALL_PATH/wheels/ 下创建离线安装头 requirements.txt
@@ -49,10 +51,11 @@ usage() {
     cat <<EOF
 ${C_BOLD}用法:${C_RESET} bash $0 [--load] <INSTALL_PATH>
        bash $0 -d | --default
+       bash $0 --load-only
 
 在项目根目录安装离线 devcontainer 开发环境：解压源码/模板包，安装 Makefile、
 build.sh、Dockerfile、docker-compose.yml、.dockerignore / .gitignore，以及部署
-辅助脚本 publish-bundle / stage-bundle 与环境变量模板 .env.example。
+辅助脚本 publish-bundle / stage-bundle / clean-images 与环境变量模板 .env.example。
 
 ${C_BOLD}参数:${C_RESET}
   INSTALL_PATH          项目根目录（必须已存在）。根目录操作文件安装到 INSTALL_PATH，
@@ -66,11 +69,15 @@ ${C_BOLD}选项:${C_RESET}
   --load                安装开始前自动在脚本所在目录查找
                         devcontainer-docker-images_*.tgz 并执行 docker load
                         （等效于手动 docker load -i 该归档）。
+  --load-only           只执行镜像导入：在脚本所在目录查找
+                        devcontainer-docker-images_*.tgz 并 docker load，
+                        随后立即退出，不执行任何安装操作（无需 INSTALL_PATH）。
   -h, --help            显示本帮助并退出。
 
 ${C_BOLD}示例:${C_RESET}
   bash install.sh ../              # 在项目根目录的 dist/ 中安装到上一级项目根
   bash install.sh --load ../       # 同上，并在安装前自动导入镜像
+  bash install.sh --load-only      # 只导入镜像，不做安装
   bash install.sh -d               # 一键默认：自动导入镜像，安装到 ../（源码在 ../src/）
   bash install.sh -h               # 查看本帮助
 
@@ -86,18 +93,54 @@ EOF
     exit "$code"
 }
 
+# ---------- 镜像导入（--load / --load-only 共用） ----------
+load_images() {
+    command -v docker >/dev/null 2>&1 \
+        || { err "镜像导入需要 docker 命令，但未在 PATH 中检测到 docker"; exit 1; }
+    local -a img_tgzs
+    shopt -s nullglob
+    img_tgzs=("$SCRIPT_DIR"/devcontainer-docker-images_*.tgz)
+    shopt -u nullglob
+    if [ "${#img_tgzs[@]}" -eq 0 ]; then
+        err "未在 $SCRIPT_DIR 找到 devcontainer-docker-images_*.tgz"
+        echo "      （镜像导入需与镜像归档放在同一目录，即 install.sh 旁边）"
+        exit 1
+    fi
+    if [ "${#img_tgzs[@]}" -gt 1 ]; then
+        err "$SCRIPT_DIR 下有多个镜像归档，请只保留本次使用的那个："
+        printf '  %s\n' "${img_tgzs[@]}"
+        exit 1
+    fi
+    step "导入镜像归档（docker load）"
+    docker load -i "${img_tgzs[0]}"
+    ok "已导入 ${C_BOLD}${img_tgzs[0]}${C_RESET}"
+}
+
 LOAD_IMAGES=0
+LOAD_ONLY=0
 DEFAULT_MODE=0
 while [ "$#" -gt 0 ]; do
     case "$1" in
         -h|--help) usage 0 ;;
         -d|--default) DEFAULT_MODE=1; shift ;;
         --load)    LOAD_IMAGES=1; shift ;;
+        --load-only) LOAD_ONLY=1; shift ;;
         --)        shift; break ;;
         -*)        err "未知选项: $1"; usage ;;
         *)         break ;;
     esac
 done
+
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
+
+if [ "$LOAD_ONLY" = "1" ]; then
+    # --load-only：只导入镜像归档，不解析 INSTALL_PATH、不写任何文件
+    [ "$DEFAULT_MODE" = "0" ] || note "--load-only 已忽略 -d/--default（仅导入镜像）"
+    [ "$#" -eq 0 ] || note "--load-only 已忽略参数: $*（仅导入镜像）"
+    load_images
+    exit 0
+fi
+
 if [ "$DEFAULT_MODE" = "1" ]; then
     # -d/--default 为顶级覆盖：强制自动导入镜像，并固定项目根为 ../（与 CWD
     # 相对），应用源码放入 ../src/（compose 默认把 ./src/ 挂载为 /app），
@@ -114,28 +157,9 @@ fi
 [ -d "$INSTALL_PATH" ] || { err "INSTALL_PATH 不是目录: $INSTALL_PATH"; exit 1; }
 INSTALL_PATH=$(cd "$INSTALL_PATH" && pwd -P)
 
-SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
-
 # ---------- 可选：--load 在安装开始前自动导入镜像归档 ----------
 if [ "$LOAD_IMAGES" = "1" ]; then
-    command -v docker >/dev/null 2>&1 \
-        || { err "--load 需要 docker 命令，但未在 PATH 中检测到 docker"; exit 1; }
-    shopt -s nullglob
-    img_tgzs=("$SCRIPT_DIR"/devcontainer-docker-images_*.tgz)
-    shopt -u nullglob
-    if [ "${#img_tgzs[@]}" -eq 0 ]; then
-        err "未在 $SCRIPT_DIR 找到 devcontainer-docker-images_*.tgz"
-        echo "      （--load 需与镜像归档放在同一目录，即 install.sh 旁边）"
-        exit 1
-    fi
-    if [ "${#img_tgzs[@]}" -gt 1 ]; then
-        err "$SCRIPT_DIR 下有多个镜像归档，请只保留本次使用的那个："
-        printf '  %s\n' "${img_tgzs[@]}"
-        exit 1
-    fi
-    step "导入镜像归档（docker load）"
-    docker load -i "${img_tgzs[0]}"
-    ok "已导入 ${C_BOLD}${img_tgzs[0]}${C_RESET}"
+    load_images
 fi
 
 shopt -s nullglob
@@ -159,8 +183,9 @@ SRC_DIR="$INSTALL_PATH/src"   # 应用源码目录（compose 默认把 ./src/ �
 
 # 复制到项目根目录的根目录操作文件：包内文件名 -> 根目录文件名
 # （Dockerfile.addon 改名 Dockerfile、README.md 改名 README-devcontainer.md，
-#  避免与项目自己的 README.md 冲突；publish-bundle / stage-bundle 为部署辅助脚本）
-COPY_ROOT_FILES=("Makefile:Makefile" "build.sh:build.sh" "Dockerfile.addon:Dockerfile" "README.md:README-devcontainer.md" "publish-bundle:publish-bundle" "stage-bundle:stage-bundle")
+#  避免与项目自己的 README.md 冲突；publish-bundle / stage-bundle / clean-images
+#  为部署辅助脚本）
+COPY_ROOT_FILES=("Makefile:Makefile" "build.sh:build.sh" "Dockerfile.addon:Dockerfile" "README.md:README-devcontainer.md" "publish-bundle:publish-bundle" "stage-bundle:stage-bundle" "clean-images:clean-images")
 
 # ---------- 前置校验：先全部检查，再动手写盘（失败不留半套安装） ----------
 fail=0
@@ -206,7 +231,7 @@ for pair in "${COPY_ROOT_FILES[@]}"; do
     ok "已创建 $INSTALL_PATH/$dst_name ${C_DIM}(来自 $src_name)${C_RESET}"
 done
 # zip/tar 传输可能丢失可执行位，显式恢复
-chmod 755 "$INSTALL_PATH/build.sh" "$INSTALL_PATH/publish-bundle" "$INSTALL_PATH/stage-bundle"
+chmod 755 "$INSTALL_PATH/build.sh" "$INSTALL_PATH/publish-bundle" "$INSTALL_PATH/stage-bundle" "$INSTALL_PATH/clean-images"
 
 # .env.example：publish-bundle 的环境变量模板。仅在缺失时安装——
 # 项目通常已有自己的 .env.example，已存在时保留原文件、不中断安装

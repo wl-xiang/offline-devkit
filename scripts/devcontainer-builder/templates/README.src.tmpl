@@ -9,7 +9,8 @@
 - **项目根目录**：`Makefile`、`Dockerfile`（离线补装用，由 Dockerfile.addon 改名）、
   `build.sh`、`README-devcontainer.md`（本文件副本）、`.dockerignore`、`.gitignore`、
   `docker-compose.yml`、`wheels/`（离线补装 wheel，含离线安装头 requirements.txt）、
-  `publish-bundle` / `stage-bundle` / `.env.example`（部署辅助脚本与环境变量模板）。
+  `publish-bundle` / `stage-bundle` / `clean-images` / `.env.example`
+  （部署辅助脚本与环境变量模板）。
   —— 你日常操作的位置。
 - **`src/`**：应用源码目录，由 compose 默认挂载为容器内 `/app`；install.sh 会
   自动创建该目录并按需放入占位 `main.py`。
@@ -117,6 +118,10 @@ make down         # 停止
   在部署服务器项目根执行 `./stage-bundle`：校验 meta 与 SHA256 后自动
   `make down` 下线服务，备份旧版本到 `bundles/backup_src_<时间戳>.tgz`，
   再解压替换 `src/`，完成后手动 `make up` 上线。
+- `./clean-images`：在项目根一键清除本 DevContainer 使用的镜像——镜像清单取自
+  `docker-compose.yml` 的 services 声明（app / dev / nginx / postgres 等），
+  加 `-y` 可跳过确认。镜像被容器占用时请先 `make down`；清除后可用
+  `bash dist/install.sh --load-only` 或 `docker load -i` 重新导入镜像归档。
 - `make check` 可离线自检镜像是否已导入、架构是否匹配。
 - `make help` 查看全部可用目标。
 {{DEV_TOOLS_NOTE}}
