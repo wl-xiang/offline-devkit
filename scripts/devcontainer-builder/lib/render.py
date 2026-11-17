@@ -16,8 +16,9 @@ BUILDER_DIR = TEMPLATES_DIR.parent
 
 # 静态部署辅助文件：随 src 产物分发，由 install.sh 安装到项目根目录
 # （publish-bundle 在本地项目根执行，stage-bundle 在部署服务器项目根执行，
+#   clean-images 在项目根清除 compose 声明的镜像，
 #   .env.example 是 publish-bundle 读取的环境变量模板）
-DEPLOY_FILES = (".env.example", "publish-bundle", "stage-bundle")
+DEPLOY_FILES = (".env.example", "publish-bundle", "stage-bundle", "clean-images")
 
 # compose 中的 dev 服务（profile=dev，仅 make shell/lint/compile/test 时激活）
 # build.dockerfile 指向 docs/devcontainer/Dockerfile（联网重建版 Dockerfile 位于

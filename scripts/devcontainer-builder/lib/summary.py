@@ -226,12 +226,14 @@ def build_markdown(p, results):
     out.append(f"# 把 {bundle_name}.zip 移入 dist/ 后：")
     out.append(f"cd /path/to/your-project/dist && unzip {bundle_name}.zip")
     out.append("bash install.sh --load ../              # --load 安装开始前自动 docker load 镜像归档")
+    out.append("bash install.sh --load-only             # 只导入镜像归档，不做安装")
     out.append("bash install.sh ../                     # 参数 ../ 即项目根目录（或改用上一行的 --load 一步到位）")
     out.append("```")
     out.append("")
     out.append("   install.sh 会把 `Makefile` / `build.sh` / `Dockerfile`"
                "（由 Dockerfile.addon 改名）/ `README-devcontainer.md`（由"
-               " README.md 改名）/ `publish-bundle` / `stage-bundle` / `.dockerignore` /"
+               " README.md 改名）/ `publish-bundle` / `stage-bundle` / `clean-images` /"
+               " `.dockerignore` /"
                " `.gitignore` 安装到项目根目录（同名文件已存在时终止安装，不覆盖；"
                "`.env.example` 仅在缺失时安装），把 src 解压到"
                " `<项目根>/docs/devcontainer`（原始副本，用于重置），把"
