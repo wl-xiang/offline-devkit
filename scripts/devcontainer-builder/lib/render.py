@@ -332,6 +332,18 @@ def _node_block(p):
     return text
 
 
+def _playwright_block(p):
+    """Playwright 浏览器下载块（enable_playwright 时）。
+
+    pip 包经 preinstall_pip_packages 走 requirements.txt/wheels 统一安装；
+    这里只负责构建期下载 chromium（--with-deps 含系统依赖）。必须位于
+    INSTALL_BLOCK 之后（依赖已装好的 playwright CLI）。
+    """
+    if not p.enable_playwright:
+        return ""
+    return _load("Dockerfile.playwright.tmpl")
+
+
 def _npm_make_vars(p):
     if not p.enable_node:
         return ""
@@ -413,6 +425,7 @@ def render_dockerfile(p, local_wheels=True):
         "DEV_PIP_BLOCK": _dev_pip_block(p, local_wheels),
         "ORACLE_BLOCK": _oracle_block(p),
         "NODE_BLOCK": _node_block(p),
+        "PLAYWRIGHT_BLOCK": _playwright_block(p),
     }
     if p.dev_image_only:
         # 仅 dev 镜像模式：单阶段 Dockerfile，产物只有一个 dev 镜像

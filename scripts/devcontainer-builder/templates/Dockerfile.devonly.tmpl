@@ -22,6 +22,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
 {{DEV_PIP_BLOCK}}
+{{PLAYWRIGHT_BLOCK}}
 WORKDIR /app
 
 CMD ["bash"]

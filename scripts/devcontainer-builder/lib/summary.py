@@ -73,6 +73,7 @@ def build_markdown(p, results):
     out.append(f"| pip 镜像源 | `{p.pip_mirror}` ({p.mirror_url}) |")
     out.append(f"| wheels 数量 | {wheels_count} |")
     out.append(f"| 预装 lucide 图标库 (pip) | {_yes_no(p.enable_lucide)} |")
+    out.append(f"| 预装 Playwright (pip + chromium) | {_yes_no(p.enable_playwright)} |")
     if p.oracle_full:
         oracle_mode = (
             "完整安装（客户端已打进镜像，"
@@ -127,6 +128,8 @@ def build_markdown(p, results):
             note = ""
             if x == "lucide" and p.enable_lucide:
                 note = "（预装：SVG 图标库）"
+            elif x == "playwright" and p.enable_playwright:
+                note = "（预装：浏览器自动化，chromium 已内置 /opt/ms-playwright）"
             elif x.startswith("oracledb") and p.oracle_enabled:
                 note = "（预装：配合 Instant Client 19 连 Oracle 11g）"
             out.append(f"- `{x}`{note}")

@@ -41,6 +41,11 @@ on:
         type: boolean
         required: true
         default: false
+      enable_playwright:
+        description: 'Preinstall Playwright (pip) + chromium browser (headful & headless share the same browser; CLI globally available, browsers at /opt/ms-playwright)'
+        type: boolean
+        required: true
+        default: false
       enable_oracle_instantclient:
         description: 'Oracle Instant Client 19 mode: none = install nothing; runtime_deps_only = runtime deps (libaio1/libnsl2) + env vars only, the client itself is bind-mounted from the host at /opt/oracle/instantclient19 by docker-compose; full = install the client + runtime deps into the image (downloaded at build time from the official Oracle URL)'
         type: choice
@@ -183,6 +188,7 @@ jobs:
           APT_PACKAGES: ${{ inputs.apt_packages }}
           CUSTOM_INSTALL_CMD: ${{ inputs.custom_install_cmd }}
           ENABLE_LUCIDE: ${{ inputs.enable_lucide }}
+          ENABLE_PLAYWRIGHT: ${{ inputs.enable_playwright }}
           ENABLE_ORACLE_INSTANTCLIENT: ${{ inputs.enable_oracle_instantclient }}
           PRESET_ENVS: ${{ inputs.preset_envs }}
           ENABLE_NODE: ${{ inputs.enable_node }}
@@ -348,6 +354,7 @@ jobs:
               "apt_packages": ("", "string"),
               "custom_install_cmd": ("", "string"),
               "enable_lucide": ("false", "boolean"),
+              "enable_playwright": ("false", "boolean"),
               "enable_oracle_instantclient": ("none", "choice"),
               "preset_envs": ("", "string"),
               "enable_node": ("false", "boolean"),

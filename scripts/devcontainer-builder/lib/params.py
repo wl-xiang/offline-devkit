@@ -45,6 +45,11 @@ DEV_PIP_TOOLS = ("ruff", "pytest", "pytest-cov")
 # 预装 lucide（SVG 图标库，Django/Jinja 模板渲染 lucide.dev 图标）的 pip 包名
 LUCIDE_PIP_PACKAGE = "lucide"
 
+# 预装 Playwright（pip 包 + chromium 浏览器，有头/无头共用同一浏览器二进制）。
+# pip 包随 requirements.txt/wheels 走统一安装；浏览器由 Dockerfile 的
+# playwright install --with-deps chromium 在构建期下载到 /opt/ms-playwright
+PLAYWRIGHT_PIP_PACKAGE = "playwright"
+
 # 预装 Oracle Instant Client 19 时随装的 python-oracledb 版本。
 # 锁定 2.5.1：与 Instant Client 19 + Oracle 11.2 Thick 模式的组合经过生产
 # 环境验证（参考 https://github.com/wl-xiang/oracle2excel 的 Dockerfile）。
@@ -144,6 +149,7 @@ class Params:
     enable_nginx: bool
     enable_postgres: bool
     enable_lucide: bool
+    enable_playwright: bool
     oracle_instantclient_mode: str
     app_depends_on_nginx: bool
     app_depends_on_postgres: bool
@@ -210,6 +216,8 @@ class Params:
                     for x in pkgs}
         if self.enable_lucide and "lucide" not in existing:
             pkgs.append(LUCIDE_PIP_PACKAGE)
+        if self.enable_playwright and "playwright" not in existing:
+            pkgs.append(PLAYWRIGHT_PIP_PACKAGE)
         if (self.oracle_enabled
                 and "oracledb" not in existing):
             pkgs.append(ORACLEDB_PIP_PACKAGE)
@@ -411,6 +419,7 @@ def load():
         enable_nginx=_env_bool("ENABLE_NGINX", False),
         enable_postgres=_env_bool("ENABLE_POSTGRES", False),
         enable_lucide=_env_bool("ENABLE_LUCIDE", False),
+        enable_playwright=_env_bool("ENABLE_PLAYWRIGHT", False),
         oracle_instantclient_mode=_env(
             "ENABLE_ORACLE_INSTANTCLIENT", "none"
         ).lower(),
@@ -584,6 +593,7 @@ WORKFLOW_INPUTS = (
     ("apt_packages", "APT_PACKAGES", "string", ""),
     ("custom_install_cmd", "CUSTOM_INSTALL_CMD", "string", ""),
     ("enable_lucide", "ENABLE_LUCIDE", "boolean", "false"),
+    ("enable_playwright", "ENABLE_PLAYWRIGHT", "boolean", "false"),
     ("enable_oracle_instantclient", "ENABLE_ORACLE_INSTANTCLIENT", "choice", "none"),
     ("preset_envs", "PRESET_ENVS", "string", ""),
     ("enable_node", "ENABLE_NODE", "boolean", "false"),
