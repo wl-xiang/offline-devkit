@@ -4,15 +4,15 @@
 # 纯 POSIX sh 实现——部署服务器无需 python/jq：tgz 解压只需 tar，SHA256 只需
 # sha256sum（find -printf 为 GNU 扩展，Linux 均可用）。
 #
-# 用法（在部署目录中执行，目录下应有 publish-bundle 上传的 bundles/ 目录）:
-#     ./stage-bundle              # 校验最新 bundle 后解压替换 ./src
-#     ./stage-bundle -y           # 跳过交互确认直接执行
-#     ./stage-bundle -c           # 保留最新一份 bundle，删除其余
-#     ./stage-bundle --clean-all  # 删除全部 bundle 与遗留 sync.env
-#     ./stage-bundle -h           # 打印用法
+# 用法（在部署目录中执行，目录下应有 publish-bundle.sh 上传的 bundles/ 目录）:
+#     ./stage-bundle.sh              # 校验最新 bundle 后解压替换 ./src
+#     ./stage-bundle.sh -y           # 跳过交互确认直接执行
+#     ./stage-bundle.sh -c           # 保留最新一份 bundle，删除其余
+#     ./stage-bundle.sh --clean-all  # 删除全部 bundle 与遗留 sync.env
+#     ./stage-bundle.sh -h           # 打印用法
 #
 # 协议说明:
-#     bundle 与 bundle.meta 固定位于 ./bundles/（publish-bundle 上传到远端
+#     bundle 与 bundle.meta 固定位于 ./bundles/（publish-bundle.sh 上传到远端
 #     <项目路径>/bundles/）："最新"按 bundle 文件名中的时间戳判定
 #     （bundle_<项目名>_<mmdd-HHMM>.tgz），不依赖文件修改时间。
 #     bundle.meta 记录 BUNDLE_FILE / SHA256 等元信息，stage 前强制校验：
@@ -38,7 +38,7 @@ META_FILE="bundle.meta"
 
 usage() {
     cat <<'USAGE'
-用法: ./stage-bundle [选项]
+用法: ./stage-bundle.sh [选项]
 
 从 ./bundles/ 取文件名时间戳最新的 bundle_*.tgz，用 bundle.meta 校验完整性后
 解压替换到 ./src 目录（不会自动运行任何代码）。
@@ -53,10 +53,10 @@ usage() {
   -h, --help        显示本帮助并退出
 
 示例:
-  ./stage-bundle                # 常规部署：最新 bundle -> ./src
-  ./stage-bundle -y             # 自动确认，直接部署
-  ./stage-bundle -c             # bundles/ 瘦身：只保留最新一份 bundle
-  ./stage-bundle --clean-all    # 清空所有 bundle
+  ./stage-bundle.sh                # 常规部署：最新 bundle -> ./src
+  ./stage-bundle.sh -y             # 自动确认，直接部署
+  ./stage-bundle.sh -c             # bundles/ 瘦身：只保留最新一份 bundle
+  ./stage-bundle.sh --clean-all    # 清空所有 bundle
 USAGE
 }
 
@@ -176,7 +176,7 @@ fi
 # 1. 按文件名时间戳找最新 bundle
 newest=$(find_newest_bundle)
 if [ -z "$newest" ]; then
-    die "$BUNDLES_DIR/ 下未找到 bundle_*.tgz（请先在本地项目根运行 publish-bundle 上传，或用 -h 查看用法）"
+    die "$BUNDLES_DIR/ 下未找到 bundle_*.tgz（请先在本地项目根运行 publish-bundle.sh 上传，或用 -h 查看用法）"
 fi
 archive="$BUNDLES_DIR/$newest"
 total=0
@@ -188,7 +188,7 @@ done
 # 2. bundle.meta 完整性校验（文件名一致性 + SHA256）
 command -v sha256sum >/dev/null 2>&1 || die "缺少 sha256sum 命令（coreutils）"
 [ -f "$BUNDLES_DIR/$META_FILE" ] \
-    || die "缺少 $BUNDLES_DIR/$META_FILE（请先在本地重新执行 publish-bundle 上传）"
+    || die "缺少 $BUNDLES_DIR/$META_FILE（请先在本地重新执行 publish-bundle.sh 上传）"
 meta_bundle=$(meta_get BUNDLE_FILE)
 [ -n "$meta_bundle" ] || die "$META_FILE 缺少 BUNDLE_FILE 字段（文件不完整，请重新 publish）"
 [ "$meta_bundle" = "$newest" ] || die "$META_FILE 记录的 BUNDLE_FILE($meta_bundle) 与最新 bundle($newest) 不一致——请重新 publish 或清理旧 bundle"
@@ -232,7 +232,7 @@ trap 'exit 1' INT TERM
 
 tar -xzf "$archive" -C "$tmp"
 
-# publish-bundle 打包的是 src/ 的内容（无包裹目录）；历史整目录包仅有一个
+# publish-bundle.sh 打包的是 src/ 的内容（无包裹目录）；历史整目录包仅有一个
 # 顶层条目且为目录时进入该目录
 top=$tmp
 if [ "$(find "$tmp" -mindepth 1 -maxdepth 1 | wc -l)" -eq 1 ]; then

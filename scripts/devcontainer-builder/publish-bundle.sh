@@ -8,13 +8,13 @@
         bundles/bundle_<项目名>_<mmdd-HHMM>.tgz     源码包
         bundles/bundle.meta                          元信息（KV，与 .env 同格式）
     - bundle.meta 与 tgz 一起上传到远端 <SYNC_REMOTE_PATH>/bundles/，
-      stage-bundle 据此校验完整性（BUNDLE_FILE 匹配 + SHA256 比对）
+      stage-bundle.sh 据此校验完整性（BUNDLE_FILE 匹配 + SHA256 比对）
 
 用法（在本地项目根目录内执行）:
-    ./publish-bundle                 # 按 .gitignore 忽略打包 + 确认后上传
-    ./publish-bundle -y              # 跳过交互确认直接上传
-    ./publish-bundle --no-ignore     # 不读 .gitignore，全量打包 ./src
-    ./publish-bundle --no-ignore --rm  # 同上，上传结束后删除本地 bundle
+    ./publish-bundle.sh                 # 按 .gitignore 忽略打包 + 确认后上传
+    ./publish-bundle.sh -y              # 跳过交互确认直接上传
+    ./publish-bundle.sh --no-ignore     # 不读 .gitignore，全量打包 ./src
+    ./publish-bundle.sh --no-ignore --rm  # 同上，上传结束后删除本地 bundle
 
 选项:
     -y, --yes        跳过交互确认直接执行
@@ -43,7 +43,7 @@
     2. 打包 src/ 内容到 bundles/bundle_<项目名>_<时间戳>.tgz，生成 bundle.meta
     3. 展示将要发生什么，等待手动输入 y 确认（-y 跳过）
     4. 通过 SFTP 把 tgz + bundle.meta 上传到远端 <部署路径>/bundles/
-       （上传后请在部署服务器上运行 stage-bundle 完成解压部署）
+       （上传后请在部署服务器上运行 stage-bundle.sh 完成解压部署）
 """
 
 import argparse
@@ -312,10 +312,10 @@ def pack(src_dir, out_file, patterns=None):
 
 
 def write_meta(meta_path, fields):
-    """生成 bundle.meta（KV 键值对，与 .env 同格式；stage-bundle 解析校验）。"""
+    """生成 bundle.meta（KV 键值对，与 .env 同格式；stage-bundle.sh 解析校验）。"""
     lines = [
-        "# bundle.meta —— publish-bundle 自动生成（与 bundle_*.tgz 配套上传）",
-        "# stage-bundle 读取本文件校验 bundle 完整性（BUNDLE_FILE + SHA256）；请勿手工编辑。",
+        "# bundle.meta —— publish-bundle.sh 自动生成（与 bundle_*.tgz 配套上传）",
+        "# stage-bundle.sh 读取本文件校验 bundle 完整性（BUNDLE_FILE + SHA256）；请勿手工编辑。",
     ]
     for key, value in fields:
         lines.append(f"{key}={value}")
@@ -393,7 +393,7 @@ def main():
     # 1. 校验源码目录：SRC Bundle 只打包 ./src 的内容
     project_dir = Path.cwd().resolve()
     if project_dir.parent == project_dir:
-        die("请在项目目录内运行 publish-bundle（当前位于文件系统根目录）")
+        die("请在项目目录内运行 publish-bundle.sh（当前位于文件系统根目录）")
     src_dir = project_dir / SRC_DIR
     if not src_dir.is_dir():
         die(
@@ -428,7 +428,7 @@ def main():
         ("PACK_MODE", pack_mode),
         ("SIZE_BYTES", str(size)),
     ])
-    print(f"  {meta_path}（与 bundle 一起上传，供 stage-bundle 校验完整性）")
+    print(f"  {meta_path}（与 bundle 一起上传，供 stage-bundle.sh 校验完整性）")
 
     # 3. 展示将要发生什么，等待手动确认
     print("== 执行 publish 将发生 ==")
@@ -458,7 +458,7 @@ def main():
             print("== 已按 --rm 删除本地 bundle 与 meta ==")
     else:
         upload(cfg, [archive, meta_path])
-    print("== 上传完成，请在部署服务器上运行 stage-bundle 完成解压部署 ==")
+    print("== 上传完成，请在部署服务器上运行 stage-bundle.sh 完成解压部署 ==")
     return 0
 
 

@@ -194,8 +194,10 @@ BuildKit bind mount 参与，不落入任何镜像层），运行容器内没有
 bash install.sh ../              # 参数 = 你的项目根目录（dist/ 的上级）
 bash install.sh --load ../       # 加 --load：安装开始前自动 docker load
                                  # 同目录的镜像归档 tgz（无需再手动 load）
+bash install.sh --no-load ../    # 照常安装，但跳过镜像导入（--no-load 覆盖 --load/-d）
 bash install.sh --load-only      # 只导入镜像归档，不做任何安装操作
 bash install.sh -d               # 一键默认：项目根固定为 ../，源码放入 ../src/
+bash install.sh -d --no-load     # 一键默认安装，但跳过镜像导入
 ```
 
 脚本会（先做全部前置检查、再写盘，任一检查失败都不会留下半套安装）：
@@ -208,7 +210,7 @@ bash install.sh -d               # 一键默认：项目根固定为 ../，源�
    避免覆盖你自己的 compose 配置）；
 3. 把 `Makefile`、`build.sh`、`Dockerfile.addon`（改名 `Dockerfile`）、
    `README.md`（改名 `README-devcontainer.md`）以及部署辅助脚本
-   `publish-bundle` / `stage-bundle` / `clean-images` 复制到项目根目录——所有
+   `publish-bundle.sh` / `stage-bundle.sh` / `clean-images` 复制到项目根目录——所有
    make / build.sh 命令此后都在项目根目录执行；目标文件已存在时报错终止，
    不会覆盖你自己的同名文件；
 4. 把 `.dockerignore` 与 `.gitignore` 安装到项目根目录：文件不存在时创建；
@@ -240,6 +242,14 @@ bash install.sh -d               # 一键默认：项目根固定为 ../，源�
 ```bash
 ./clean-images        # 列出 compose 中声明的镜像，确认后删除
 ./clean-images -y     # 直接删除（适合脚本 / CI）
+```
+
+`--no-name` 用于清除 Docker images 中名称（REPOSITORY）与 Tag 均为 `<none>`
+的悬空镜像（通常是旧构建残留），该模式不需要 `docker-compose.yml`：
+
+```bash
+./clean-images --no-name      # 列出 <none>:<none> 镜像，确认后删除
+./clean-images --no-name -y   # 直接删除（适合脚本 / CI）
 ```
 
 镜像被运行中的容器占用时无法删除，请先 `make down`。清除后可用
@@ -332,8 +342,11 @@ make up && make logs
 | `make build` | `docker compose build`（**需联网**：发布包不含 wheels/，deps 从 apt/pip 源安装；离线机器勿用） |
 | `make up` | `docker compose up -d --no-build`，后台启动 prod 服务（及已启用的外挂服务） |
 | `make down` | 停止并移除容器与网络 |
-| `make ps` | 查看容器状态 |
+| `make ps` | 查看容器状态（可透传参数：`make ps ARGS="-a"`） |
+| `make exec` | 在运行中的容器执行命令：`make exec SERVICE=dev ARGS="bash"`（默认 `SERVICE=app`） |
 | `make logs` | 跟随查看日志 |
+| `make publish` | 执行 `./publish-bundle.sh`，打包并上传 SRC Bundle（参数透传：`make publish ARGS="-y"`） |
+| `make stage` | 执行 `./stage-bundle.sh`，校验最新 bundle 并解压到 `./src`（参数透传：`make stage ARGS="-y"`） |
 | `make shell` / `make dev` | 进入 dev 容器交互式 bash |
 | `make lint` | ruff check . |
 | `make compile` | python -m compileall -q . |

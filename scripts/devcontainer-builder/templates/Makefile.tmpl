@@ -11,6 +11,11 @@ COMPOSE := docker compose -f $(COMPOSE_FILE)
 DEV_RUN := $(COMPOSE) run --rm dev
 IMAGES := {{IMAGE_LIST}}
 
+# 目标参数透传：make ps ARGS="-a" / make exec SERVICE=dev ARGS="bash -l"
+#                  make publish ARGS="-y" / make stage ARGS="-y"
+ARGS ?=
+SERVICE ?= app
+
 # 容器默认以当前用户身份运行（compose 的 user: "${HOST_UID:-0}:${HOST_GID:-0}"），
 # 避免挂载目录出现 root 属主文件（.pytest_cache/.ruff_cache 等）。
 # 需要 root 时（如容器内 pip install 到系统目录）：make shell HOST_UID=0 HOST_GID=0
@@ -51,11 +56,20 @@ up: ## 后台启动 prod 服务（离线，不构建不拉取）
 down: ## 停止并移除容器与网络
 	$(COMPOSE) down
 
-ps: ## 查看容器状态
-	$(COMPOSE) ps
+ps: ## 查看容器状态（可传参：make ps ARGS="-a"）
+	$(COMPOSE) ps $(ARGS)
+
+exec: ## 在运行中的容器执行命令（make exec SERVICE=dev ARGS="bash"）
+	$(COMPOSE) exec $(SERVICE) $(ARGS)
 
 logs: ## 跟随查看日志
 	$(COMPOSE) logs -f
+
+publish: ## 打包 src 为 SRC Bundle 并上传（make publish ARGS="-y"）
+	./publish-bundle.sh $(ARGS)
+
+stage: ## 校验最新 bundle 并解压到 ./src（make stage ARGS="-y"）
+	./stage-bundle.sh $(ARGS)
 
 {{DEV_TARGETS}}{{NPM_TARGETS}}package-src: ## 重新打包 docs/devcontainer 为 tgz（输出到 dist/，可配 install.sh 再次安装）
 	mkdir -p dist
@@ -63,4 +77,4 @@ logs: ## 跟随查看日志
 		--exclude='*.tgz' --exclude='__pycache__' --exclude='.pytest_cache' \
 		-C docs/devcontainer .
 
-.PHONY: help check build up down ps logs {{PHONY_DEV}}{{PHONY_NPM}}package-src
+.PHONY: help check build up down ps exec logs publish stage {{PHONY_DEV}}{{PHONY_NPM}}package-src

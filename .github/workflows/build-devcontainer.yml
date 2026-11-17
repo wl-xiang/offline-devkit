@@ -259,13 +259,30 @@ jobs:
           grep -q 'devcontainer-src/.gitignore$' /tmp/src_tgz.list \
             || { echo "::error::src 包缺少 .gitignore"; exit 1; }
           # 部署辅助脚本与环境变量模板（install.sh 安装到项目根目录）
-          for f in publish-bundle stage-bundle clean-images .env.example; do
+          for f in publish-bundle.sh stage-bundle.sh clean-images .env.example; do
             grep -q "devcontainer-src/$f$" /tmp/src_tgz.list \
               || { echo "::error::src 包缺少 $f"; exit 1; }
           done
           # clean-images：语法检查（项目根一键清除 compose 声明的镜像）
           tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/clean-images > /tmp/clean-images
           bash -n /tmp/clean-images
+          # clean-images：支持 --no-name（清除名称与 Tag 均为 <none> 的悬空镜像）
+          grep -q -- '--no-name' /tmp/clean-images \
+            || { echo "::error::clean-images 缺少 --no-name 选项"; exit 1; }
+          # Makefile：publish/stage 调用 .sh 脚本，ps/exec 支持参数透传
+          tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/Makefile > /tmp/Makefile.check
+          for target in publish stage ps exec; do
+            grep -qE "^$target:" /tmp/Makefile.check \
+              || { echo "::error::Makefile 缺少 $target 目标"; exit 1; }
+          done
+          grep -q 'publish-bundle.sh $(ARGS)' /tmp/Makefile.check \
+            || { echo "::error::Makefile 的 publish 未调用 publish-bundle.sh 并透传 ARGS"; exit 1; }
+          grep -q 'stage-bundle.sh $(ARGS)' /tmp/Makefile.check \
+            || { echo "::error::Makefile 的 stage 未调用 stage-bundle.sh 并透传 ARGS"; exit 1; }
+          grep -q 'ps $(ARGS)' /tmp/Makefile.check \
+            || { echo "::error::Makefile 的 ps 未透传 ARGS"; exit 1; }
+          grep -q 'exec $(SERVICE) $(ARGS)' /tmp/Makefile.check \
+            || { echo "::error::Makefile 的 exec 未透传 SERVICE/ARGS"; exit 1; }
           # 离线补装机制（build.sh + Dockerfile.addon）
           grep -q 'devcontainer-src/Dockerfile.addon$' /tmp/src_tgz.list \
             || { echo "::error::src 包缺少 Dockerfile.addon"; exit 1; }
@@ -282,6 +299,8 @@ jobs:
               || { echo "::error::install.sh 缺少 --load 选项"; exit 1; }
             grep -q -- '--load-only' "${{ steps.build.outputs.install_sh }}" \
               || { echo "::error::install.sh 缺少 --load-only 选项"; exit 1; }
+            grep -q -- '--no-load' "${{ steps.build.outputs.install_sh }}" \
+              || { echo "::error::install.sh 缺少 --no-load 选项"; exit 1; }
             grep -q -- '-d|--default' "${{ steps.build.outputs.install_sh }}" \
               || { echo "::error::install.sh 缺少 -d/--default 选项"; exit 1; }
             grep -q 'INSTALL_PATH="../"' "${{ steps.build.outputs.install_sh }}" \
@@ -289,7 +308,7 @@ jobs:
             grep -q 'SRC_DIR="$INSTALL_PATH/src"' "${{ steps.build.outputs.install_sh }}" \
               || { echo "::error::install.sh 未把应用源码放入 <项目根>/src"; exit 1; }
             # 部署辅助脚本与环境变量模板必须安装到项目根目录
-            for f in publish-bundle stage-bundle clean-images .env.example; do
+            for f in publish-bundle.sh stage-bundle.sh clean-images .env.example; do
               grep -q "$f" "${{ steps.build.outputs.install_sh }}" \
                 || { echo "::error::install.sh 未安装 $f 到项目根目录"; exit 1; }
             done
