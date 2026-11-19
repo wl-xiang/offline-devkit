@@ -10,9 +10,10 @@
 # 说明：
 #   - wheels 只在本构建层临时存在（COPY 到 /tmp/addon-wheels），install 与
 #     rm 在同一 RUN 层执行，不会增大最终镜像体积；
-#   - deps/wheels/requirements.txt 含真实包名（非选项/注释/空行）时按清单安装
+#   - deps/wheels/requirements.gitkeep.txt 含真实包名（非选项/注释/空行）时按清单安装
 #     （其 --no-index 头保证不联网），否则安装目录下全部 .whl——install.sh
-#     预置的 requirements.txt 只有离线安装头，此时即"装目录下全部 wheel"；
+#     预置的离线安装头只有 --no-index 选项，此时即"装目录下全部 wheel"；
+#     （build.sh 会把该文件以 requirements.txt 名字放进临时构建上下文）
 #   - 依赖已在基础镜像中安装的包会被 pip 自动跳过，不会重复安装；
 #   - build.sh 使用只含 deps/wheels 的临时上下文构建，因此根目录 .dockerignore
 #     对 deps/ 的排除不影响本文件；不要在项目根目录直接 docker build . 。

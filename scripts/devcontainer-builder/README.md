@@ -16,6 +16,13 @@ scripts/devcontainer-builder/
 │   ├── docker.py            # buildx 构建、外挂镜像 pull、docker save 直出 gzip
 │   ├── package.py           # src tgz 打包
 │   └── summary.py           # GITHUB_STEP_SUMMARY / GITHUB_OUTPUT
+├── scripts/                 # 随 src 产物分发的部署辅助脚本（安装到项目根 scripts/）
+│   ├── push-bundle.sh       # 本地打包 src/ 为 SRC Bundle 并 SFTP 上传（make push）
+│   ├── apply-bundle.sh      # 部署服务器应用 bundle 到 ./src（make apply）
+│   ├── rollback-bundle.sh   # 部署服务器回滚到最近 backup（make rollback）
+│   ├── clean-images.sh      # 清除项目根 compose 声明的镜像（make clean，按
+│   │                        #  脚本目录上一级解析 docker-compose.yml）
+│   └── .env.example         # push-bundle.sh 的 SYNC_REMOTE_* 变量模板
 └── templates/
     ├── Dockerfile.prod.tmpl       # prod 阶段（基础镜像 + APT/自定义命令/Oracle + 离线 pip install）
     ├── Dockerfile.dev.tmpl        # dev 阶段（FROM prod + 开发工具）
@@ -30,12 +37,15 @@ scripts/devcontainer-builder/
     ├── Makefile.tmpl              # make 目标（安装到项目根，路径按 pwd 解析）
     ├── requirements.txt.tmpl      # pip 包清单（含预装组件）
     ├── main.py.tmpl               # 占位入口（install.sh 在应用源码目录 src/ 无 main.py 时复制）
-    ├── install.sh.tmpl            # 安装脚本（复制/改名根目录操作文件、合并忽略文件、deps 安装头与占位 packages.json）
+    ├── install.sh.tmpl            # 安装脚本（复制/改名根目录操作文件、安装 scripts/ 部署辅助脚本、
+    │                              #  合并忽略文件、deps gitkeep 占位文件）
+    ├── env.example.tmpl           # 根目录 .env.example（docker-compose.yml 运行时变量模板）
     ├── Dockerfile.addon.tmpl      # 离线补装：基于现有镜像生成 addon 阶段（wheels 进 /tmp 同层删；
     │                              #  install.sh 复制到项目根时改名 Dockerfile）
     ├── build.sh.tmpl              # 离线补装入口（项目根执行，docker build 根目录 Dockerfile）
     ├── dockerignore.tmpl          # 项目根 .dockerignore（安装/合并；构建上下文排除 dist/ deps/ 等）
-    ├── gitignore.tmpl             # 项目根 .gitignore（安装/合并；忽略离线产物与补装缓存）
+    ├── gitignore.tmpl             # 项目根 .gitignore（安装/合并；忽略离线产物与补装缓存，
+    │                              #  deps/ 仅保留 requirements.gitkeep.txt 与 packages.gitkeep.json）
     ├── readme.html.tmpl           # bundle 安装说明（HTML，放进 Artifact zip，引导 dist/ 解压 + install.sh ../，含 --load 用法与 AI Agent 约定）
     └── README.src.tmpl            # src 产物内的快速上手说明（按原名安装为项目根 README.md）
 ```
@@ -112,25 +122,32 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   重置，不在该目录运行脚本）；把 compose 模板原样复制到项目根为
   `docker-compose.yml`（仅去掉 `.tpl` 后缀，不做渲染）；把 `Makefile` /
   `build.sh` / `Dockerfile.addon`（改名 `Dockerfile`）/ `README.md`（按原名
-  安装）/ `push-bundle.sh` / `apply-bundle.sh` / `rollback-bundle.sh` / `clean-images`
-  复制到项目根，安装/合并 `.dockerignore` 与
-  `.gitignore`（已存在时仅追加缺失条目）；在 `docs/` 下创建 `.gitkeep`，并把
-  bundle 内的 `devcontainer.json`（workflow 输入参数快照）安装到
-  `<根>/docs/devcontainer/` 留档；创建 `<根>/deps/wheels/requirements.txt`
+  安装）/ `devcontainer.json`（workflow 输入参数快照，与 README.md 一样安装
+  到项目根）复制到项目根，把包内 `scripts/`（`push-bundle.sh` /
+  `apply-bundle.sh` / `rollback-bundle.sh` / `clean-images.sh` /
+  `.env.example`）安装到 `<根>/scripts/`（同名冲突时终止；目录已存在但无同名
+  文件时合并安装），安装/合并 `.dockerignore` 与
+  `.gitignore`（已存在时仅追加缺失条目）；在 `docs/` 下创建 `.gitkeep`；创建
+  `<根>/deps/wheels/requirements.gitkeep.txt`
   离线安装头（`--no-index --find-links=./`，pip 按该文件所在目录解析相对
-  find-links）与 `<根>/deps/packages/`（含占位 `packages.json`，Npm Download
-  产物内容放这里）；创建应用源码目录 `<根>/src/`（compose 默认挂载为 /app），缺少
-  main.py 且 prod_command 为默认值时在其中放置占位入口。`-d/--default` 为
+  find-links）与 `<根>/deps/packages/packages.gitkeep.json`（Npm Download
+  产物内容放这里；`.gitignore` 忽略 deps/ 下除这两个 gitkeep 占位文件以外的
+  全部内容）；创建应用源码目录 `<根>/src/`（compose 默认挂载为 /app），缺少
+  main.py 且 prod_command 为默认值时在其中放置占位入口。根目录 `.env.example`
+  （docker-compose.yml 运行时变量模板，默认值与 compose 内置默认值一致）仅在
+  缺失时安装。`-d/--default` 为
   一键写法：项目根固定为 `../`，源码放入 `../src/`。
   Makefile/build.sh 的全部路径按**执行时 pwd** 解析，原始副本与根目录文件
   可互换。模板内 `${SRC_ROOT:-./src/}`（默认 `./src/`，挂载为 /app）与
   `${SRC_ROOT_NAME:-app}`（compose 项目名后缀）由 docker compose 运行时解析。
   install.sh 会检测 compose 命令：仅有 `docker-compose`（v1）时把 Makefile 的
   `COMPOSE` 改为 `docker-compose`；两者都没有时保持默认并输出红色警告。
-- **clean-images**：安装到项目根的 `./clean-images` 从同目录
-  `docker-compose.yml` 的 services 声明中解析 `image:` 值（app / dev /
+- **clean-images.sh（make clean）**：安装到项目根 `scripts/` 的
+  `scripts/clean-images.sh` 从项目根 `docker-compose.yml`（按脚本目录上一级
+  解析）的 services 声明中提取 `image:` 值（app / dev /
   nginx / postgres 等），确认后用 `docker rmi -f` 逐个删除；本机不存在的
-  镜像自动跳过，`-y` 跳过确认。`--no-name` 改为清除 REPOSITORY 与 TAG 均为
+  镜像自动跳过，`-y` 跳过确认，Makefile 的 `clean` 目标支持 `ARGS` 透传
+  （`make clean ARGS="-y"`）。`--no-name` 改为清除 REPOSITORY 与 TAG 均为
   `<none>` 的悬空镜像（不需要 compose 文件）。清除后可用
   `install.sh --load-only` 或 `docker load -i` 重新导入镜像归档。
 - **离线补装（build.sh + Dockerfile.addon→根目录 Dockerfile）**：wheel 放
@@ -140,7 +157,7 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   复制到镜像 `/tmp/addon-wheels` 后在同一 RUN 层内安装并删除（不增大镜像）；
   构建上下文为临时目录 `.addon-build`（只含 wheels——docker 只按上下文根目录
   查找 .dockerignore，故不受根目录排除 deps/ 影响；build.sh 还会显式清理
-  上下文内任何 dockerignore 双保险），构建后自动清理。deps/wheels/requirements.txt 含真实包名才
+  上下文内任何 dockerignore 双保险），构建后自动清理。deps/wheels/requirements.gitkeep.txt 含真实包名才
   按清单装，否则装目录下全部 `*.whl`（空清单不会静默 no-op）。回滚 = 重新
   docker load 原 `devcontainer-docker-images_<架构>_<时间戳>.tgz`。workflow 的
   Verify 步骤含 mock docker 干跑回归测试，持续断言补装上下文不受

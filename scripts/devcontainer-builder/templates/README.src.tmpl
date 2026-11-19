@@ -8,16 +8,18 @@
 
 - **项目根目录**：`Makefile`、`Dockerfile`（离线补装用，由 Dockerfile.addon 改名）、
   `build.sh`、`README.md`（本文件副本）、`.dockerignore`、`.gitignore`、
-  `docker-compose.yml`、`deps/wheels/`（离线补装 wheel，含离线安装头 requirements.txt）、
-  `deps/packages/`（Npm Download Action 产物内容，前端离线依赖）、
-  `push-bundle.sh` / `apply-bundle.sh` / `rollback-bundle.sh` / `clean-images` / `.env.example`
-  （部署辅助脚本与环境变量模板）。
+  `docker-compose.yml`、`.env.example`（docker-compose.yml 运行时变量模板，
+  默认值与 compose 内置默认值一致）、`devcontainer.json`（workflow 输入参数
+  快照）、`deps/wheels/`（离线补装 wheel，含离线安装头
+  requirements.gitkeep.txt）、`deps/packages/`（Npm Download Action 产物内容，
+  前端离线依赖）、`scripts/`（部署辅助脚本：`push-bundle.sh` /
+  `apply-bundle.sh` / `rollback-bundle.sh` / `clean-images.sh` 与其变量模板
+  `scripts/.env.example`）。
   —— 你日常操作的位置。
 - **`src/`**：应用源码目录，由 compose 默认挂载为容器内 `/app`；install.sh 会
   自动创建该目录并按需放入占位 `main.py`。
 - **`docs/devcontainer/`**：上述文件的**原始副本** + `docker-compose.yml.tpl` +
-  `devcontainer.json`（workflow 输入参数快照）+ nginx 配置等。只在根目录文件被
-  改坏时，从这里复制回去重置；
+  nginx 配置等。只在根目录文件被改坏时，从这里复制回去重置；
   **不要在该目录下直接运行任何脚本**（脚本按执行时的工作目录解析路径）。
 - **`dist/`**：bundle zip 的解压位置（镜像归档 tgz / src tgz / install.sh / readme.html）。
 
@@ -107,27 +109,30 @@ make down         # 停止
 - 本包**不含 wheel**：所有 wheel 已在构建镜像时安装（构建端经 BuildKit
   bind mount 参与安装，不占用镜像体积，运行容器内没有 wheels）。离线安装
   额外依赖请用 `build.sh` 补装（见下文）；临时应急可把 wheel 放入项目根
-  目录 `deps/wheels/` 后 `pip install -r deps/wheels/requirements.txt <pkg>`
+  目录 `deps/wheels/` 后 `pip install -r deps/wheels/requirements.gitkeep.txt <pkg>`
   （离线安装头已由 install.sh 预置，`--find-links=./` 自动指向 deps/wheels/
   所在目录；此方式装进容器可写层，重建容器后失效，持久生效仍需 build.sh）。
 - `make build` 需要联网（apt/pip 源），离线机器请勿使用；镜像请统一通过
   `devcontainer-docker-images_{{ARCH}}_{{TS}}.tgz` 导入。
-- **部署辅助脚本**（安装到项目根目录）：把 `.env.example` 复制为 `.env` 并填写远端
-  连接信息（`.env` 已被 `.gitignore` 忽略；SSH 密码默认要求 Base64 编码存储，
-  也支持 `SYNC_REMOTE_AUTH_TYPE=sshkey` 免密鉴权）。在本地项目根执行
-  `./push-bundle.sh`（或 `make push ARGS="-y"`）：只打包 `src/` 源码为
+- **部署辅助脚本**（安装到项目根目录 `scripts/`）：把 `scripts/.env.example`
+  复制为 `.env` 填写远端连接信息（放项目根或 `scripts/` 目录均可，`.env` 已被
+  `.gitignore` 忽略；SSH 密码默认要求 Base64 编码存储，也支持
+  `SYNC_REMOTE_AUTH_TYPE=sshkey` 免密鉴权）。在本地项目根执行
+  `bash scripts/push-bundle.sh`（或 `make push ARGS="-y"`）：只打包 `src/` 源码为
   SRC Bundle，连同 `bundle.meta`
   （含 SHA256 元信息，供完整性校验）一起上传到远端 `<项目路径>/bundles/`；
-  在部署服务器项目根执行 `./apply-bundle.sh`（或 `make apply ARGS="-y"`）：
+  在部署服务器项目根执行 `bash scripts/apply-bundle.sh`（或 `make apply ARGS="-y"`）：
   校验 meta 与 SHA256 后自动
   `make down` 下线服务，备份旧版本到 `bundles/backup_src_<时间戳>.tgz`，
   再解压替换 `src/`，完成后手动 `make up` 上线；也可用
-  `./apply-bundle.sh bundles/bundle_xxx.tgz` 应用指定的 bundle。
-  回滚：在部署服务器项目根执行 `./rollback-bundle.sh`（或 `make rollback ARGS="-y"`），
+  `bash scripts/apply-bundle.sh bundles/bundle_xxx.tgz` 应用指定的 bundle。
+  回滚：在部署服务器项目根执行 `bash scripts/rollback-bundle.sh`
+  （或 `make rollback ARGS="-y"`），
   自动取最新的 `backup_src_*.tgz` 覆盖回 `src/`（回滚前同样会先备份当前版本）。
-- `./clean-images`：在项目根一键清除本 DevContainer 使用的镜像——镜像清单取自
-  `docker-compose.yml` 的 services 声明（app / dev / nginx / postgres 等），
-  加 `-y` 可跳过确认；`--no-name` 改为清除名称与 Tag 均为 `<none>` 的悬空镜像。
+- `make clean`（等价 `bash scripts/clean-images.sh`）：在项目根一键清除本
+  DevContainer 使用的镜像——镜像清单取自 `docker-compose.yml` 的 services
+  声明（app / dev / nginx / postgres 等），`make clean ARGS="-y"` 可跳过确认；
+  `make clean ARGS="--no-name"` 改为清除名称与 Tag 均为 `<none>` 的悬空镜像。
   镜像被容器占用时请先 `make down`；清除后可用
   `bash dist/install.sh --load-only` 或 `docker load -i` 重新导入镜像归档。
 - `make ps` 查看容器状态、`make exec SERVICE=dev ARGS="bash"` 在运行中的容器内
@@ -158,7 +163,7 @@ make up && make logs
 - `Dockerfile`（由 `docs/devcontainer/Dockerfile.addon` 安装改名而来）基于
   现有镜像分层构建：wheel 复制到 `/tmp` 安装后同层删除，不增大镜像体积；
   已装过的依赖 pip 自动跳过。
-- `deps/wheels/requirements.txt` 含真实包名时按清单装；只有离线安装头（
+- `deps/wheels/requirements.gitkeep.txt` 含真实包名时按清单装；只有离线安装头（
   install.sh 预置的状态）时，安装目录下全部 `*.whl`。
 - build.sh 的构建上下文是临时目录 `.addon-build`（只含 wheels），不会把
   整个项目目录发给 docker daemon，也不受根目录 `.dockerignore`（排除
