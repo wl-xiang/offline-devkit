@@ -59,7 +59,7 @@ def build_markdown(p, results):
         out.append("- (无，全部为默认值)")
     out.append("")
     out.append("> 完整快照见产物 `devcontainer.json`（纯 JSON，随 install.sh 安装到"
-               " `docs/devcontainer/`）。")
+               " 项目根目录）。")
     out.append("")
 
     out.append("### 构建参数")
@@ -203,7 +203,7 @@ def build_markdown(p, results):
     if devcontainer_json:
         out.append(
             f"| {devcontainer_json.name}（workflow 输入参数快照 JSON，"
-            "随 install.sh 安装到 docs/devcontainer/） "
+            "随 install.sh 与 README.md 一起安装到项目根目录） "
             f"| {human_size(devcontainer_json.stat().st_size)} "
             f"| `{sha256_of(devcontainer_json)}` |"
         )
@@ -232,12 +232,13 @@ def build_markdown(p, results):
     out.append("```")
     out.append("")
     out.append("   install.sh 会把 `Makefile` / `build.sh` / `Dockerfile`"
-               "（由 Dockerfile.addon 改名）/ `README.md` / `push-bundle.sh` /"
-               " `apply-bundle.sh` / `rollback-bundle.sh` / `clean-images` /"
-               " `.dockerignore` /"
-               " `.gitignore` 安装到项目根目录（同名文件已存在时终止安装，不覆盖；"
-               "`.env.example` 仅在缺失时安装），把 src 解压到"
-               " `<项目根>/docs/devcontainer`（原始副本，用于重置），把"
+               "（由 Dockerfile.addon 改名）/ `README.md` / `devcontainer.json` /"
+               " `.dockerignore` / `.gitignore` 安装到项目根目录（同名文件已存在"
+               "时终止安装），把部署辅助脚本 `push-bundle.sh` / `apply-bundle.sh` /"
+               " `rollback-bundle.sh` / `clean-images.sh` 安装到项目根 `scripts/`"
+               "（同名冲突时终止安装），根目录 `.env.example`"
+               "（docker-compose.yml 运行时变量模板）仅在缺失时安装；同时把 src"
+               " 解压到 `<项目根>/docs/devcontainer`（原始副本，用于重置），把"
                " `docker-compose.yml` 复制到项目根目录，并在缺少 `main.py` 时"
                "放置占位入口。")
     out.append("")

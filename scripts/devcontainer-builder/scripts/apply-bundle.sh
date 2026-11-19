@@ -5,13 +5,14 @@
 # 纯 POSIX sh 实现——部署服务器无需 python/jq：tgz 解压只需 tar，SHA256 只需
 # sha256sum（find -printf 为 GNU 扩展，Linux 均可用）。
 #
-# 用法（在部署目录中执行，目录下应有 push-bundle.sh 上传的 bundles/ 目录）:
-#     ./apply-bundle.sh                    # 校验最新 bundle 后解压替换 ./src
-#     ./apply-bundle.sh bundles/xxx.tgz    # 应用指定的 bundle 文件
-#     ./apply-bundle.sh -y                 # 跳过交互确认直接执行
-#     ./apply-bundle.sh -c                 # 保留最新一份 bundle，删除其余
-#     ./apply-bundle.sh --clean-all        # 删除全部 bundle 与遗留 sync.env
-#     ./apply-bundle.sh -h                 # 打印用法
+# 用法（在部署服务器项目根目录中执行，目录下应有 push-bundle.sh 上传的
+# bundles/ 目录；脚本位于 <项目根>/scripts/，也可用 make apply ARGS=...）:
+#     bash scripts/apply-bundle.sh                    # 校验最新 bundle 后解压替换 ./src
+#     bash scripts/apply-bundle.sh bundles/xxx.tgz    # 应用指定的 bundle 文件
+#     bash scripts/apply-bundle.sh -y                 # 跳过交互确认直接执行
+#     bash scripts/apply-bundle.sh -c                 # 保留最新一份 bundle，删除其余
+#     bash scripts/apply-bundle.sh --clean-all        # 删除全部 bundle 与遗留 sync.env
+#     bash scripts/apply-bundle.sh -h                 # 打印用法
 #
 # 协议说明:
 #     bundle 与 bundle.meta 固定位于 ./bundles/（push-bundle.sh 上传到远端
@@ -42,7 +43,7 @@ META_FILE="bundle.meta"
 
 usage() {
     cat <<'USAGE'
-用法: ./apply-bundle.sh [选项] [BUNDLE路径]
+用法: bash scripts/apply-bundle.sh [选项] [BUNDLE路径]
 
 从 ./bundles/ 取文件名时间戳最新的 bundle_*.tgz（或用位置参数指定 bundle
 文件路径），用 bundle.meta 校验完整性后解压替换到 ./src 目录（不会自动运行
@@ -62,11 +63,11 @@ usage() {
   -h, --help        显示本帮助并退出
 
 示例:
-  ./apply-bundle.sh                        # 常规部署：最新 bundle -> ./src
-  ./apply-bundle.sh bundles/bundle_xxx.tgz # 应用指定的 bundle
-  ./apply-bundle.sh -y                     # 自动确认，直接部署
-  ./apply-bundle.sh -c                     # bundles/ 瘦身：只保留最新一份 bundle
-  ./apply-bundle.sh --clean-all            # 清空所有 bundle
+  bash scripts/apply-bundle.sh                        # 常规部署：最新 bundle -> ./src
+  bash scripts/apply-bundle.sh bundles/bundle_xxx.tgz # 应用指定的 bundle
+  bash scripts/apply-bundle.sh -y                     # 自动确认，直接部署
+  bash scripts/apply-bundle.sh -c                     # bundles/ 瘦身：只保留最新一份 bundle
+  bash scripts/apply-bundle.sh --clean-all            # 清空所有 bundle
 USAGE
 }
 
@@ -330,7 +331,7 @@ mkdir -p "$src"
 
 printf '%s\n' "== apply 完成: 新代码已就位 $src =="
 if [ -n "$backup_for_hint" ]; then
-    printf '  旧版本备份: %s（回滚: 在项目根执行 ./rollback-bundle.sh，或 tar -xzf %s -C . 后手动 make up）\n' \
+    printf '  旧版本备份: %s（回滚: 在项目根执行 bash scripts/rollback-bundle.sh，或 tar -xzf %s -C . 后手动 make up）\n' \
         "$backup_for_hint" "$backup_for_hint"
 fi
 printf '%s\n' "== 请手动执行 make up 上线服务 =="

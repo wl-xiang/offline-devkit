@@ -258,43 +258,52 @@ jobs:
             || { echo "::error::src 包缺少 .dockerignore"; exit 1; }
           grep -q 'devcontainer-src/.gitignore$' /tmp/src_tgz.list \
             || { echo "::error::src 包缺少 .gitignore"; exit 1; }
-          # 部署辅助脚本与环境变量模板（install.sh 安装到项目根目录）
-          for f in push-bundle.sh apply-bundle.sh rollback-bundle.sh clean-images .env.example; do
+          # 部署辅助脚本与环境变量模板（包内 scripts/，install.sh 安装到项目根 scripts/）
+          for f in scripts/push-bundle.sh scripts/apply-bundle.sh scripts/rollback-bundle.sh scripts/clean-images.sh scripts/.env.example; do
             grep -q "devcontainer-src/$f$" /tmp/src_tgz.list \
               || { echo "::error::src 包缺少 $f"; exit 1; }
           done
-          # clean-images：语法检查（项目根一键清除 compose 声明的镜像）
-          tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/clean-images > /tmp/clean-images
-          bash -n /tmp/clean-images
-          # clean-images：支持 --no-name（清除名称与 Tag 均为 <none> 的悬空镜像）
-          grep -q -- '--no-name' /tmp/clean-images \
-            || { echo "::error::clean-images 缺少 --no-name 选项"; exit 1; }
+          # 根目录 .env.example：docker-compose.yml 运行时变量模板（默认值与 compose 一致）
+          grep -q 'devcontainer-src/.env.example$' /tmp/src_tgz.list \
+            || { echo "::error::src 包缺少根目录 .env.example"; exit 1; }
+          # clean-images.sh：语法检查（scripts/ 下，清除项目根 compose 声明的镜像）
+          tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/scripts/clean-images.sh > /tmp/clean-images.sh
+          bash -n /tmp/clean-images.sh
+          # clean-images.sh：docker-compose.yml 必须按脚本目录上一级（项目根）解析
+          grep -q '\.\./docker-compose\.yml' /tmp/clean-images.sh \
+            || { echo "::error::clean-images.sh 未按项目根（脚本目录上一级）解析 docker-compose.yml"; exit 1; }
+          # clean-images.sh：支持 --no-name（清除名称与 Tag 均为 <none> 的悬空镜像）
+          grep -q -- '--no-name' /tmp/clean-images.sh \
+            || { echo "::error::clean-images.sh 缺少 --no-name 选项"; exit 1; }
           # apply-bundle.sh：语法检查（应用 bundle；无参取最新，位置参数指定 bundle 路径）
-          tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/apply-bundle.sh > /tmp/apply-bundle.sh
+          tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/scripts/apply-bundle.sh > /tmp/apply-bundle.sh
           sh -n /tmp/apply-bundle.sh
           grep -q -- '-y|--yes' /tmp/apply-bundle.sh \
             || { echo "::error::apply-bundle.sh 缺少 -y/--yes 选项"; exit 1; }
           grep -q 'find_newest_bundle' /tmp/apply-bundle.sh \
             || { echo "::error::apply-bundle.sh 缺少最新 bundle 选择逻辑"; exit 1; }
           # rollback-bundle.sh：语法检查（回滚到最新 backup；-y 跳过确认）
-          tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/rollback-bundle.sh > /tmp/rollback-bundle.sh
+          tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/scripts/rollback-bundle.sh > /tmp/rollback-bundle.sh
           sh -n /tmp/rollback-bundle.sh
           grep -q -- '-y|--yes' /tmp/rollback-bundle.sh \
             || { echo "::error::rollback-bundle.sh 缺少 -y/--yes 选项"; exit 1; }
           grep -q 'backup_src_' /tmp/rollback-bundle.sh \
             || { echo "::error::rollback-bundle.sh 未读取 backup_src_*.tgz 备份"; exit 1; }
-          # Makefile：push/apply/rollback 调用 .sh 脚本，ps/exec 支持参数透传
+          # Makefile：push/apply/rollback/clean 调用 scripts/ 下的 .sh 脚本，
+          # ps/exec 支持参数透传
           tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/Makefile > /tmp/Makefile.check
-          for target in push apply rollback ps exec; do
+          for target in push apply rollback clean ps exec; do
             grep -qE "^$target:" /tmp/Makefile.check \
               || { echo "::error::Makefile 缺少 $target 目标"; exit 1; }
           done
-          grep -q 'push-bundle.sh $(ARGS)' /tmp/Makefile.check \
-            || { echo "::error::Makefile 的 push 未调用 push-bundle.sh 并透传 ARGS"; exit 1; }
-          grep -q 'apply-bundle.sh $(ARGS)' /tmp/Makefile.check \
-            || { echo "::error::Makefile 的 apply 未调用 apply-bundle.sh 并透传 ARGS"; exit 1; }
-          grep -q 'rollback-bundle.sh $(ARGS)' /tmp/Makefile.check \
-            || { echo "::error::Makefile 的 rollback 未调用 rollback-bundle.sh 并透传 ARGS"; exit 1; }
+          grep -q 'scripts/push-bundle.sh $(ARGS)' /tmp/Makefile.check \
+            || { echo "::error::Makefile 的 push 未调用 scripts/push-bundle.sh 并透传 ARGS"; exit 1; }
+          grep -q 'scripts/apply-bundle.sh $(ARGS)' /tmp/Makefile.check \
+            || { echo "::error::Makefile 的 apply 未调用 scripts/apply-bundle.sh 并透传 ARGS"; exit 1; }
+          grep -q 'scripts/rollback-bundle.sh $(ARGS)' /tmp/Makefile.check \
+            || { echo "::error::Makefile 的 rollback 未调用 scripts/rollback-bundle.sh 并透传 ARGS"; exit 1; }
+          grep -q 'scripts/clean-images.sh $(ARGS)' /tmp/Makefile.check \
+            || { echo "::error::Makefile 的 clean 未调用 scripts/clean-images.sh 并透传 ARGS"; exit 1; }
           grep -q 'ps $(ARGS)' /tmp/Makefile.check \
             || { echo "::error::Makefile 的 ps 未透传 ARGS"; exit 1; }
           grep -q 'exec $(SERVICE) $(ARGS)' /tmp/Makefile.check \
@@ -323,11 +332,14 @@ jobs:
               || { echo "::error::install.sh 的 -d/--default 未使用默认项目根 ../"; exit 1; }
             grep -q 'SRC_DIR="$INSTALL_PATH/src"' "${{ steps.build.outputs.install_sh }}" \
               || { echo "::error::install.sh 未把应用源码放入 <项目根>/src"; exit 1; }
-            # 部署辅助脚本与环境变量模板必须安装到项目根目录
-            for f in push-bundle.sh apply-bundle.sh rollback-bundle.sh clean-images .env.example; do
+            # 部署辅助脚本安装到项目根 scripts/；根目录 .env.example 为
+            # docker-compose.yml 运行时变量模板
+            for f in scripts/push-bundle.sh scripts/apply-bundle.sh scripts/rollback-bundle.sh scripts/clean-images.sh scripts/.env.example; do
               grep -q "$f" "${{ steps.build.outputs.install_sh }}" \
-                || { echo "::error::install.sh 未安装 $f 到项目根目录"; exit 1; }
+                || { echo "::error::install.sh 未安装 $f 到项目根 scripts/"; exit 1; }
             done
+            grep -q 'INSTALL_PATH/.env.example' "${{ steps.build.outputs.install_sh }}" \
+              || { echo "::error::install.sh 未安装根目录 .env.example"; exit 1; }
             # README.md 按原名安装（不再改名 README-devcontainer.md）
             grep -q 'README.md:README.md' "${{ steps.build.outputs.install_sh }}" \
               || { echo "::error::install.sh 未按原名安装 README.md"; exit 1; }
@@ -338,14 +350,16 @@ jobs:
             # docs/.gitkeep 占位文件
             grep -q 'docs/.gitkeep' "${{ steps.build.outputs.install_sh }}" \
               || { echo "::error::install.sh 未创建 docs/.gitkeep"; exit 1; }
-            # deps/ 目录结构（deps/wheels 离线安装头 + deps/packages 占位 packages.json）
+            # deps/ 目录结构（deps/wheels 离线安装头 + deps/packages 占位 packages.gitkeep.json）
             grep -q 'deps/wheels' "${{ steps.build.outputs.install_sh }}" \
               || { echo "::error::install.sh 未创建 deps/wheels（离线安装头）"; exit 1; }
-            grep -q 'deps/packages/packages.json' "${{ steps.build.outputs.install_sh }}" \
-              || { echo "::error::install.sh 未创建 deps/packages/packages.json 占位文件"; exit 1; }
-            # devcontainer.json 快照必须随 install.sh 安装到 docs/devcontainer/
-            grep -q 'devcontainer.json' "${{ steps.build.outputs.install_sh }}" \
-              || { echo "::error::install.sh 未安装 devcontainer.json"; exit 1; }
+            grep -q 'deps/wheels/requirements.gitkeep.txt' "${{ steps.build.outputs.install_sh }}" \
+              || { echo "::error::install.sh 未创建 deps/wheels/requirements.gitkeep.txt 占位文件"; exit 1; }
+            grep -q 'deps/packages/packages.gitkeep.json' "${{ steps.build.outputs.install_sh }}" \
+              || { echo "::error::install.sh 未创建 deps/packages/packages.gitkeep.json 占位文件"; exit 1; }
+            # devcontainer.json 快照与 README.md 一样安装到项目根目录
+            grep -q 'INSTALL_PATH/devcontainer.json' "${{ steps.build.outputs.install_sh }}" \
+              || { echo "::error::install.sh 未把 devcontainer.json 安装到项目根目录"; exit 1; }
             sha256sum "${{ steps.build.outputs.install_sh }}"
           else
             echo "::error::install.sh 未生成"

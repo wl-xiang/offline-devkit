@@ -14,16 +14,17 @@ from .params import NPM_PACKAGES_CONTAINER_DIR, Params
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 BUILDER_DIR = TEMPLATES_DIR.parent
 
-# 静态部署辅助文件：随 src 产物分发，由 install.sh 安装到项目根目录
+# 静态部署辅助脚本：随 src 产物分发（包内 scripts/ 目录），由 install.sh 安装
+# 到项目根 scripts/ 目录
 # （push-bundle.sh 在本地项目根执行，apply-bundle.sh / rollback-bundle.sh 在
-#   部署服务器项目根执行，clean-images 在项目根清除 compose 声明的镜像，
+#   部署服务器项目根执行，clean-images.sh 清除项目根 compose 声明的镜像，
 #   .env.example 是 push-bundle.sh 读取的环境变量模板）
-DEPLOY_FILES = (
+SCRIPTS_FILES = (
     ".env.example",
     "push-bundle.sh",
     "apply-bundle.sh",
     "rollback-bundle.sh",
-    "clean-images",
+    "clean-images.sh",
 )
 
 # compose 中的 dev 服务（profile=dev，仅 make shell/lint/compile/test 时激活）
@@ -648,6 +649,39 @@ def render_gitignore(p):
     return _sub(_load("gitignore.tmpl"), _base_mapping(p))
 
 
+def _env_example_npm_block(p):
+    """根目录 .env.example 的 npm 变量段（enable_node 时）。"""
+    if not p.enable_node:
+        return ""
+    return (
+        "# npm 离线包目录（Npm Download Action 产物 packages/ 内容的宿主机位置，\n"
+        "# compose 只读挂载到容器 /opt/npm-packages）\n"
+        f"NPM_PACKAGES_DIR={p.npm_packages_dir}\n"
+        "\n"
+    )
+
+
+def _env_example_oracle_block(p):
+    """根目录 .env.example 的 Oracle 变量段（runtime_deps_only 挂载模式时）。"""
+    if not p.oracle_client_mount:
+        return ""
+    return (
+        "# Oracle Instant Client 宿主机目录（runtime_deps_only 模式只读挂载进容器）\n"
+        f"ORACLE_CLIENT_DIR={p.oracle_client_dir}\n"
+        "\n"
+    )
+
+
+def render_env_example(p):
+    """项目根目录 .env.example：docker-compose.yml 运行时变量模板，
+    key 与 compose 中 ${VAR:-默认值} 一一对应，value 为内置默认值。"""
+    return _sub(_load("env.example.tmpl"), {
+        **_base_mapping(p),
+        "NPM_BLOCK": _env_example_npm_block(p),
+        "ORACLE_BLOCK": _env_example_oracle_block(p),
+    })
+
+
 def render_main_py():
     """占位入口：install.sh 在应用源码目录 <项目根>/src 无 main.py 且启动
     命令为默认值时复制过去。"""
@@ -1179,14 +1213,20 @@ def render_all(p, staging):
         # 其 wheels/ 排除规则会让构建期的 wheels 引用失败；
         # 它在 docker 构建完成后由 main.py 写入，仅供 src 产物分发
         ".gitignore": render_gitignore(p),
+        # 根目录 .env.example：docker-compose.yml 运行时变量模板（默认值一致，
+        # 仅缺失时安装）。部署脚本的 SYNC_REMOTE_* 变量模板是 scripts/.env.example
+        ".env.example": render_env_example(p),
     }
     for name, content in files.items():
         (staging / name).write_text(content, encoding="utf-8")
     # 保留可执行位（tar 会随包保留；artifact zip 解压可能丢失，文档引导 bash 调用）
     (staging / "build.sh").chmod(0o755)
-    # 部署辅助文件（静态复制，不渲染）：随 src 产物分发，install.sh 安装到项目根目录
-    for name in DEPLOY_FILES:
-        shutil.copy2(BUILDER_DIR / name, staging / name)
+    # 部署辅助脚本（静态复制，不渲染）：随 src 产物分发到包内 scripts/ 目录，
+    # install.sh 安装到项目根 scripts/（clean-images.sh 由 make clean 调用）
+    scripts_dir = staging / "scripts"
+    scripts_dir.mkdir(exist_ok=True)
+    for name in SCRIPTS_FILES:
+        shutil.copy2(BUILDER_DIR / "scripts" / name, scripts_dir / name)
     if p.enable_nginx and p.has_app_port:
         conf_dir = staging / "nginx" / "conf.d"
         conf_dir.mkdir(parents=True, exist_ok=True)

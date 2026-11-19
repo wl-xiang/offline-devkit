@@ -14,6 +14,7 @@ IMAGES := {{IMAGE_LIST}}
 # 目标参数透传：make ps ARGS="-a" / make exec SERVICE=dev ARGS="bash -l"
 #                  make push ARGS="-y" / make apply ARGS="-y" 或
 #                  make apply ARGS="bundles/bundle_xxx.tgz" / make rollback ARGS="-y"
+#                  make clean ARGS="--no-name"（清除 <none>:<none> 悬空镜像）
 ARGS ?=
 SERVICE ?= app
 
@@ -67,13 +68,16 @@ logs: ## 跟随查看日志
 	$(COMPOSE) logs -f
 
 push: ## 打包 src 为 SRC Bundle 并上传（make push ARGS="-y"）
-	./push-bundle.sh $(ARGS)
+	./scripts/push-bundle.sh $(ARGS)
 
 apply: ## 应用最新 bundle（或 ARGS 指定 bundle 路径）到 ./src（make apply ARGS="-y"）
-	./apply-bundle.sh $(ARGS)
+	./scripts/apply-bundle.sh $(ARGS)
 
 rollback: ## 回滚到最近的 backup（make rollback ARGS="-y"）
-	./rollback-bundle.sh $(ARGS)
+	./scripts/rollback-bundle.sh $(ARGS)
+
+clean: ## 清除 compose 声明的镜像（make clean ARGS="--no-name" 清除悬空镜像）
+	./scripts/clean-images.sh $(ARGS)
 
 {{DEV_TARGETS}}{{NPM_TARGETS}}package-src: ## 重新打包 docs/devcontainer 为 tgz（输出到 dist/，可配 install.sh 再次安装）
 	mkdir -p dist
@@ -81,4 +85,4 @@ rollback: ## 回滚到最近的 backup（make rollback ARGS="-y"）
 		--exclude='*.tgz' --exclude='__pycache__' --exclude='.pytest_cache' \
 		-C docs/devcontainer .
 
-.PHONY: help check build up down ps exec logs push apply rollback {{PHONY_DEV}}{{PHONY_NPM}}package-src
+.PHONY: help check build up down ps exec logs push apply rollback clean {{PHONY_DEV}}{{PHONY_NPM}}package-src

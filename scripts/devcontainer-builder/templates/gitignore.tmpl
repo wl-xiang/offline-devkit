@@ -2,7 +2,6 @@
 # install.sh 会把本文件安装（或按行合并）到项目根目录：
 # 忽略离线产物与本地补装缓存，避免误提交大文件。
 dist/
-deps/
 tarballs/
 .addon-build/
 __pycache__/
@@ -11,6 +10,16 @@ __pycache__/
 .ruff_cache/
 node_modules/
 
+# deps/ 离线依赖目录：忽略全部内容（wheel / Npm Download 产物等大文件），
+# 仅保留两个 gitkeep 占位文件，让 git 跟踪 deps/wheels 与 deps/packages 目录结构
+deps/*
+!deps/wheels/
+!deps/packages/
+deps/wheels/*
+!deps/wheels/requirements.gitkeep.txt
+deps/packages/*
+!deps/packages/packages.gitkeep.json
+
 # 所有压缩包与 bundle 产物（push-bundle.sh / apply-bundle.sh / rollback-bundle.sh）
 *.tgz
 *.tar.gz
@@ -18,5 +27,6 @@ node_modules/
 # push-bundle.sh 本地产物目录（bundle_*.tgz 与 bundle.meta、backup_src_*.tgz）
 bundles/
 
-# 本地密钥配置（由 .env.example 复制而来，含 SSH 密码请勿提交）
+# 本地密钥与变量配置（由 .env.example / scripts/.env.example 复制而来，
+# 含 SSH 密码请勿提交）
 .env

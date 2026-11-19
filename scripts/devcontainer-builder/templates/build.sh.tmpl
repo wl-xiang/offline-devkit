@@ -68,8 +68,8 @@ mkdir -p "$STAGING/wheels"
 # 此处显式清理以防未来改动引入或异常残留。
 rm -f "$STAGING/.dockerignore" "$STAGING/Dockerfile.dockerignore"
 cp "$WHEELS_DIR"/*.whl "$STAGING/wheels/"
-if [ -f "$WHEELS_DIR/requirements.txt" ]; then
-    cp "$WHEELS_DIR/requirements.txt" "$STAGING/wheels/"
+if [ -f "$WHEELS_DIR/requirements.gitkeep.txt" ]; then
+    cp "$WHEELS_DIR/requirements.gitkeep.txt" "$STAGING/wheels/requirements.txt"
 fi
 trap 'rm -rf "$STAGING"' EXIT
 

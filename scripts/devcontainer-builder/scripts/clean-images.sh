@@ -1,27 +1,30 @@
 #!/usr/bin/env bash
 # 一键清除本 DevContainer 使用的全部镜像。
-# 镜像清单取自脚本同目录 docker-compose.yml 的 services 声明（image: 行）：
-# app（prod / dev）与 nginx / postgres 等外挂服务。镜像被运行中的容器占用时
-# 无法删除，请先 make down；清除后可用 install.sh --load-only 或
-# docker load -i 重新导入镜像归档。
+# 镜像清单取自项目根目录 docker-compose.yml（本脚本位于 <项目根>/scripts/，
+# 即脚本所在目录的上一级）的 services 声明（image: 行）：app（prod / dev）
+# 与 nginx / postgres 等外挂服务。镜像被运行中的容器占用时无法删除，请先
+# make down；清除后可用 install.sh --load-only 或 docker load -i 重新导入
+# 镜像归档。
 #
 # 用法（在项目根目录执行）:
-#     ./clean-images           # 列出 compose 声明的镜像，确认后删除
-#     ./clean-images --no-name # 清除名称与 Tag 均为 <none> 的悬空镜像
-#     ./clean-images -y        # 跳过确认直接删除
-#     ./clean-images -h        # 查看帮助
+#     bash scripts/clean-images.sh           # 列出 compose 声明的镜像，确认后删除
+#     make clean                             # 等价写法（Makefile 目标，支持 ARGS 透传）
+#     bash scripts/clean-images.sh --no-name # 清除名称与 Tag 均为 <none> 的悬空镜像
+#     bash scripts/clean-images.sh -y        # 跳过确认直接删除
+#     bash scripts/clean-images.sh -h        # 查看帮助
 
 set -euo pipefail
 
-COMPOSE_FILE="$(cd "$(dirname "$0")" && pwd -P)/docker-compose.yml"
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
+COMPOSE_FILE="$SCRIPT_DIR/../docker-compose.yml"
 
 usage() {
     cat <<'EOF'
-用法: ./clean-images [-y|--yes] [--no-name] [-h|--help]
+用法: bash scripts/clean-images.sh [-y|--yes] [--no-name] [-h|--help]
 
-删除本 DevContainer 使用的镜像：镜像清单取自脚本同目录
-docker-compose.yml 的 services 声明（app / dev / nginx / postgres 等
-服务的 image: 值），镜像不存在时自动跳过。
+删除本 DevContainer 使用的镜像：镜像清单取自项目根目录
+docker-compose.yml（脚本所在目录的上一级）的 services 声明（app / dev /
+nginx / postgres 等服务的 image: 值），镜像不存在时自动跳过。
 
 选项:
   --no-name    清除 Docker images 中名称（REPOSITORY）与 Tag 均为 <none>
@@ -31,9 +34,10 @@ docker-compose.yml 的 services 声明（app / dev / nginx / postgres 等
   -h, --help   显示本帮助并退出
 
 示例:
-  ./clean-images                  # 确认后清除 compose 中声明的镜像
-  ./clean-images --no-name        # 清除 <none>:<none> 悬空镜像
-  ./clean-images --no-name -y     # 直接清除悬空镜像（适合脚本 / CI）
+  bash scripts/clean-images.sh                  # 确认后清除 compose 中声明的镜像
+  make clean                                    # 等价写法（make clean ARGS="--no-name"）
+  bash scripts/clean-images.sh --no-name        # 清除 <none>:<none> 悬空镜像
+  bash scripts/clean-images.sh --no-name -y     # 直接清除悬空镜像（适合脚本 / CI）
 
 说明:
   镜像被运行中的容器占用时无法删除，请先执行 make down。
@@ -89,7 +93,7 @@ if [ "$no_name" -eq 1 ]; then
 fi
 
 [ -f "$COMPOSE_FILE" ] \
-    || { printf '错误: 未找到 %s（请在项目根目录使用 ./clean-images）\n' "$COMPOSE_FILE" >&2; exit 1; }
+    || { printf '错误: 未找到 %s（请在项目根目录的 scripts/ 下安装本脚本后再执行）\n' "$COMPOSE_FILE" >&2; exit 1; }
 
 # 从 compose 的 services 块中提取 image: 值（支持引号与行尾注释）
 parse_images() {

@@ -7,10 +7,11 @@
 # 一份恢复（回滚后再执行一次即可实现"回滚到更早"，或再次 apply-bundle.sh
 # 回到新版本——当前版本同样会被先备份）。
 #
-# 用法（在部署目录中执行）:
-#     ./rollback-bundle.sh        # 取最新 backup，确认后覆盖 ./src
-#     ./rollback-bundle.sh -y     # 跳过交互确认直接执行
-#     ./rollback-bundle.sh -h     # 打印用法
+# 用法（在部署服务器项目根目录中执行；脚本位于 <项目根>/scripts/，也可用
+# make rollback ARGS=...）:
+#     bash scripts/rollback-bundle.sh        # 取最新 backup，确认后覆盖 ./src
+#     bash scripts/rollback-bundle.sh -y     # 跳过交互确认直接执行
+#     bash scripts/rollback-bundle.sh -h     # 打印用法
 #
 # 流程:
 #     1. 找到 ./bundles/ 下文件名时间戳最新的 backup_src_*.tgz
@@ -29,14 +30,14 @@ BACKUP_PREFIX="backup_src_"
 
 usage() {
     cat <<'USAGE'
-用法: ./rollback-bundle.sh [选项]
+用法: bash scripts/rollback-bundle.sh [选项]
 
 从 ./bundles/ 取文件名时间戳最新的 backup_src_*.tgz（apply-bundle.sh 部署前
 自动创建的旧版本备份），确认后覆盖 ./src 目录（不会自动运行任何代码）。
 部署目录固定为 ./src —— compose 模板中 ${SRC_ROOT:-./src/} 把该目录挂载为容器内 /app。
 执行前会自动 make down 下线服务；完成后请手动 make up 上线。
 回滚前会把当前 ./src 再备份为新的 backup_src_*.tgz，因此可以连续回滚，
-或随时用 ./apply-bundle.sh 回到新版本。
+或随时用 bash scripts/apply-bundle.sh 回到新版本。
 
 选项:
   （无参数）        取最新 backup，确认后覆盖 ./src（含 make down 钩子）
@@ -44,8 +45,8 @@ usage() {
   -h, --help        显示本帮助并退出
 
 示例:
-  ./rollback-bundle.sh        # 回滚到最近一次部署前的版本
-  ./rollback-bundle.sh -y     # 自动确认，直接回滚
+  bash scripts/rollback-bundle.sh        # 回滚到最近一次部署前的版本
+  bash scripts/rollback-bundle.sh -y     # 自动确认，直接回滚
 USAGE
 }
 
@@ -160,6 +161,6 @@ mv -- "$restored_root" "$src"
 
 printf '%s\n' "== rollback 完成: 已回滚到 $newest，代码就位 $src =="
 if [ -n "$backup_for_hint" ]; then
-    printf '  回滚前版本已备份: %s（再次执行 ./rollback-bundle.sh 可回到该版本）\n' "$backup_for_hint"
+    printf '  回滚前版本已备份: %s（再次执行 bash scripts/rollback-bundle.sh 可回到该版本）\n' "$backup_for_hint"
 fi
 printf '%s\n' "== 请手动执行 make up 上线服务 =="

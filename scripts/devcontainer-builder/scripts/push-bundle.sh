@@ -10,11 +10,12 @@
     - bundle.meta 与 tgz 一起上传到远端 <SYNC_REMOTE_PATH>/bundles/，
       apply-bundle.sh 据此校验完整性（BUNDLE_FILE 匹配 + SHA256 比对）
 
-用法（在本地项目根目录内执行）:
-    ./push-bundle.sh                 # 按 .gitignore 忽略打包 + 确认后上传
-    ./push-bundle.sh -y              # 跳过交互确认直接上传
-    ./push-bundle.sh --no-ignore     # 不读 .gitignore，全量打包 ./src
-    ./push-bundle.sh --no-ignore --rm  # 同上，上传结束后删除本地 bundle
+用法（在本地项目根目录内执行；脚本位于 <项目根>/scripts/，也可用 make push）:
+    bash scripts/push-bundle.sh                 # 按 .gitignore 忽略打包 + 确认后上传
+    make push ARGS="-y"                         # 等价写法（Makefile 目标，ARGS 透传）
+    bash scripts/push-bundle.sh -y              # 跳过交互确认直接上传
+    bash scripts/push-bundle.sh --no-ignore     # 不读 .gitignore，全量打包 ./src
+    bash scripts/push-bundle.sh --no-ignore --rm  # 同上，上传结束后删除本地 bundle
 
 选项:
     -y, --yes        跳过交互确认直接执行
@@ -24,7 +25,8 @@
         --rm         上传操作结束后删除本地 bundle 与 meta（无论传输成功与否）
     -h, --help       打印本用法
 
-环境变量（见同目录 .env.example，可复制为 .env 填写）:
+环境变量（见 scripts/.env.example，可复制为 .env 填写；.env 放项目根目录或
+    scripts/ 目录均可，已有的进程环境变量优先）:
     SYNC_REMOTE_HOST               远端服务器 IP / 主机名（必填）
     SYNC_REMOTE_PORT               SSH 端口（留空默认 22）
     SYNC_REMOTE_USER               SSH 用户名（必填）

@@ -65,7 +65,7 @@ pip install -r requirements.txt
    - `devcontainer-src_<架构>_<时间戳>.tgz`：运行时源码包（包含 Dockerfile、compose 模板、Makefile、requirements.txt 等）
    - `install.sh`：安装脚本（与 src tgz 放同一目录）
    - `readme.html`：图文安装说明
-   - `devcontainer.json`：本次运行的 workflow 输入参数快照（纯 JSON，minimal/normal/full 三层，随 install.sh 安装到 `docs/devcontainer/` 留档）
+   - `devcontainer.json`：本次运行的 workflow 输入参数快照（纯 JSON，minimal/normal/full 三层，随 install.sh 与 README.md 一起安装到项目根目录）
    > Artifacts 下载得到的是 zip 封装（已设为不压缩，仅存储），解压即得上述文件。
 4. Summary 页同时给出构建摘要（顶部为 devcontainer.json 的 minimal 改动输入，以及参数、镜像清单、产物大小）与内网使用步骤。
 
