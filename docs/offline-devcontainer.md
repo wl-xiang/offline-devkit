@@ -17,8 +17,8 @@ docker build (prod → dev / 仅 dev)         zip 放入项目根目录 dist/ �
 docker pull (nginx/postgres, 按需)         docker load 镜像归档 tgz
 打包镜像归档 tgz + src tgz + install.sh    bash install.sh ../ (dist/ 内执行)
   + readme.html → 1 个 Artifact zip       → 项目根: Makefile/Dockerfile/build.sh/
-────────── 传输（1 个 Artifact zip）─────→   README-devcontainer.md/.dockerignore/
-上传唯一 Artifact + 写 Summary               .gitignore/docker-compose.yml
+────────── 传输（1 个 Artifact zip）─────→   README.md/.dockerignore/
+上传唯一 Artifact + 写 Summary               .gitignore/docker-compose.yml/deps/
                                            → docs/devcontainer/ (原始副本, 重置用)
 cd <项目根>（所有命令都在根目录执行）
 make check / shell / lint / compile / test
@@ -34,11 +34,11 @@ make up (python main.py)
 - 内网机器 CPU 架构需与构建时选择的平台一致（amd64 / arm64），否则容器启动报
   `exec format error`。
 - 应用代码放在独立的项目根目录（如 `~/apps/myapp1`）。`install.sh` 会把
-  `Makefile`、`Dockerfile`、`build.sh`、`README-devcontainer.md`、
+  `Makefile`、`Dockerfile`、`build.sh`、`README.md`、
   `.dockerignore`、`.gitignore`、`docker-compose.yml` 安装到该根目录
   （**所有 make / build.sh 命令都在根目录执行**），原始副本与模板安装到
   `docs/devcontainer/`（仅用于把改坏的根目录文件复制回去重置），bundle 产物
-  放在根目录的 `dist/` 下。根目录已有同名文件（如你自己的 Makefile/Dockerfile）
+  放在根目录的 `dist/` 下。根目录已有同名文件（如你自己的 Makefile/Dockerfile/README.md）
   时安装会终止，不会覆盖。
 
 ## 触发构建
@@ -55,12 +55,12 @@ make up (python main.py)
    - `readme.html`：简易安装说明（把 zip 放到项目根目录 `dist/` 解压后
      `bash install.sh ../`；加 `--load` 可在安装开始前自动 `docker load`
      镜像归档）
-   - `workflow-params.jsonc`：本次运行的 workflow 输入参数快照（JSONC 文件，带注释，详见下文）
+   - `devcontainer.json`：本次运行的 workflow 输入参数快照（纯 JSON，详见下文）
 
    > Artifacts 只能是 zip 封装，工作流已设置 `compression-level: 0`（仅存储、
    > 不再二次压缩），解压 zip 即得到产物文件。"Bundle" 专指这个外部 zip 产物；
    > 内部用于 `docker load` 的 tgz 文件名为 "Docker Images"。
-3. Summary 页同时给出本次构建的完整摘要（顶部为 workflow-params.jsonc 的 minimal
+3. Summary 页同时给出本次构建的完整摘要（顶部为 devcontainer.json 的 minimal
    改动输入）与内网使用步骤。
 
 ### 触发参数（Inputs）
@@ -77,7 +77,7 @@ make up (python main.py)
 | `preset_envs` | string | 用单个 `》` 分隔，如 `DB_HOST=10.0.0.1》DB_PORT=1521` | 空 | 预设环境变量，注入 app 与 dev 服务（同名值覆盖 Oracle 默认变量；值按字面量处理，`$` 无需转义） |
 | `enable_node` | boolean | — | `false` | 镜像内置 Node.js 24 + npm，用于前端离线开发（vite / webpack / vue / react） |
 | `npm_packages` | string | 用 `$` 分隔，如 `vite$webpack$webpack-cli$vue$react` | 空 | 构建期全局安装的 npm 包（需要 `enable_node=true`；构建机联网安装，内网容器可直接使用） |
-| `npm_packages_dir` | string | 相对/绝对路径 | `packages` | **Npm Download 产物所在目录**：把该工作流产出的 `packages/` 内容（`*.tgz` + `package.json`）放这里，compose 会把它只读挂载到容器 `/opt/npm-packages`，供 `make npm-install` 离线安装前端依赖。相对项目根或绝对路径（需 `enable_node=true`） |
+| `npm_packages_dir` | string | 相对/绝对路径 | `deps/packages` | **Npm Download 产物所在目录**：把该工作流产出的 `packages/` 内容（`*.tgz` + `package.json`）放这里，compose 会把它只读挂载到容器 `/opt/npm-packages`，供 `make npm-install` 或 `bash build.sh` 一键离线安装前端依赖。相对项目根或绝对路径（需 `enable_node=true`） |
 | `sidecars` | string | 逗号/空格分隔，如 `nginx postgres` | 空 | 启用的外挂服务：`nginx`（8080:80）、`postgres`（postgres:16，数据卷 pgdata） |
 | `app_depends_on` | string | 逗号/空格分隔，如 `nginx postgres` | 空 | app 服务 `depends_on` 的外挂服务（须在 `sidecars` 中同时启用） |
 | `prod_command` | string | 命令行 | `python main.py` | prod 服务启动命令（同时写入镜像 CMD 与 compose 的 app 服务 `command`，安装后可直接改 compose 免重建） |
@@ -125,11 +125,11 @@ zip 内含以下五个文件（`compression-level: 0`，仅存储不再二次压
 | `devcontainer-src_<架构>_<时间戳>.tgz` | 运行时源码包 |
 | `install.sh` | 安装脚本（与 src tgz 放同一目录） |
 | `readme.html` | 简易安装说明（建议把 zip 放到项目根目录 `dist/` 下解压后 `bash install.sh ../`；`--load` 可自动导入镜像） |
-| `workflow-params.jsonc` | 本次运行的 workflow 输入参数快照（JSONC 文件，带注释；仅供追溯，`install.sh` 不安装它） |
+| `devcontainer.json` | 本次运行的 workflow 输入参数快照（纯 JSON；随 `install.sh` 安装到 `docs/devcontainer/` 留档） |
 
-#### workflow-params.jsonc
+#### devcontainer.json
 
-JSONC 文件（`.jsonc` 扩展名，支持 `//` 注释），每个 section 前带一行注释说明。记录本次运行在
+纯 JSON 文件，记录本次运行在
 GitHub 前端输入的原始参数值，顶层分三个 section（键顺序与 workflow inputs
 定义顺序一致）：
 
@@ -141,7 +141,7 @@ GitHub 前端输入的原始参数值，顶层分三个 section（键顺序与 w
 
 值为前端提交的原始字符串（checkbox 解析为布尔，其余不做规范化，如
 `app_port` 只写 `3000` 时原样记录）。该文件仅用于追溯本次构建的输入，
-`install.sh` 不会把它安装进项目。
+`install.sh` 会把它安装到 `<项目根>/docs/devcontainer/` 留档。
 
 ### devcontainer-docker-images_<架构>_<yyyymmdd-HHMMSS>.tgz
 
@@ -164,24 +164,26 @@ devcontainer-src/
 ├── Makefile                     # check/up/down/shell/lint/compile/test 等（复制到项目根）
 ├── main.py                      # 占位入口（install.sh 复制到 <项目根>/src/）
 ├── requirements.txt             # pip 包清单
-├── Dockerfile.addon             # 离线补装：基于现有镜像把 wheels/ 打进 addon 镜像
+├── Dockerfile.addon             # 离线补装：基于现有镜像把 deps/wheels/ 打进 addon 镜像
 │                                # （复制到项目根目录时改名为 Dockerfile）
-├── build.sh                     # 离线补装入口（复制到项目根）
-├── .dockerignore                # 复制/合并到项目根：构建上下文排除 dist/ wheels/ 等
+├── build.sh                     # 离线补装入口（复制到项目根；deps/wheels 有 .whl 时
+│                                #  补装 Python 包，deps/packages 有 *.tgz 时一键
+│                                #  离线加载 Npm Download 产物的前端依赖）
+├── .dockerignore                # 复制/合并到项目根：构建上下文排除 dist/ deps/ 等
 ├── .gitignore                   # 复制/合并到项目根：忽略离线产物与补装缓存
 ├── nginx/conf.d/                # 仅 sidecars 含 nginx 且指定 app_port 时生成反代配置
-└── README.md                    # 快速上手说明（复制到项目根时改名为 README-devcontainer.md）
+└── README.md                    # 快速上手说明（复制到项目根，按原名安装）
 ```
 
 src 包内**只有 `docker-compose.yml.tpl` 模板，不包含渲染后的
 `docker-compose.yaml`**；模板中的 `${SRC_ROOT:-./src/}` 与 `${SRC_ROOT_NAME:-app}`
 两个环境变量由 docker compose 在运行时以 `:-` 默认值语法解析（默认
 `./src/`、项目名后缀 `app`）。启用 Node 时模板还会内置
-`${NPM_PACKAGES_DIR:-./packages}` 只读挂载；Oracle 为 `runtime_deps_only`
+`${NPM_PACKAGES_DIR:-deps/packages}` 只读挂载；Oracle 为 `runtime_deps_only`
 模式时另有 `${ORACLE_CLIENT_DIR:-/opt/oracle/instantclient19}` 只读挂载。
 两者都可在运行时用环境变量覆盖（`full` 模式客户端已打进镜像，不生成挂载）。
 
-`wheels/` 不再随源码包分发：所有 wheel 已在镜像构建阶段安装（云端构建经
+`deps/wheels/` 不随源码包分发 wheel：所有 wheel 已在镜像构建阶段安装（云端构建经
 BuildKit bind mount 参与，不落入任何镜像层），运行容器内没有 wheels；
 离线补装见「离线补装 Python 包」。
 
@@ -209,16 +211,21 @@ bash install.sh -d --no-load     # 一键默认安装，但跳过镜像导入
    `.tpl` 后缀的 `docker-compose.yml`（不做任何渲染；目标文件已存在则报错，
    避免覆盖你自己的 compose 配置）；
 3. 把 `Makefile`、`build.sh`、`Dockerfile.addon`（改名 `Dockerfile`）、
-   `README.md`（改名 `README-devcontainer.md`）以及部署辅助脚本
-   `publish-bundle.sh` / `stage-bundle.sh` / `clean-images` 复制到项目根目录——所有
+   `README.md`（按原名安装）以及部署辅助脚本
+   `push-bundle.sh` / `apply-bundle.sh` / `rollback-bundle.sh` / `clean-images` 复制到项目根目录——所有
    make / build.sh 命令此后都在项目根目录执行；目标文件已存在时报错终止，
    不会覆盖你自己的同名文件；
 4. 把 `.dockerignore` 与 `.gitignore` 安装到项目根目录：文件不存在时创建；
-   已存在时仅**追加缺失条目**（原有内容不动）；
-5. 创建 `<项目根>/wheels/requirements.txt` 离线安装头（内容
-   `--no-index --find-links=./`，仅缺失时创建）。pip 会把 `--find-links=./`
-   解析到该文件所在目录：把 wheel 放进 `wheels/` 后，容器内外均可用
-   `pip install -r wheels/requirements.txt <包名>` 离线安装；
+   已存在时仅**追加缺失条目**（原有内容不动）；并在 `docs/` 下创建
+   `.gitkeep` 占位文件；把 bundle 内的 `devcontainer.json`（workflow 输入
+   参数快照）安装到 `docs/devcontainer/` 留档；
+5. 创建 `<项目根>/deps/wheels/requirements.txt` 离线安装头（内容
+   `--no-index --find-links=./`，仅缺失时创建），并创建 `<项目根>/deps/packages/`
+   与占位 `packages.json`。pip 会把 `--find-links=./`
+   解析到该文件所在目录：把 wheel 放进 `deps/wheels/` 后，容器内外均可用
+   `pip install -r deps/wheels/requirements.txt <包名>` 离线安装；把 Npm
+   Download Action 产物的 `packages/` 内容放进 `deps/packages/` 后，
+   `bash build.sh` 可一键离线加载前端依赖；
 6. 创建应用源码目录 `<项目根>/src/`（compose 默认把 `./src/` 挂载为容器内
    `/app`）；该目录没有 `main.py` 且启动命令为默认的 `python main.py` 时，
    复制占位 `main.py` 到 `<项目根>/src/main.py`（不覆盖已有文件）；
@@ -294,7 +301,7 @@ make down       # 停止
 #    或直接使用仓库的 Pip Download Action）
 python scripts/pip/pip_download.py <包名...> -d /tmp/wheels
 #    产物含 *.whl 和带 --no-index 头的 requirements.txt
-#    把 /tmp/wheels 整个目录拷回内网项目根目录 wheels/
+#    把 /tmp/wheels 整个目录拷回内网项目根目录 deps/wheels/
 
 # 2. 内网机器，在项目根目录执行：
 bash build.sh [新TAG后缀]     # 后缀默认 addon-<时间戳>；prod 新镜像 <前缀>:<后缀>，
@@ -316,16 +323,16 @@ make up && make logs
 - wheel 通过临时构建上下文复制到镜像内 `/tmp/addon-wheels`，`pip install
   --no-index --find-links` 安装后**同一 RUN 层内删除**——不会增大最终镜像
   体积；已在基础镜像中安装的依赖 pip 自动跳过。
-- `wheels/requirements.txt` 含真实包名（非 `--no-index --find-links=./`
+- `deps/wheels/requirements.txt` 含真实包名（非 `--no-index --find-links=./`
   这类选项/注释/空行）时按清单安装（`--no-index` 头保证不联网）；只有
   离线安装头（install.sh 预置的初始状态）时，安装目录下全部 `*.whl`——
   只扔 wheel 进目录、不改 requirements 也能直接补装。
 - 构建上下文是临时目录 `.addon-build`（只含 wheels），不会把整个项目目录
   发给 docker daemon。docker 只按**上下文根目录**查找 `.dockerignore`，因此
-  项目根目录那份（排除 wheels/）不会作用于补装构建；build.sh 还会显式清理
+  项目根目录那份（排除 deps/）不会作用于补装构建；build.sh 还会显式清理
   上下文内的任何 dockerignore（双保险），云端每次构建也在 Verify 步骤用
   mock docker 干跑回归测试断言这一点。构建结束临时目录自动清理。请勿在
-  项目根目录直接 `docker build .`——那会把整个项目作为上下文，且 `wheels/`
+  项目根目录直接 `docker build .`——那会把整个项目作为上下文，且 `deps/`
   已被 .dockerignore 排除导致 COPY 失败。
 - 回滚：重新 `docker load -i devcontainer-docker-images_<架构>_<时间戳>.tgz` 即可
   恢复原镜像。
@@ -339,14 +346,15 @@ make up && make logs
 |------|------|
 | `make help` | 列出所有目标（目标说明须写在 `## ` 双井号之后才会显示） |
 | `make check` | **离线自检**：打印 docker 架构，确认 compose 文件存在、逐个确认本次镜像已导入（缺失时提示 `docker load`） |
-| `make build` | `docker compose build`（**需联网**：发布包不含 wheels/，deps 从 apt/pip 源安装；离线机器勿用） |
+| `make build` | `docker compose build`（**需联网**：发布包不含 wheel，deps 从 apt/pip 源安装；离线机器勿用） |
 | `make up` | `docker compose up -d --no-build`，后台启动 prod 服务（及已启用的外挂服务） |
 | `make down` | 停止并移除容器与网络 |
 | `make ps` | 查看容器状态（可透传参数：`make ps ARGS="-a"`） |
 | `make exec` | 在运行中的容器执行命令：`make exec SERVICE=dev ARGS="bash"`（默认 `SERVICE=app`） |
 | `make logs` | 跟随查看日志 |
-| `make publish` | 执行 `./publish-bundle.sh`，打包并上传 SRC Bundle（参数透传：`make publish ARGS="-y"`） |
-| `make stage` | 执行 `./stage-bundle.sh`，校验最新 bundle 并解压到 `./src`（参数透传：`make stage ARGS="-y"`） |
+| `make push` | 执行 `./push-bundle.sh`，打包并上传 SRC Bundle（参数透传：`make push ARGS="-y"`） |
+| `make apply` | 执行 `./apply-bundle.sh`，默认校验最新 bundle 并解压到 `./src`；也可用位置参数指定 bundle 路径：`make apply ARGS="bundles/bundle_xxx.tgz"`（参数透传：`make apply ARGS="-y"`） |
+| `make rollback` | 执行 `./rollback-bundle.sh`，用最新的 `backup_src_*.tgz` 备份覆盖 `./src`（参数透传：`make rollback ARGS="-y"`） |
 | `make shell` / `make dev` | 进入 dev 容器交互式 bash |
 | `make lint` | ruff check . |
 | `make compile` | python -m compileall -q . |
@@ -363,7 +371,7 @@ make up && make logs
 
 ## 给 AI Agent 的使用约定
 
-安装到项目根的 `README-devcontainer.md`（bundle 内 src 包的 `README.md`）包含
+安装到项目根的 `README.md`（bundle 内 src 包的 `README.md`，按原名安装）包含
 面向 AI 编码 Agent 的约定，核心是：**Python / Node 运行环境只在容器内，
 宿主机无需安装，也不要用宿主机的 `python` / `pip` / `pytest` / `npm`**。
 所有命令都在项目根目录执行：
@@ -462,12 +470,15 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
 
 1. 外网：运行 **Npm Download** 工作流，得到 `npm_packages` 产物（顶层
    `packages/`，含全部依赖的 `.tgz` 与离线安装清单）。
-2. 内网：把产物中的 `packages/` 放到构建参数 `npm_packages_dir` 指定的目录
-   （默认项目根目录 `packages/`）。`install.sh` 会提前创建该目录；compose 以
+2. 内网：把产物中的 `packages/` 内容放到构建参数 `npm_packages_dir` 指定的目录
+   （默认项目根目录 `deps/packages/`，install.sh 创建该目录与占位
+   `packages.json`）。compose 以
    只读卷挂载到容器 `/opt/npm-packages`：
-   `${NPM_PACKAGES_DIR:-./packages}:/opt/npm-packages:ro`。
-3. 离线安装依赖到 `/app`（项目根目录执行）：
+   `${NPM_PACKAGES_DIR:-deps/packages}:/opt/npm-packages:ro`。
+3. 离线安装依赖到 `/app`（项目根目录执行，二选一）：
    ```bash
+   bash build.sh        # 一键加载：检测到 deps/packages/*.tgz 即容器内离线安装
+   # 或
    make npm-install
    # 等价于容器内：npm install --offline /opt/npm-packages/*.tgz
    ```
@@ -514,32 +525,34 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
 ### 根目录操作文件与原始副本（docs/devcontainer）
 
 - install.sh 把 `Makefile` / `build.sh` / `Dockerfile.addon`（改名
-  `Dockerfile`）/ `README.md`（改名 `README-devcontainer.md`）从
+  `Dockerfile`）/ `README.md`（按原名安装）从
   `docs/devcontainer/` 复制到**项目根目录**：所有 make / build.sh 命令都在
   项目根目录执行，无需 cd 进子目录。这些脚本的全部路径按**执行时的工作目录
   （pwd）解析**，因此 docs/devcontainer 下的原始副本与根目录文件内容完全
   一致、可互相替换——根目录文件被改坏时，直接
   `cp docs/devcontainer/Makefile .` 即可重置。
 - `docs/devcontainer/` 只是原始副本 + 模板的存放处（compose `.tpl`、nginx
-  配置、README 原件等），**不要在该目录下运行任何脚本**（脚本按 pwd 解析
+  配置、README 原件、`devcontainer.json` 快照等），**不要在该目录下运行任何
+  脚本**（脚本按 pwd 解析
   路径，在错误目录执行只会得到清晰报错）。根目录同名文件已存在时 install.sh
   报错终止，绝不覆盖用户自己的文件。
 - `Dockerfile.addon` 在根目录改名为 `Dockerfile`，供 build.sh 以
   `-f Dockerfile` 引用；compose 的 `build.dockerfile` 则指向
   `docs/devcontainer/Dockerfile`（联网重建版，`make build` 需外网），二者
-  各司其职、互不覆盖（README.md → README-devcontainer.md 同理避免与项目
-  自身的 README.md 冲突）。
+  各司其职、互不覆盖。
 - `.dockerignore` / `.gitignore` 安装到项目根目录（已存在时仅追加缺失
-  条目）：`dist/`（bundle 产物）、`wheels/`（离线补装 wheel）、
-  `.addon-build/`（补装构建临时目录）等不进入 docker 构建上下文/不误提交
-  git。wheels 构建时已装进镜像（不落层、不进入运行容器），无需随上下文或
-  git 分发。
-- install.sh 还会创建 `<项目根>/wheels/requirements.txt` 离线安装头
+  条目）：`dist/`（bundle 产物）、`deps/`（离线依赖：deps/wheels、
+  deps/packages）、`.addon-build/`（补装构建临时目录）等不进入 docker 构建
+  上下文/不误提交 git。wheel 构建时已装进镜像（不落层、不进入运行容器），
+  无需随上下文或 git 分发。
+- install.sh 还会创建 `<项目根>/deps/wheels/requirements.txt` 离线安装头
   （`--no-index --find-links=./`）：pip 对 requirements 文件内的相对
-  `--find-links` 按**该文件所在目录**解析，因此把 wheel 放进 `wheels/` 后，
-  在任意目录执行 `pip install -r wheels/requirements.txt <包名>` 都能离线
+  `--find-links` 按**该文件所在目录**解析，因此把 wheel 放进 `deps/wheels/` 后，
+  在任意目录执行 `pip install -r deps/wheels/requirements.txt <包名>` 都能离线
   安装。Dockerfile.addon 安装时只有该文件含真实包名才按清单装，否则装目录
-  下全部 `*.whl`——空清单不会静默装个寂寞。
+  下全部 `*.whl`——空清单不会静默装个寂寞。同时创建 `<项目根>/deps/packages/`
+  与占位 `packages.json`：Npm Download Action 产物的 `packages/` 内容放到该
+  目录后，`bash build.sh` 可一键离线加载前端依赖。
 
 ### 容器用户（root 污染防护）
 
@@ -590,7 +603,7 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
   compose 的 app 服务直接引用该 dev 镜像，启动命令同样由 compose 的
   `command` 显式承载（镜像 CMD 为 bash），`make up` 与
   `make shell/lint/test` 共用同一个镜像；镜像归档中也只保存这一个镜像。
-- `wheels/` 仅在构建时经 BuildKit bind mount 参与安装，不复制进任何镜像层
+- `wheels/` 仅在云端构建时经 BuildKit bind mount 参与安装，不复制进任何镜像层
   （构建上下文中的 `wheels/` 不会进入发布包，运行容器内也没有 wheels）；
   内网补装新包走 `build.sh`（见「离线补装 Python 包」）。
 
@@ -602,8 +615,8 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
 - **业务依赖必须在 `pip_packages` 中显式列出**（构建端拿不到业务代码，无法
   自动解析业务 `requirements.txt`）。漏装会在离线运行时表现为
   `ModuleNotFoundError`；此时可用 `build.sh` 离线补装（见「离线补装
-  Python 包」），或临时把 wheel 放入项目根 `wheels/` 后在容器内
-  `pip install -r wheels/requirements.txt <pkg>`（仅当前容器生效，
+  Python 包」），或临时把 wheel 放入项目根 `deps/wheels/` 后在容器内
+  `pip install -r deps/wheels/requirements.txt <pkg>`（仅当前容器生效，
   重建容器即失效）。
 
 ## FAQ
@@ -626,19 +639,19 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
 导入过程需要约 2 倍镜像体积的临时空间（`docker info` 查看 Docker Root Dir 所在分区）。
 
 **Q: 业务项目里会被放进哪些 devcontainer 文件？**
-项目根目录：`Makefile`、`Dockerfile`、`build.sh`、`README-devcontainer.md`、
+项目根目录：`Makefile`、`Dockerfile`、`build.sh`、`README.md`、
 `.dockerignore`、`.gitignore`（后两者已存在时只追加条目）、`docker-compose.yml`
 （install.sh 从模板复制而来；以上文件已存在同名时安装报错退出，不会覆盖）、
-`wheels/requirements.txt`（离线安装头，缺失时才创建），以及应用根目录没有
+`deps/wheels/requirements.txt`（离线安装头，缺失时才创建）、`deps/packages/`
+（占位 `packages.json`；Npm Download 产物放这里），以及应用根目录没有
 `main.py` 时复制的占位 `main.py`。`docs/devcontainer/` 一个目录存放原始副本
-与模板。其余业务文件一律不动，也不会与业务自带的 `requirements.txt` /
-`README.md` 冲突（README 改名 README-devcontainer.md，requirements 在
-docs/devcontainer/ 内）。
+与模板（含 `devcontainer.json` 快照）。其余业务文件一律不动（README.md 按
+原名安装，如项目已有自己的 README.md 会报错终止——请先移走或合并）。
 
 **Q: 如何重新安装 / 更新到新构建的版本？**
 删除旧的 `<应用根>/docs/devcontainer`、`<应用根>/docker-compose.yml`，以及
 上次安装到根目录的 `Makefile` / `Dockerfile` / `build.sh` /
-`README-devcontainer.md`（注意保留你手工修改过的配置），再用新的
+`README.md`（注意保留你手工修改过的配置），再用新的
 `install.sh` + src tgz 重新安装（dist/ 内 `bash install.sh ../`）。
 `install.sh` 遇到已存在的安装目录、compose 文件或根目录同名文件会直接报错，
 避免新旧版本混装或覆盖你的配置。
@@ -703,8 +716,9 @@ Client 19 解压到 `/opt/oracle/instantclient19`（或设置 `ORACLE_CLIENT_DIR
 改选 `full` 模式，客户端会直接打进镜像。验证命令见「Oracle Instant Client」一节。
 
 **Q: 前端项目怎么离线 `npm install` / 启动 vite / webpack？**
-构建时勾选 `enable_node`，把 Npm Download 产物 `packages/` 放到项目根目录
-（或 `npm_packages_dir` 指定的目录），在项目根执行 `make npm-install`
+构建时勾选 `enable_node`，把 Npm Download 产物 `packages/` 内容放到项目根
+`deps/packages/`（或 `npm_packages_dir` 指定的目录），在项目根执行
+`bash build.sh`（一键离线加载）或 `make npm-install`
 （等价于 `npm install --offline /opt/npm-packages/*.tgz`），再 `make shell` 后
 `npm run dev -- --host 0.0.0.0`。镜像内已内置 Node.js/npm，无需联网。
 

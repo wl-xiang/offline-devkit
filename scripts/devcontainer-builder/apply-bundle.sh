@@ -1,28 +1,32 @@
 #!/bin/sh
-# 部署服务器端脚本：从 ./bundles/ 取最新的 SRC Bundle，用 bundle.meta 校验
-# 完整性后解压替换到 ./src 目录。
+# 部署服务器端脚本：应用 SRC Bundle——从 ./bundles/ 取文件名时间戳最新的
+# bundle（或用位置参数指定 bundle 路径），用 bundle.meta 校验完整性后解压
+# 替换到 ./src 目录。
 # 纯 POSIX sh 实现——部署服务器无需 python/jq：tgz 解压只需 tar，SHA256 只需
 # sha256sum（find -printf 为 GNU 扩展，Linux 均可用）。
 #
-# 用法（在部署目录中执行，目录下应有 publish-bundle.sh 上传的 bundles/ 目录）:
-#     ./stage-bundle.sh              # 校验最新 bundle 后解压替换 ./src
-#     ./stage-bundle.sh -y           # 跳过交互确认直接执行
-#     ./stage-bundle.sh -c           # 保留最新一份 bundle，删除其余
-#     ./stage-bundle.sh --clean-all  # 删除全部 bundle 与遗留 sync.env
-#     ./stage-bundle.sh -h           # 打印用法
+# 用法（在部署目录中执行，目录下应有 push-bundle.sh 上传的 bundles/ 目录）:
+#     ./apply-bundle.sh                    # 校验最新 bundle 后解压替换 ./src
+#     ./apply-bundle.sh bundles/xxx.tgz    # 应用指定的 bundle 文件
+#     ./apply-bundle.sh -y                 # 跳过交互确认直接执行
+#     ./apply-bundle.sh -c                 # 保留最新一份 bundle，删除其余
+#     ./apply-bundle.sh --clean-all        # 删除全部 bundle 与遗留 sync.env
+#     ./apply-bundle.sh -h                 # 打印用法
 #
 # 协议说明:
-#     bundle 与 bundle.meta 固定位于 ./bundles/（publish-bundle.sh 上传到远端
+#     bundle 与 bundle.meta 固定位于 ./bundles/（push-bundle.sh 上传到远端
 #     <项目路径>/bundles/）："最新"按 bundle 文件名中的时间戳判定
 #     （bundle_<项目名>_<mmdd-HHMM>.tgz），不依赖文件修改时间。
-#     bundle.meta 记录 BUNDLE_FILE / SHA256 等元信息，stage 前强制校验：
+#     bundle.meta 记录 BUNDLE_FILE / SHA256 等元信息，应用前强制校验：
 #     meta 与最新 bundle 文件名必须一致，且 SHA256 必须匹配，否则拒绝部署。
+#     用位置参数指定其它 bundle 时，meta 只在其 BUNDLE_FILE 与该文件名一致时
+#     参与 SHA256 校验，否则跳过 meta 校验（仍会先解压验证包完整性）。
 #     部署目录固定为 ./src —— 与 install.sh 默认把源码放入 ../src/
 #     （项目根 ../ 下的 src）一致（compose 模板中 ${SRC_ROOT:-./src/}
 #     把该目录挂载为容器内 /app）。
 #
 # 流程（默认模式）:
-#     1. 找到 ./bundles/ 下文件名时间戳最新的 bundle_*.tgz
+#     1. 确定要应用的 bundle（位置参数优先，否则取 ./bundles/ 下最新的）
 #     2. 读取 bundle.meta 校验 BUNDLE_FILE 一致性 + SHA256 完整性
 #     3. 展示计划，等待手动输入 y 确认（-y 跳过）
 #     4. 前置钩子: 自动 make down 下线服务（失败仅告警，不阻塞）
@@ -38,12 +42,17 @@ META_FILE="bundle.meta"
 
 usage() {
     cat <<'USAGE'
-用法: ./stage-bundle.sh [选项]
+用法: ./apply-bundle.sh [选项] [BUNDLE路径]
 
-从 ./bundles/ 取文件名时间戳最新的 bundle_*.tgz，用 bundle.meta 校验完整性后
-解压替换到 ./src 目录（不会自动运行任何代码）。
+从 ./bundles/ 取文件名时间戳最新的 bundle_*.tgz（或用位置参数指定 bundle
+文件路径），用 bundle.meta 校验完整性后解压替换到 ./src 目录（不会自动运行
+任何代码）。
 部署目录固定为 ./src —— compose 模板中 ${SRC_ROOT:-./src/} 把该目录挂载为容器内 /app。
 执行前会自动 make down 下线服务；完成后请手动 make up 上线。
+
+参数:
+  BUNDLE路径        要应用的 bundle 文件路径（相对当前目录或绝对路径）。
+                    省略时取 ./bundles/ 下文件名时间戳最新的 bundle_*.tgz。
 
 选项:
   （无参数）        取最新 bundle，校验后解压替换 ./src（含 make down 钩子与备份）
@@ -53,10 +62,11 @@ usage() {
   -h, --help        显示本帮助并退出
 
 示例:
-  ./stage-bundle.sh                # 常规部署：最新 bundle -> ./src
-  ./stage-bundle.sh -y             # 自动确认，直接部署
-  ./stage-bundle.sh -c             # bundles/ 瘦身：只保留最新一份 bundle
-  ./stage-bundle.sh --clean-all    # 清空所有 bundle
+  ./apply-bundle.sh                        # 常规部署：最新 bundle -> ./src
+  ./apply-bundle.sh bundles/bundle_xxx.tgz # 应用指定的 bundle
+  ./apply-bundle.sh -y                     # 自动确认，直接部署
+  ./apply-bundle.sh -c                     # bundles/ 瘦身：只保留最新一份 bundle
+  ./apply-bundle.sh --clean-all            # 清空所有 bundle
 USAGE
 }
 
@@ -91,18 +101,32 @@ confirm() {
 assume_yes=0
 do_clean=0
 do_clean_all=0
+bundle_path=""
 while [ "$#" -gt 0 ]; do
     case $1 in
         -y|--yes)    assume_yes=1 ;;
         -c|--clean)  do_clean=1 ;;
         --clean-all) do_clean_all=1 ;;
         -h|--help)   usage; exit 0 ;;
-        *)           die "未知参数: $1（用 -h 查看用法）" ;;
+        --)          shift; break ;;
+        -*)          die "未知参数: $1（用 -h 查看用法）" ;;
+        *)           bundle_path=$1 ;;
     esac
+    shift
+done
+while [ "$#" -gt 0 ]; do
+    # -- 之后的参数也视为 bundle 路径；出现第二个位置参数时报错
+    if [ -n "$bundle_path" ]; then
+        die "最多指定一个 bundle 路径: $1"
+    fi
+    bundle_path=$1
     shift
 done
 if [ "$do_clean" -eq 1 ] && [ "$do_clean_all" -eq 1 ]; then
     die "-c/--clean 与 --clean-all 不能同时使用"
+fi
+if [ -n "$bundle_path" ] && { [ "$do_clean" -eq 1 ] || [ "$do_clean_all" -eq 1 ]; }; then
+    die "bundle 路径不能与 -c/--clean / --clean-all 同时使用"
 fi
 
 # ---------- 清理模式：--clean-all ----------
@@ -171,46 +195,72 @@ if [ "$do_clean" -eq 1 ]; then
     exit 0
 fi
 
-# ---------- 默认模式：校验最新 bundle 后解压替换 ./src ----------
+# ---------- 默认模式：校验 bundle 后解压替换 ./src ----------
 
-# 1. 按文件名时间戳找最新 bundle
-newest=$(find_newest_bundle)
-if [ -z "$newest" ]; then
-    die "$BUNDLES_DIR/ 下未找到 bundle_*.tgz（请先在本地项目根运行 publish-bundle.sh 上传，或用 -h 查看用法）"
-fi
-archive="$BUNDLES_DIR/$newest"
 total=0
 for f in "$BUNDLES_DIR"/bundle_*.tgz; do
     [ -e "$f" ] || continue
     total=$((total + 1))
 done
 
+if [ -n "$bundle_path" ]; then
+    # 位置参数指定的 bundle：解析路径并做基础校验
+    case "$bundle_path" in
+        /*) archive=$bundle_path ;;
+        *)  archive="$PWD/$bundle_path" ;;
+    esac
+    [ -f "$archive" ] || die "指定的 bundle 不存在: $archive"
+    newest=${archive##*/}
+    case "$newest" in
+        bundle_*.tgz) ;;
+        *) printf '%s\n' "!! 文件名不符合 bundle_*.tgz 约定: $newest（仍按指定路径继续）" ;;
+    esac
+else
+    # 1. 按文件名时间戳找最新 bundle
+    newest=$(find_newest_bundle)
+    if [ -z "$newest" ]; then
+        die "$BUNDLES_DIR/ 下未找到 bundle_*.tgz（请先在本地项目根运行 push-bundle.sh 上传，或用位置参数指定 bundle 路径，或用 -h 查看用法）"
+    fi
+    archive="$BUNDLES_DIR/$newest"
+fi
+
 # 2. bundle.meta 完整性校验（文件名一致性 + SHA256）
 command -v sha256sum >/dev/null 2>&1 || die "缺少 sha256sum 命令（coreutils）"
-[ -f "$BUNDLES_DIR/$META_FILE" ] \
-    || die "缺少 $BUNDLES_DIR/$META_FILE（请先在本地重新执行 publish-bundle.sh 上传）"
-meta_bundle=$(meta_get BUNDLE_FILE)
-[ -n "$meta_bundle" ] || die "$META_FILE 缺少 BUNDLE_FILE 字段（文件不完整，请重新 publish）"
-[ "$meta_bundle" = "$newest" ] || die "$META_FILE 记录的 BUNDLE_FILE($meta_bundle) 与最新 bundle($newest) 不一致——请重新 publish 或清理旧 bundle"
-meta_sha=$(meta_get SHA256)
-[ -n "$meta_sha" ] || die "$META_FILE 缺少 SHA256 字段（请重新 publish）"
-meta_time=$(meta_get PUBLISHED_AT)
-digest=$(sha256sum "$archive" | awk '{print $1}')
-if [ "$digest" != "$meta_sha" ]; then
-    die "SHA256 校验失败: bundle=$digest meta=$meta_sha（传输可能损坏或不完整，请重新 publish）"
+meta_checked=0
+if [ -f "$BUNDLES_DIR/$META_FILE" ]; then
+    meta_bundle=$(meta_get BUNDLE_FILE)
+    if [ -n "$meta_bundle" ] && [ "$meta_bundle" = "$newest" ]; then
+        meta_sha=$(meta_get SHA256)
+        [ -n "$meta_sha" ] || die "$META_FILE 缺少 SHA256 字段（请重新 push）"
+        meta_time=$(meta_get PUBLISHED_AT)
+        digest=$(sha256sum "$archive" | awk '{print $1}')
+        if [ "$digest" != "$meta_sha" ]; then
+            die "SHA256 校验失败: bundle=$digest meta=$meta_sha（传输可能损坏或不完整，请重新 push）"
+        fi
+        meta_checked=1
+    else
+        printf '%s\n' "!! $META_FILE 记录的是 $meta_bundle，与要应用的 bundle($newest) 不一致，跳过 meta 校验"
+    fi
+else
+    printf '%s\n' "!! 缺少 $BUNDLES_DIR/$META_FILE，跳过 meta 校验（完整性仅靠解压验证）"
 fi
 
 # 3. 展示将要发生什么，等待手动确认
 src="$PWD/$SRC_DIR"
-printf '%s\n' "== 执行 stage 将发生 =="
-printf '  压缩包: %s（最新一份，目录下共 %d 份）\n' "$archive" "$total"
-printf '  发布时间: %s\n' "${meta_time:-(meta 未记录)}"
-printf '  SHA256: 校验通过（%s）\n' "$digest"
+printf '%s\n' "== 执行 apply 将发生 =="
+printf '  压缩包: %s%s\n' "$archive" \
+    "$([ "$bundle_path" = "" ] && printf '（最新一份，目录下共 %d 份）' "$total" || printf '（指定路径）')"
+if [ "$meta_checked" = "1" ]; then
+    printf '  发布时间: %s\n' "${meta_time:-(meta 未记录)}"
+    printf '  SHA256: 校验通过（%s）\n' "$digest"
+else
+    printf '  SHA256: 未校验（无匹配的 bundle.meta）\n'
+fi
 printf '  目标目录: %s\n' "$src"
 printf '  前置钩子: make down 下线服务\n'
 printf '  备份: 旧版本打包为 %s/backup_src_<时间戳>.tgz 后清空 %s/\n' "$BUNDLES_DIR" "$SRC_DIR"
 printf '  解压新代码后不会自动运行任何代码，需要手动 make up 上线\n'
-if ! confirm "确认执行 stage? 输入 y 继续: "; then
+if ! confirm "确认执行 apply? 输入 y 继续: "; then
     die "已取消"
 fi
 
@@ -221,7 +271,7 @@ if make down >"$make_log" 2>&1; then
     printf '%s\n' "== 服务已下线 =="
 else
     cat "$make_log" >&2
-    printf '%s\n' "!! make down 未成功（服务可能本就未运行），继续 Stage"
+    printf '%s\n' "!! make down 未成功（服务可能本就未运行），继续 apply"
 fi
 rm -f "$make_log"
 
@@ -232,7 +282,7 @@ trap 'exit 1' INT TERM
 
 tar -xzf "$archive" -C "$tmp"
 
-# publish-bundle.sh 打包的是 src/ 的内容（无包裹目录）；历史整目录包仅有一个
+# push-bundle.sh 打包的是 src/ 的内容（无包裹目录）；历史整目录包仅有一个
 # 顶层条目且为目录时进入该目录
 top=$tmp
 if [ "$(find "$tmp" -mindepth 1 -maxdepth 1 | wc -l)" -eq 1 ]; then
@@ -243,8 +293,14 @@ if [ "$(find "$tmp" -mindepth 1 -maxdepth 1 | wc -l)" -eq 1 ]; then
 fi
 
 # 6. 备份旧版本，再清空 ./src
+# （同一分钟内多次 apply 时追加 _N 后缀，避免覆盖上一份 backup）
 ts=$(date +%m%d-%H%M)
 backup="$BUNDLES_DIR/backup_src_$ts.tgz"
+n=1
+while [ -e "$backup" ]; do
+    backup="$BUNDLES_DIR/backup_src_${ts}_$n.tgz"
+    n=$((n + 1))
+done
 if [ -d "$src" ] && [ -n "$(ls -A "$src" 2>/dev/null)" ]; then
     mkdir -p "$BUNDLES_DIR"
     tar -czf "$backup" "$SRC_DIR"
@@ -272,9 +328,9 @@ mkdir -p "$src"
     done
 )
 
-printf '%s\n' "== stage 完成: 新代码已就位 $src =="
+printf '%s\n' "== apply 完成: 新代码已就位 $src =="
 if [ -n "$backup_for_hint" ]; then
-    printf '  旧版本备份: %s（回滚: 在项目根执行 tar -xzf %s -C . 后手动 make up）\n' \
+    printf '  旧版本备份: %s（回滚: 在项目根执行 ./rollback-bundle.sh，或 tar -xzf %s -C . 后手动 make up）\n' \
         "$backup_for_hint" "$backup_for_hint"
 fi
 printf '%s\n' "== 请手动执行 make up 上线服务 =="

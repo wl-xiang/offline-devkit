@@ -1,8 +1,8 @@
 # 由 scripts/devcontainer-builder 生成（时间戳: {{TS}}），请勿手工编辑。
 # install.sh 会把本文件安装（或按行合并）到项目根目录：
-# 忽略离线 bundle 产物与本地补装缓存，避免误提交大文件。
+# 忽略离线产物与本地补装缓存，避免误提交大文件。
 dist/
-wheels/
+deps/
 tarballs/
 .addon-build/
 __pycache__/
@@ -11,11 +11,11 @@ __pycache__/
 .ruff_cache/
 node_modules/
 
-# 所有压缩包与 bundle 产物（publish-bundle.sh / stage-bundle.sh）
+# 所有压缩包与 bundle 产物（push-bundle.sh / apply-bundle.sh / rollback-bundle.sh）
 *.tgz
 *.tar.gz
 *.zip
-# publish-bundle.sh 本地产物目录（bundle_*.tgz 与 bundle.meta）
+# push-bundle.sh 本地产物目录（bundle_*.tgz 与 bundle.meta、backup_src_*.tgz）
 bundles/
 
 # 本地密钥配置（由 .env.example 复制而来，含 SSH 密码请勿提交）

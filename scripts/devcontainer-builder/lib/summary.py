@@ -37,7 +37,7 @@ def build_markdown(p, results):
     images_tgz = results.get("images_tgz")
     install_sh = results.get("install_sh")
     readme_html = results.get("readme_html")
-    workflow_params_jsonc = results.get("workflow_params_jsonc")
+    devcontainer_json = results.get("devcontainer_json")
     skipped_docker = results.get("skipped_docker", False)
     bundle_name = p.bundle_name
 
@@ -45,10 +45,10 @@ def build_markdown(p, results):
     out.append("## 离线开发环境构建摘要")
     out.append("")
 
-    # workflow-params.jsonc 的 minimal section：只含用户实际改动过的输入。
+    # devcontainer.json 的 minimal section：只含用户实际改动过的输入。
     # 放在摘要最前面，确保运行页面一眼可见（完整快照见产物）。
     minimal_params = results.get("workflow_params_minimal")
-    out.append("### 本次改动输入（workflow-params.jsonc minimal）")
+    out.append("### 本次改动输入（devcontainer.json minimal）")
     out.append("")
     if minimal_params:
         out.append("| 参数 | 值 |")
@@ -58,7 +58,8 @@ def build_markdown(p, results):
     else:
         out.append("- (无，全部为默认值)")
     out.append("")
-    out.append("> 完整快照见产物 `workflow-params.jsonc`（JSONC，每个 section 带一行注释）。")
+    out.append("> 完整快照见产物 `devcontainer.json`（纯 JSON，随 install.sh 安装到"
+               " `docs/devcontainer/`）。")
     out.append("")
 
     out.append("### 构建参数")
@@ -199,12 +200,12 @@ def build_markdown(p, results):
         out.append(
             f"| {readme_html.name}（安装说明） | {human_size(readme_html.stat().st_size)} | (HTML) |"
         )
-    if workflow_params_jsonc:
+    if devcontainer_json:
         out.append(
-            f"| {workflow_params_jsonc.name}（workflow 输入参数快照 JSONC，带注释，"
-            "install.sh 不安装它） "
-            f"| {human_size(workflow_params_jsonc.stat().st_size)} "
-            f"| `{sha256_of(workflow_params_jsonc)}` |"
+            f"| {devcontainer_json.name}（workflow 输入参数快照 JSON，"
+            "随 install.sh 安装到 docs/devcontainer/） "
+            f"| {human_size(devcontainer_json.stat().st_size)} "
+            f"| `{sha256_of(devcontainer_json)}` |"
         )
     out.append("")
 
@@ -213,7 +214,7 @@ def build_markdown(p, results):
     out.append("1. 从本次运行页面底部 **Artifacts** 下载唯一产物"
                f" **{bundle_name}**（zip 仅为封装、不压缩，解压得到"
                " 镜像归档 tgz、src tgz、install.sh、readme.html 与"
-               " workflow-params.jsonc 五个文件），"
+               " devcontainer.json 五个文件），"
                "传输到与目标平台一致的内网机器，并用上表 SHA256 校验完整性。")
     out.append("")
     out.append("2. **把 artifact zip 包放到你的项目根目录 `dist/` 文件夹下**"
@@ -231,8 +232,8 @@ def build_markdown(p, results):
     out.append("```")
     out.append("")
     out.append("   install.sh 会把 `Makefile` / `build.sh` / `Dockerfile`"
-               "（由 Dockerfile.addon 改名）/ `README-devcontainer.md`（由"
-               " README.md 改名）/ `publish-bundle.sh` / `stage-bundle.sh` / `clean-images` /"
+               "（由 Dockerfile.addon 改名）/ `README.md` / `push-bundle.sh` /"
+               " `apply-bundle.sh` / `rollback-bundle.sh` / `clean-images` /"
                " `.dockerignore` /"
                " `.gitignore` 安装到项目根目录（同名文件已存在时终止安装，不覆盖；"
                "`.env.example` 仅在缺失时安装），把 src 解压到"
@@ -327,8 +328,8 @@ def build_markdown(p, results):
                    " `/opt/npm-packages`：")
         out.append("")
         out.append("```bash")
-        out.append(f"# 1. 把 Npm Download 产物的 packages/ 放到项目根 {p.npm_packages_dir}/")
-        out.append("ls packages/*.tgz")
+        out.append(f"# 1. 把 Npm Download 产物的 packages/ 内容放到项目根 {p.npm_packages_dir}/")
+        out.append(f"ls {p.npm_packages_dir}/*.tgz")
         out.append("# 2. 离线安装依赖到 /app")
         out.append("make npm-install")
         out.append("# 3. 启动前端开发服务器：把 prod_command 设为 npm run dev -- --host 0.0.0.0、")
@@ -381,10 +382,10 @@ def emit(p, results):
         readme_html = results.get("readme_html")
         if readme_html:
             entries.append(("readme_html", str(readme_html)))
-        workflow_params_jsonc = results.get("workflow_params_jsonc")
-        if workflow_params_jsonc:
-            entries.append(("workflow_params_jsonc", str(workflow_params_jsonc)))
-            entries.append(("workflow_params_name", workflow_params_jsonc.name))
+        devcontainer_json = results.get("devcontainer_json")
+        if devcontainer_json:
+            entries.append(("devcontainer_json", str(devcontainer_json)))
+            entries.append(("devcontainer_json_name", devcontainer_json.name))
         entries.append(("images", ",".join(results.get("images") or [])))
         with open(output_path, "a", encoding="utf-8") as f:
             for key, value in entries:

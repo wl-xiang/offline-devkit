@@ -10,11 +10,11 @@
     4. lib/docker.py buildx 构建 prod(/dev)、拉取外挂镜像、docker save 直出 gzip
     5. lib/package.py 打包 devcontainer-src_<arch>_<ts>.tgz；镜像归档
        devcontainer-docker-images_<arch>_<ts>.tgz 已在上一步直出；
-       install.sh、readme.html 与 workflow-params.jsonc（本次 workflow 输入
+       install.sh、readme.html 与 devcontainer.json（本次 workflow 输入
        参数快照，由 lib/params.py 的 workflow_inputs_snapshot 生成）写入 dist/
     6. lib/summary.py 写 GITHUB_STEP_SUMMARY / GITHUB_OUTPUT，
        上传唯一 Artifact：<image_prefix>_devcontainer_<arch>_<ts>（zip，内含镜像归档
-       tgz、src tgz、install.sh、readme.html 与 workflow-params.jsonc 五个文件）
+       tgz、src tgz、install.sh、readme.html 与 devcontainer.json 五个文件）
 
 本地联调可设置 DEVCONTAINER_SKIP_DOCKER=1 跳过 docker 步骤。
 """
@@ -131,15 +131,15 @@ def main():
     print(f"== 安装说明: {readme_html} ==")
 
     # workflow 输入参数快照：与 install.sh / readme.html 同级（zip 顶层），
-    # 仅随 Artifact 分发；install.sh 不会把它安装进项目。
-    # 输出为 .jsonc 文件（每个 section 前带一行注释，内容不是严格 JSON）。
-    workflow_params_jsonc = REPO_ROOT / "dist" / "workflow-params.jsonc"
+    # 随 Artifact 分发，install.sh 会把它安装到 <项目根>/docs/devcontainer/。
+    # 输出为纯 JSON 文件（minimal / normal / full 三层，无注释）。
+    devcontainer_json = REPO_ROOT / "dist" / "devcontainer.json"
     workflow_params_snapshot = params_mod.workflow_inputs_snapshot()
-    workflow_params_jsonc.write_text(
-        params_mod.workflow_params_jsonc(workflow_params_snapshot),
+    devcontainer_json.write_text(
+        params_mod.workflow_params_json(workflow_params_snapshot),
         encoding="utf-8",
     )
-    print(f"== workflow 参数快照: {workflow_params_jsonc} ==")
+    print(f"== workflow 参数快照: {devcontainer_json} ==")
 
     if images_tgz is not None:
         print(f"== 镜像归档产物: {images_tgz} "
@@ -151,7 +151,7 @@ def main():
         "images_tgz": images_tgz,
         "install_sh": install_sh,
         "readme_html": readme_html,
-        "workflow_params_jsonc": workflow_params_jsonc,
+        "devcontainer_json": devcontainer_json,
         # minimal 只含用户实际改动过的输入，直接展示在构建摘要中
         "workflow_params_minimal": workflow_params_snapshot["minimal"],
         "images": images,

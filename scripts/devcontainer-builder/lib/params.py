@@ -440,7 +440,7 @@ def load():
         npm_packages=_env("NPM_PACKAGES", ""),
         npm_registry=_env("NPM_REGISTRY", "Official (npmjs.org)"),
         npm_custom_registry_url=_env("NPM_CUSTOM_REGISTRY_URL", ""),
-        npm_packages_dir=_env("NPM_PACKAGES_DIR", "packages"),
+        npm_packages_dir=_env("NPM_PACKAGES_DIR", "deps/packages"),
         selinux_relabel=_env_bool("SELINUX_RELABEL", False),
         mount_host_timezone=_env_bool("MOUNT_HOST_TIMEZONE", True),
         enable_tz_shanghai=_env_bool("ENABLE_TZ_SHANGHAI", True),
@@ -578,7 +578,7 @@ def validate(p):
 
 
 # ---------------------------------------------------------------------------
-# Workflow 输入参数快照（workflow-params.jsonc）
+# Workflow 输入参数快照（devcontainer.json）
 #
 # 与 .github/workflows/build-devcontainer.yml 的 workflow_dispatch inputs
 # 一一对应：(输入名, 环境变量, 类型, workflow 默认值)。新增/修改 workflow
@@ -598,7 +598,7 @@ WORKFLOW_INPUTS = (
     ("preset_envs", "PRESET_ENVS", "string", ""),
     ("enable_node", "ENABLE_NODE", "boolean", "false"),
     ("npm_packages", "NPM_PACKAGES", "string", ""),
-    ("npm_packages_dir", "NPM_PACKAGES_DIR", "string", "packages"),
+    ("npm_packages_dir", "NPM_PACKAGES_DIR", "string", "deps/packages"),
     ("sidecars", "SIDECARS", "string", ""),
     ("app_depends_on", "APP_DEPENDS_ON", "string", ""),
     ("prod_command", "PROD_COMMAND", "string", "python main.py"),
@@ -646,41 +646,6 @@ def workflow_inputs_snapshot():
     return {"minimal": minimal, "normal": normal, "full": full}
 
 
-# workflow-params.jsonc 为 JSONC：每个 section 前加一行极简注释
-WORKFLOW_SECTION_COMMENTS = (
-    ("minimal", "minimal：只保留用户实际改动过的输入（省略默认值与空值）"),
-    ("normal", "normal：省略留空字符串与未勾选的 checkbox"),
-    ("full", "full：全部输入（留空字符串记 \"\"，未勾选 checkbox 记 false）"),
-)
-
-
-def _jsonc_section(name, values):
-    """渲染单个 section（两空格缩进；值仅含字符串/布尔）。"""
-    if not values:
-        return [f'  "{name}": {{}}']
-    lines = [f'  "{name}": {{']
-    items = list(values.items())
-    for index, (key, value) in enumerate(items):
-        comma = "," if index < len(items) - 1 else ""
-        lines.append(
-            f"    {json.dumps(key, ensure_ascii=False)}: "
-            f"{json.dumps(value, ensure_ascii=False)}{comma}"
-        )
-    lines.append("  }")
-    return lines
-
-
-def workflow_params_jsonc(snapshot):
-    """把 workflow_inputs_snapshot() 的结果渲染为带注释的 JSONC 文本。"""
-    blocks = []
-    for name, comment in WORKFLOW_SECTION_COMMENTS:
-        block = [f"  // {comment}"]
-        block.extend(_jsonc_section(name, snapshot[name]))
-        blocks.append(block)
-    for block in blocks[:-1]:
-        block[-1] += ","  # section 之间加逗号（section 前的注释行不受影响）
-    lines = ["{"]
-    for block in blocks:
-        lines.extend(block)
-    lines.append("}")
-    return "\n".join(lines) + "\n"
+def workflow_params_json(snapshot):
+    """把 workflow_inputs_snapshot() 的结果渲染为纯 JSON 文本（无注释）。"""
+    return json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n"
