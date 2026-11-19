@@ -30,14 +30,14 @@ scripts/devcontainer-builder/
     ├── Makefile.tmpl              # make 目标（安装到项目根，路径按 pwd 解析）
     ├── requirements.txt.tmpl      # pip 包清单（含预装组件）
     ├── main.py.tmpl               # 占位入口（install.sh 在应用源码目录 src/ 无 main.py 时复制）
-    ├── install.sh.tmpl            # 安装脚本（复制/改名根目录操作文件、合并忽略文件、wheels 安装头）
+    ├── install.sh.tmpl            # 安装脚本（复制/改名根目录操作文件、合并忽略文件、deps 安装头与占位 packages.json）
     ├── Dockerfile.addon.tmpl      # 离线补装：基于现有镜像生成 addon 阶段（wheels 进 /tmp 同层删；
     │                              #  install.sh 复制到项目根时改名 Dockerfile）
     ├── build.sh.tmpl              # 离线补装入口（项目根执行，docker build 根目录 Dockerfile）
-    ├── dockerignore.tmpl          # 项目根 .dockerignore（安装/合并；构建上下文排除 dist/ wheels/ 等）
+    ├── dockerignore.tmpl          # 项目根 .dockerignore（安装/合并；构建上下文排除 dist/ deps/ 等）
     ├── gitignore.tmpl             # 项目根 .gitignore（安装/合并；忽略离线产物与补装缓存）
     ├── readme.html.tmpl           # bundle 安装说明（HTML，放进 Artifact zip，引导 dist/ 解压 + install.sh ../，含 --load 用法与 AI Agent 约定）
-    └── README.src.tmpl            # src 产物内的快速上手说明（项目根为 README-devcontainer.md）
+    └── README.src.tmpl            # src 产物内的快速上手说明（按原名安装为项目根 README.md）
 ```
 
 ## 环境变量（workflow 会把 inputs 展开映射为这些变量）
@@ -111,12 +111,15 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   到 `<根>/docs/devcontainer/`（**原始副本**，仅用于把改坏的根目录文件复制回
   重置，不在该目录运行脚本）；把 compose 模板原样复制到项目根为
   `docker-compose.yml`（仅去掉 `.tpl` 后缀，不做渲染）；把 `Makefile` /
-  `build.sh` / `Dockerfile.addon`（改名 `Dockerfile`）/ `README.md`（改名
-  `README-devcontainer.md`）/ `publish-bundle.sh` / `stage-bundle.sh` / `clean-images`
+  `build.sh` / `Dockerfile.addon`（改名 `Dockerfile`）/ `README.md`（按原名
+  安装）/ `push-bundle.sh` / `apply-bundle.sh` / `rollback-bundle.sh` / `clean-images`
   复制到项目根，安装/合并 `.dockerignore` 与
-  `.gitignore`（已存在时仅追加缺失条目）；创建 `<根>/wheels/requirements.txt`
+  `.gitignore`（已存在时仅追加缺失条目）；在 `docs/` 下创建 `.gitkeep`，并把
+  bundle 内的 `devcontainer.json`（workflow 输入参数快照）安装到
+  `<根>/docs/devcontainer/` 留档；创建 `<根>/deps/wheels/requirements.txt`
   离线安装头（`--no-index --find-links=./`，pip 按该文件所在目录解析相对
-  find-links）；创建应用源码目录 `<根>/src/`（compose 默认挂载为 /app），缺少
+  find-links）与 `<根>/deps/packages/`（含占位 `packages.json`，Npm Download
+  产物内容放这里）；创建应用源码目录 `<根>/src/`（compose 默认挂载为 /app），缺少
   main.py 且 prod_command 为默认值时在其中放置占位入口。`-d/--default` 为
   一键写法：项目根固定为 `../`，源码放入 `../src/`。
   Makefile/build.sh 的全部路径按**执行时 pwd** 解析，原始副本与根目录文件
@@ -131,17 +134,19 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   `<none>` 的悬空镜像（不需要 compose 文件）。清除后可用
   `install.sh --load-only` 或 `docker load -i` 重新导入镜像归档。
 - **离线补装（build.sh + Dockerfile.addon→根目录 Dockerfile）**：wheel 放
-  项目根 `wheels/`，项目根执行 `bash build.sh` 基于现有镜像逐个
+  项目根 `deps/wheels/`，项目根执行 `bash build.sh` 基于现有镜像逐个
   `docker build --target` 生成 addon 新镜像（prod `<前缀>:<后缀>` / dev
   `<前缀>-dev:<后缀>`）。wheel
   复制到镜像 `/tmp/addon-wheels` 后在同一 RUN 层内安装并删除（不增大镜像）；
   构建上下文为临时目录 `.addon-build`（只含 wheels——docker 只按上下文根目录
-  查找 .dockerignore，故不受根目录排除 wheels/ 影响；build.sh 还会显式清理
-  上下文内任何 dockerignore 双保险），构建后自动清理。wheels/requirements.txt 含真实包名才
+  查找 .dockerignore，故不受根目录排除 deps/ 影响；build.sh 还会显式清理
+  上下文内任何 dockerignore 双保险），构建后自动清理。deps/wheels/requirements.txt 含真实包名才
   按清单装，否则装目录下全部 `*.whl`（空清单不会静默 no-op）。回滚 = 重新
   docker load 原 `devcontainer-docker-images_<架构>_<时间戳>.tgz`。workflow 的
   Verify 步骤含 mock docker 干跑回归测试，持续断言补装上下文不受
-  .dockerignore 影响。
+  .dockerignore 影响。`enable_node` 时 build.sh 还支持一键加载前端依赖：把
+  Npm Download Action 产物的 `packages/` 内容放到 `deps/packages/`，执行
+  `bash build.sh` 即通过 dev 服务容器离线安装到挂载的源码目录（/app）。
 - **预装组件（勾选项）**：`enable_lucide` → 追加 pip 包 `lucide`（纯 Python
   wheel，Django/Jinja 模板渲染 lucide.dev SVG 图标）；`enable_oracle_instantclient`
   三选一：`none` 不安装；`runtime_deps_only` 只安装 `libaio1` / `libnsl2` 并配置
@@ -196,7 +201,7 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
 - **唯一 Artifact**：`<镜像前缀>_devcontainer_<架构>_<时间戳>` 一个 zip 内含
   `devcontainer-docker-images_<架构>_<时间戳>.tgz`（docker save 直出 gzip，docker
   load 用）、`devcontainer-src_<架构>_<时间戳>.tgz`、`install.sh`、`readme.html`
-  与 `workflow-params.jsonc` 五个文件；"Bundle" 专指该外部 zip，镜像归档文件名用 "Docker Images"。
+  与 `devcontainer.json` 五个文件；"Bundle" 专指该外部 zip，镜像归档文件名用 "Docker Images"。
   安装方式：zip 放项目根 `dist/` 解压后 `bash install.sh ../`（加 `--load`
   可在安装开始前自动 docker load 同目录的镜像归档 tgz；`--load-only` 只导入
   镜像、不做安装）。
@@ -205,7 +210,7 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   node/npm 并删除 npm 自带 docs/man；Oracle `full` 模式的 wget/unzip 只用于
   构建期，安装/下载/`apt-get purge --auto-remove` 在同一 RUN 层完成，不残留
   在运行时镜像。dev 与 prod 共享基础层，`docker save` 归档中公共层只存一份。
-- **AI Agent 约定**：src 产物 `README.md`（安装为 `README-devcontainer.md`）与
+- **AI Agent 约定**：src 产物 `README.md`（按原名安装到项目根）与
   `readme.html` 均包含「给 AI Agent 的使用约定」：Python/Node 命令一律通过
   `docker compose run --rm dev ...` / `make test` 等在容器内执行，不依赖宿主机
   Python；workflow 的 Verify 步骤会 grep 校验该段落存在。

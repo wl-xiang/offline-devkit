@@ -71,10 +71,10 @@ on:
         required: false
         default: ''
       npm_packages_dir:
-        description: 'Host folder holding the Npm Download artifact (its packages/ content: *.tgz + package.json). It is mounted read-only at /opt/npm-packages so `make npm-install` can install frontend dependencies offline. Relative to the project root or absolute. Requires enable_node.'
+        description: 'Host folder holding the Npm Download artifact (its packages/ content: *.tgz + package.json). It is mounted read-only at /opt/npm-packages so `make npm-install` / `bash build.sh` can install frontend dependencies offline. Relative to the project root or absolute (default deps/packages). Requires enable_node.'
         type: string
         required: true
-        default: 'packages'
+        default: 'deps/packages'
       sidecars:
         description: 'Sidecar services to enable: nginx (8080:80) and/or postgres (postgres:16), separated by comma/space. Empty = none.'
         type: string
@@ -211,7 +211,7 @@ jobs:
           SELINUX_RELABEL: ${{ inputs.selinux_relabel }}
           MOUNT_HOST_TIMEZONE: ${{ inputs.mount_host_timezone }}
           ENABLE_TZ_SHANGHAI: ${{ inputs.enable_tz_shanghai }}
-          # 原始输入透传（供 workflow-params.jsonc 快照记录；上方 ENABLE_NGINX 等
+          # 原始输入透传（供 devcontainer.json 快照记录；上方 ENABLE_NGINX 等
           # 为 contains/等值 派生布尔，不含原始值）
           SIDECARS: ${{ inputs.sidecars }}
           APP_DEPENDS_ON: ${{ inputs.app_depends_on }}
@@ -259,7 +259,7 @@ jobs:
           grep -q 'devcontainer-src/.gitignore$' /tmp/src_tgz.list \
             || { echo "::error::src 包缺少 .gitignore"; exit 1; }
           # 部署辅助脚本与环境变量模板（install.sh 安装到项目根目录）
-          for f in publish-bundle.sh stage-bundle.sh clean-images .env.example; do
+          for f in push-bundle.sh apply-bundle.sh rollback-bundle.sh clean-images .env.example; do
             grep -q "devcontainer-src/$f$" /tmp/src_tgz.list \
               || { echo "::error::src 包缺少 $f"; exit 1; }
           done
@@ -269,16 +269,32 @@ jobs:
           # clean-images：支持 --no-name（清除名称与 Tag 均为 <none> 的悬空镜像）
           grep -q -- '--no-name' /tmp/clean-images \
             || { echo "::error::clean-images 缺少 --no-name 选项"; exit 1; }
-          # Makefile：publish/stage 调用 .sh 脚本，ps/exec 支持参数透传
+          # apply-bundle.sh：语法检查（应用 bundle；无参取最新，位置参数指定 bundle 路径）
+          tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/apply-bundle.sh > /tmp/apply-bundle.sh
+          sh -n /tmp/apply-bundle.sh
+          grep -q -- '-y|--yes' /tmp/apply-bundle.sh \
+            || { echo "::error::apply-bundle.sh 缺少 -y/--yes 选项"; exit 1; }
+          grep -q 'find_newest_bundle' /tmp/apply-bundle.sh \
+            || { echo "::error::apply-bundle.sh 缺少最新 bundle 选择逻辑"; exit 1; }
+          # rollback-bundle.sh：语法检查（回滚到最新 backup；-y 跳过确认）
+          tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/rollback-bundle.sh > /tmp/rollback-bundle.sh
+          sh -n /tmp/rollback-bundle.sh
+          grep -q -- '-y|--yes' /tmp/rollback-bundle.sh \
+            || { echo "::error::rollback-bundle.sh 缺少 -y/--yes 选项"; exit 1; }
+          grep -q 'backup_src_' /tmp/rollback-bundle.sh \
+            || { echo "::error::rollback-bundle.sh 未读取 backup_src_*.tgz 备份"; exit 1; }
+          # Makefile：push/apply/rollback 调用 .sh 脚本，ps/exec 支持参数透传
           tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/Makefile > /tmp/Makefile.check
-          for target in publish stage ps exec; do
+          for target in push apply rollback ps exec; do
             grep -qE "^$target:" /tmp/Makefile.check \
               || { echo "::error::Makefile 缺少 $target 目标"; exit 1; }
           done
-          grep -q 'publish-bundle.sh $(ARGS)' /tmp/Makefile.check \
-            || { echo "::error::Makefile 的 publish 未调用 publish-bundle.sh 并透传 ARGS"; exit 1; }
-          grep -q 'stage-bundle.sh $(ARGS)' /tmp/Makefile.check \
-            || { echo "::error::Makefile 的 stage 未调用 stage-bundle.sh 并透传 ARGS"; exit 1; }
+          grep -q 'push-bundle.sh $(ARGS)' /tmp/Makefile.check \
+            || { echo "::error::Makefile 的 push 未调用 push-bundle.sh 并透传 ARGS"; exit 1; }
+          grep -q 'apply-bundle.sh $(ARGS)' /tmp/Makefile.check \
+            || { echo "::error::Makefile 的 apply 未调用 apply-bundle.sh 并透传 ARGS"; exit 1; }
+          grep -q 'rollback-bundle.sh $(ARGS)' /tmp/Makefile.check \
+            || { echo "::error::Makefile 的 rollback 未调用 rollback-bundle.sh 并透传 ARGS"; exit 1; }
           grep -q 'ps $(ARGS)' /tmp/Makefile.check \
             || { echo "::error::Makefile 的 ps 未透传 ARGS"; exit 1; }
           grep -q 'exec $(SERVICE) $(ARGS)' /tmp/Makefile.check \
@@ -308,10 +324,28 @@ jobs:
             grep -q 'SRC_DIR="$INSTALL_PATH/src"' "${{ steps.build.outputs.install_sh }}" \
               || { echo "::error::install.sh 未把应用源码放入 <项目根>/src"; exit 1; }
             # 部署辅助脚本与环境变量模板必须安装到项目根目录
-            for f in publish-bundle.sh stage-bundle.sh clean-images .env.example; do
+            for f in push-bundle.sh apply-bundle.sh rollback-bundle.sh clean-images .env.example; do
               grep -q "$f" "${{ steps.build.outputs.install_sh }}" \
                 || { echo "::error::install.sh 未安装 $f 到项目根目录"; exit 1; }
             done
+            # README.md 按原名安装（不再改名 README-devcontainer.md）
+            grep -q 'README.md:README.md' "${{ steps.build.outputs.install_sh }}" \
+              || { echo "::error::install.sh 未按原名安装 README.md"; exit 1; }
+            if grep -q 'README-devcontainer' "${{ steps.build.outputs.install_sh }}"; then
+              echo "::error::install.sh 仍在引用 README-devcontainer.md（已改为按原名 README.md 安装）"
+              exit 1
+            fi
+            # docs/.gitkeep 占位文件
+            grep -q 'docs/.gitkeep' "${{ steps.build.outputs.install_sh }}" \
+              || { echo "::error::install.sh 未创建 docs/.gitkeep"; exit 1; }
+            # deps/ 目录结构（deps/wheels 离线安装头 + deps/packages 占位 packages.json）
+            grep -q 'deps/wheels' "${{ steps.build.outputs.install_sh }}" \
+              || { echo "::error::install.sh 未创建 deps/wheels（离线安装头）"; exit 1; }
+            grep -q 'deps/packages/packages.json' "${{ steps.build.outputs.install_sh }}" \
+              || { echo "::error::install.sh 未创建 deps/packages/packages.json 占位文件"; exit 1; }
+            # devcontainer.json 快照必须随 install.sh 安装到 docs/devcontainer/
+            grep -q 'devcontainer.json' "${{ steps.build.outputs.install_sh }}" \
+              || { echo "::error::install.sh 未安装 devcontainer.json"; exit 1; }
             sha256sum "${{ steps.build.outputs.install_sh }}"
           else
             echo "::error::install.sh 未生成"
@@ -334,41 +368,16 @@ jobs:
             echo "::error::readme.html 未生成"
             exit 1
           fi
-          echo "--- workflow-params.jsonc (workflow 输入参数快照，JSONC) ---"
-          test -s "${{ steps.build.outputs.workflow_params_jsonc }}" \
-            || { echo "::error::workflow-params.jsonc 未生成"; exit 1; }
-          case "${{ steps.build.outputs.workflow_params_jsonc }}" in
-            *.jsonc) ;;
-            *) echo "::error::workflow-params 快照必须输出为 .jsonc 文件"; exit 1 ;;
+          echo "--- devcontainer.json (workflow 输入参数快照，纯 JSON) ---"
+          test -s "${{ steps.build.outputs.devcontainer_json }}" \
+            || { echo "::error::devcontainer.json 未生成"; exit 1; }
+          case "${{ steps.build.outputs.devcontainer_json }}" in
+            *.json) ;;
+            *) echo "::error::workflow 参数快照必须输出为 .json 文件"; exit 1 ;;
           esac
-          python - "${{ steps.build.outputs.workflow_params_jsonc }}" <<'PY'
+          python - "${{ steps.build.outputs.devcontainer_json }}" <<'PY'
           import json, sys
           from pathlib import Path
-
-          def strip_jsonc(text):
-              """去掉 JSONC 的 // 行注释（跳过字符串内部）。"""
-              out, in_string, escape, i = [], False, False, 0
-              while i < len(text):
-                  ch = text[i]
-                  if in_string:
-                      out.append(ch)
-                      if escape:
-                          escape = False
-                      elif ch == "\\":
-                          escape = True
-                      elif ch == '"':
-                          in_string = False
-                  elif ch == '"':
-                      in_string = True
-                      out.append(ch)
-                  elif ch == "/" and text[i + 1:i + 2] == "/":
-                      end = text.find("\n", i)
-                      i = len(text) if end == -1 else end
-                      continue
-                  else:
-                      out.append(ch)
-                  i += 1
-              return "".join(out)
 
           # workflow inputs 默认值（与 build-devcontainer.yml 的 inputs 保持同步）
           DEFAULTS = {
@@ -383,7 +392,7 @@ jobs:
               "preset_envs": ("", "string"),
               "enable_node": ("false", "boolean"),
               "npm_packages": ("", "string"),
-              "npm_packages_dir": ("packages", "string"),
+              "npm_packages_dir": ("deps/packages", "string"),
               "sidecars": ("", "string"),
               "app_depends_on": ("", "string"),
               "prod_command": ("python main.py", "string"),
@@ -398,10 +407,8 @@ jobs:
               "enable_tz_shanghai": ("true", "boolean"),
           }
           text = Path(sys.argv[1]).read_text(encoding="utf-8")
-          # JSONC：每个 section 前必须有一行极简注释
-          for section in ("minimal", "normal", "full"):
-              assert f"// {section}" in text, f"缺少 {section} 注释"
-          data = json.loads(strip_jsonc(text))
+          # 纯 JSON：JSONC 注释会导致 json.loads 解析失败
+          data = json.loads(text)
           assert list(data) == ["minimal", "normal", "full"], list(data)
           full = data["full"]
           assert list(full) == list(DEFAULTS), list(full)
@@ -421,16 +428,11 @@ jobs:
               default, kind = DEFAULTS[name]
               default_value = (default.lower() == "true") if kind == "boolean" else default
               assert value != default_value, (name, value, default)
-          print("workflow-params.jsonc OK "
+          print("devcontainer.json OK "
                 f"(minimal={len(data['minimal'])}, normal={len(data['normal'])}, "
                 f"full={len(full)})")
           PY
-          # install.sh 只按固定清单安装文件，不应引用 workflow-params.jsonc
-          if grep -q 'workflow-params' "${{ steps.build.outputs.install_sh }}"; then
-            echo "::error::install.sh 不应引用 workflow-params.jsonc（该文件不参与安装）"
-            exit 1
-          fi
-          sha256sum "${{ steps.build.outputs.workflow_params_jsonc }}"
+          sha256sum "${{ steps.build.outputs.devcontainer_json }}"
           echo "--- build.sh (from src tgz) ---"
           tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/build.sh > /tmp/build.sh
           bash -n /tmp/build.sh
@@ -440,23 +442,30 @@ jobs:
             || { echo "::error::src 包内 build.sh 无可执行权限"; exit 1; }
           # 回归测试（离线补装）：模拟 install.sh 的根目录布局
           # （Dockerfile.addon 改名 Dockerfile、安装根目录 .dockerignore、
-          #  wheels/ 放 dummy wheel），用 mock docker 干跑 build.sh，断言每次
-          # 构建调用的上下文只含 wheels 且无任何 dockerignore——确保项目根
-          # .dockerignore 排除 wheels/ 不会导致离线补装（COPY wheels/）失败
+          #  deps/wheels/ 放 dummy wheel、deps/packages/ 放 fake tgz），用
+          # mock docker 干跑 build.sh，断言：addon 构建调用的上下文只含 wheels
+          # 且无任何 dockerignore；enable_node 时一键加载前端依赖会发起
+          # docker compose run——确保项目根 .dockerignore 排除 deps/ 不会导致
+          # 离线补装（COPY wheels/）失败
           echo "--- build.sh addon dry-run (mock docker) ---"
           TESTROOT=$(mktemp -d /tmp/addon-dryrun.XXXXXX)
-          mkdir -p "$TESTROOT/root/docs/devcontainer" "$TESTROOT/bin" "$TESTROOT/root/wheels"
+          mkdir -p "$TESTROOT/root/docs/devcontainer" "$TESTROOT/bin" "$TESTROOT/root/deps/wheels" "$TESTROOT/root/deps/packages"
           tar xzf "${{ steps.build.outputs.src_tgz }}" -C "$TESTROOT/root/docs/devcontainer" --strip-components=1
           # 模拟 install.sh 的根目录布局：Dockerfile.addon 改名 Dockerfile、build.sh 复制到根
           cp "$TESTROOT/root/docs/devcontainer/Dockerfile.addon" "$TESTROOT/root/Dockerfile"
           cp "$TESTROOT/root/docs/devcontainer/build.sh" "$TESTROOT/root/build.sh"
           cp "$TESTROOT/root/docs/devcontainer/.dockerignore" "$TESTROOT/root/.dockerignore"
-          touch "$TESTROOT/root/wheels/dummy-1.0-py3-none-any.whl"
+          touch "$TESTROOT/root/deps/wheels/dummy-1.0-py3-none-any.whl"
+          touch "$TESTROOT/root/deps/packages/vue-1.0.0.tgz"
           cat > "$TESTROOT/bin/docker" <<'MOCK'
           #!/usr/bin/env bash
           # mock docker：记录调用参数，并当场校验 build.sh 传入的构建上下文
           ctx="${*: -1}"
           echo "docker $*" >> "${MOCK_LOG:?}"
+          if [ "$1" = "compose" ]; then
+              # build.sh 一键加载前端依赖走 docker compose run（此处仅记录）
+              exit 0
+          fi
           [ "$1" = "build" ] || exit 0
           if [ -e "$ctx/.dockerignore" ] || [ -e "$ctx/Dockerfile.dockerignore" ]; then
               echo "::error::补装构建上下文不应包含 dockerignore: $ctx" >&2
@@ -553,6 +562,13 @@ jobs:
               grep -q 'npm-install' /tmp/Makefile \
                 || { echo "::error::Makefile 缺少 npm-install 目标"; exit 1; }
             fi
+            # build.sh：支持 Npm Download Action 产物放入 deps/packages 后一键离线加载
+            tar xzf "$SRC_TGZ" -O devcontainer-src/build.sh > /tmp/build.sh
+            bash -n /tmp/build.sh
+            grep -q 'deps/packages' /tmp/build.sh \
+              || { echo "::error::build.sh 未读取 deps/packages（Npm Download 产物目录）"; exit 1; }
+            grep -q 'npm install --offline' /tmp/build.sh \
+              || { echo "::error::build.sh 缺少一键加载前端依赖（npm install --offline）"; exit 1; }
             echo "npm wiring OK"
           fi
 
@@ -565,8 +581,8 @@ jobs:
       # 避免 tgz 再被 zip 二次压缩。唯一产物
       # <image_prefix>_devcontainer_<架构>_<时间戳>（架构 amd64/arm64），
       # zip 内含镜像归档 tgz、src tgz、install.sh、readme.html 与
-      # workflow-params.jsonc 五个文件
-      - name: Upload bundle artifact (docker images tgz + src tgz + install.sh + readme.html + workflow-params.jsonc)
+      # devcontainer.json 五个文件
+      - name: Upload bundle artifact (docker images tgz + src tgz + install.sh + readme.html + devcontainer.json)
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.build.outputs.bundle_name }}
@@ -575,6 +591,6 @@ jobs:
             ${{ steps.build.outputs.src_tgz }}
             ${{ steps.build.outputs.install_sh }}
             ${{ steps.build.outputs.readme_html }}
-            ${{ steps.build.outputs.workflow_params_jsonc }}
+            ${{ steps.build.outputs.devcontainer_json }}
           compression-level: 0
           if-no-files-found: error

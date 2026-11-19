@@ -53,7 +53,7 @@ pip install -r requirements.txt
 
 本仓库提供一个人工触发的工作流 `.github/workflows/build-devcontainer.yml`，在外网按参数（平台、Python 版本、pip 包、APT 工具、个性化安装命令、nginx/postgres 外挂服务等）构建 prod/dev 两个 Docker 镜像并打包。内网机器只需 Docker，通过 Volume 挂载源码 + docker compose 即可开发与运行，本机无需安装任何运行环境。
 
-此外还支持：Oracle Instant Client 三选一模式（`none` / `runtime_deps_only` 只装依赖并由宿主机挂载客户端 / `full` 客户端完整打进镜像）；`》` 分隔的预设环境变量；以及 Node.js 24 / npm 前端离线开发（vite / webpack / vue / react），可直接挂载 Npm Download 工作流产出的 `packages/` 目录。
+此外还支持：Oracle Instant Client 三选一模式（`none` / `runtime_deps_only` 只装依赖并由宿主机挂载客户端 / `full` 客户端完整打进镜像）；`》` 分隔的预设环境变量；以及 Node.js 24 / npm 前端离线开发（vite / webpack / vue / react），Npm Download 工作流产出的 `packages/` 内容放到项目根 `deps/packages/` 后即可离线安装（`make npm-install` 或 `bash build.sh` 一键加载）。
 
 ### 使用方法（Fork 后用）
 
@@ -65,9 +65,9 @@ pip install -r requirements.txt
    - `devcontainer-src_<架构>_<时间戳>.tgz`：运行时源码包（包含 Dockerfile、compose 模板、Makefile、requirements.txt 等）
    - `install.sh`：安装脚本（与 src tgz 放同一目录）
    - `readme.html`：图文安装说明
-   - `workflow-params.jsonc`：本次运行的 workflow 输入参数快照（JSONC 文件，带注释，minimal/normal/full 三层，仅供追溯，install.sh 不安装它）
+   - `devcontainer.json`：本次运行的 workflow 输入参数快照（纯 JSON，minimal/normal/full 三层，随 install.sh 安装到 `docs/devcontainer/` 留档）
    > Artifacts 下载得到的是 zip 封装（已设为不压缩，仅存储），解压即得上述文件。
-4. Summary 页同时给出构建摘要（顶部为 workflow-params.jsonc 的 minimal 改动输入，以及参数、镜像清单、产物大小）与内网使用步骤。
+4. Summary 页同时给出构建摘要（顶部为 devcontainer.json 的 minimal 改动输入，以及参数、镜像清单、产物大小）与内网使用步骤。
 
 ### 内网使用
 
@@ -84,7 +84,7 @@ make up         # docker compose up -d --no-build，运行 python main.py
 
 > 参数校验（如依赖未启用的外挂服务）、多平台/多 glibc 组合、镜像命名与产物规范等说明详见 [docs/offline-devcontainer.md](docs/offline-devcontainer.md)。
 
-> 安装到项目根的 `README-devcontainer.md` 包含面向 AI Agent 的使用约定：Python/Node 命令一律在容器内执行，不依赖宿主机的本地运行环境（如 Python）。
+> 安装到项目根的 `README.md` 包含面向 AI Agent 的使用约定：Python/Node 命令一律在容器内执行，不依赖宿主机的本地运行环境（如 Python）。
 
 ## 通过 GitHub Action 下载并打包 npm 包
 

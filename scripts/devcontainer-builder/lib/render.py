@@ -15,10 +15,16 @@ TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 BUILDER_DIR = TEMPLATES_DIR.parent
 
 # 静态部署辅助文件：随 src 产物分发，由 install.sh 安装到项目根目录
-# （publish-bundle.sh 在本地项目根执行，stage-bundle.sh 在部署服务器项目根执行，
-#   clean-images 在项目根清除 compose 声明的镜像，
-#   .env.example 是 publish-bundle.sh 读取的环境变量模板）
-DEPLOY_FILES = (".env.example", "publish-bundle.sh", "stage-bundle.sh", "clean-images")
+# （push-bundle.sh 在本地项目根执行，apply-bundle.sh / rollback-bundle.sh 在
+#   部署服务器项目根执行，clean-images 在项目根清除 compose 声明的镜像，
+#   .env.example 是 push-bundle.sh 读取的环境变量模板）
+DEPLOY_FILES = (
+    ".env.example",
+    "push-bundle.sh",
+    "apply-bundle.sh",
+    "rollback-bundle.sh",
+    "clean-images",
+)
 
 # compose 中的 dev 服务（profile=dev，仅 make shell/lint/compile/test 时激活）
 # build.dockerfile 指向 docs/devcontainer/Dockerfile（联网重建版 Dockerfile 位于
@@ -142,13 +148,59 @@ def render_dockerfile_addon(p):
 
 
 def render_build_sh(p):
-    """build.sh：docker build Dockerfile.addon，默认新 TAG 为 addon-<时间戳>，
-    新镜像沿用镜像仓库名：prod <前缀>:<后缀>、dev <前缀>-dev:<后缀>。"""
+    """build.sh：deps/wheels 有 .whl 时 docker build Dockerfile.addon（默认新 TAG
+    为 addon-<时间戳>，新镜像沿用镜像仓库名：prod <前缀>:<后缀>、dev <前缀>-dev:<后缀>）；
+    enable_node 且 deps/packages 有 *.tgz（Npm Download Action 产物）时一键
+    离线加载前端依赖。"""
     calls = "\n".join(
         f'build {target} "{image}" "$NEW_SUFFIX"'
         for target, image, _stage in _addon_targets(p)
     )
-    return _sub(_load("build.sh.tmpl"), {**_base_mapping(p), "BUILD_CALLS": calls})
+    return _sub(_load("build.sh.tmpl"), {
+        **_base_mapping(p),
+        "BUILD_CALLS": calls,
+        "NPM_DEPS_BLOCK": _npm_deps_block(p),
+        "NPM_LOAD_BLOCK": _npm_load_block(p),
+    })
+
+
+def _npm_deps_block(p):
+    """build.sh 中 deps/packages/*.tgz（Npm Download Action 产物）检测块。"""
+    if not p.enable_node:
+        return ""
+    return (
+        'if ls "$NPM_DIR"/*.tgz >/dev/null 2>&1; then\n'
+        "    have_npm=1\n"
+        '    echo "== 检测到 $NPM_DIR/*.tgz，将一键加载前端依赖（容器内离线 npm install）=="\n'
+        "fi\n"
+    )
+
+
+def _npm_load_block(p):
+    """build.sh 中前端依赖一键加载块：通过 dev 服务离线安装到挂载的 /app。"""
+    if not p.enable_node:
+        return ""
+    return (
+        'if [ "$have_npm" -eq 1 ]; then\n'
+        '    echo "== 一键加载前端依赖: 容器内 npm install --offline /opt/npm-packages/*.tgz -> /app =="\n'
+        "    if ! docker compose -f \"$SRC_ROOT/docker-compose.yml\" run --rm dev bash -c '\n"
+        "        set -e\n"
+        "        ls /opt/npm-packages/*.tgz >/dev/null 2>&1 || {\n"
+        '            echo "错误: 容器内 /opt/npm-packages 下没有 *.tgz"\n'
+        '            echo "  请确认 deps/packages/ 放入了 Npm Download Action 产物的 packages/ 内容，"\n'
+        '            echo "  或用 NPM_PACKAGES_DIR 指定目录（需与 docker-compose.yml 的挂载一致）"\n'
+        "            exit 1\n"
+        "        }\n"
+        "        npm install --offline --no-audit --no-fund /opt/npm-packages/*.tgz\n"
+        "    '; then\n"
+        '        echo "错误: 前端依赖离线安装失败。"\n'
+        '        echo "  - 先 make check 确认镜像已导入；dev 服务仅在 prod+dev / dev-only 镜像模式下存在"\n'
+        '        echo "  - prod-only 模式可改用 app 服务执行同样的 npm install --offline 命令"\n'
+        "        exit 1\n"
+        "    fi\n"
+        '    echo "  前端依赖已安装到源码目录（node_modules），make up / make npm-install 后即可开发"\n'
+        "fi\n"
+    )
 
 
 def _load(name):
@@ -632,14 +684,16 @@ def _npm_notice_block(p):
     if not p.enable_node:
         return ""
     d = p.npm_packages_dir
-    rel = d.removeprefix("./")
-    target = d if d.startswith("/") else f"$SRC_ROOT/{rel}"
+    if d.startswith("/"):
+        target = d
+    else:
+        target = f"项目根目录下的 {d}"
     return f'''
 echo ""
 printf '%s\\n' "${{C_BOLD}}Node.js / npm 前端离线开发（本包已启用）${{C_RESET}}"
 note "1. 在内网用 Npm Download Action 下载依赖，得到 npm_packages 产物（顶层 packages/）"
-note "2. 解压产物后把 packages/ 放到 {target}（也可 export NPM_PACKAGES_DIR=/your/packages）"
-note "3. make npm-install    # 用 {NPM_PACKAGES_CONTAINER_DIR} 里的离线 tarball 把依赖装到 /app"
+note "2. 解压产物后把 packages/ 内容放到 {target}（也可 export NPM_PACKAGES_DIR=/your/packages）"
+note "3. bash build.sh 一键离线加载，或 make npm-install    # 用 {NPM_PACKAGES_CONTAINER_DIR} 里的离线 tarball 把依赖装到 /app"
 note "4. make shell 后运行 npm run dev -- --host 0.0.0.0（vite 默认 5173，webpack 默认 8080；按需设置 app_port）"
 '''
 
@@ -774,7 +828,8 @@ def _npm_html_section(p):
           <div>
             <h3>准备离线 npm 包</h3>
             <p>在内网用 <strong>Npm Download</strong> Action 下载依赖，把产物中的
-            <code>packages/</code> 放到 <code>{d}</code>（默认项目根目录下）。</p>
+            <code>packages/</code> 内容放到 <code>{d}</code>（默认项目根目录下），
+            或直接在项目根执行 <code>bash build.sh</code> 一键离线加载。</p>
           </div>
         </div>
         <div class="codeblock">
@@ -901,8 +956,11 @@ def _npm_readme_section(p):
 产物（顶层 `packages/`）以只读卷挂载到容器 `{NPM_PACKAGES_CONTAINER_DIR}`。
 
 1. 在内网用 Npm Download Action 下载依赖（见 `docs/npm-offline-package-guide.md`），
-   把产物中的 `packages/` 放到 `{d}`（默认项目根目录下）。
-2. 安装依赖到 `/app`：
+   把产物中的 `packages/` 内容放到 `{d}`（默认项目根目录下）。
+2. 安装依赖到 `/app`（二选一）：
+   - 一键加载（推荐）：项目根执行 `bash build.sh`（检测到 `deps/packages/*.tgz`
+     即通过容器离线安装）；
+   - 或：
    ```bash
    make npm-install
    ```
@@ -972,7 +1030,7 @@ def _agent_readme_section(p):
   终端会等待输入，不要用于自动化。
 - 首次使用先执行 `make check` 确认镜像已导入；离线机器不要执行 `make build` 或
   `docker compose build`。
-- 缺 Python 包时不要在宿主机 `pip install`：把 wheel 放进项目根 `wheels/` 后执行
+- 缺 Python 包时不要在宿主机 `pip install`：把 wheel 放进项目根 `deps/wheels/` 后执行
   `bash build.sh`（见下文「离线补装 Python 包」）。
 - 不要用宿主机 `python -m venv` / `conda` / 全局 `pytest` / 全局 `npm install`
   代替容器内环境。
@@ -1030,7 +1088,7 @@ def _agent_html_section(p):
       <div class="tip"><strong>禁止：</strong>在宿主机执行 <code>python</code> /
       <code>pip</code> / <code>pytest</code> / <code>npm</code>（宿主机即使存在这些命令，
       版本与依赖也与镜像不一致，所有验证以容器内结果为准）；缺 Python 包时不要
-      在宿主机安装，请把 wheel 放进项目根 <code>wheels/</code> 后执行
+      在宿主机安装，请把 wheel 放进项目根 <code>deps/wheels/</code> 后执行
       <code>bash build.sh</code> 离线补装。离线机器也不要执行 <code>make build</code>。</div>
     </section>
 """

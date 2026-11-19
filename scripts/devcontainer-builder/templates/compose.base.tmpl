@@ -5,7 +5,7 @@
 # 可用环境变量覆盖：
 #   ${SRC_ROOT:-./src/}   -> 应用根目录，默认 ./src/ = docker-compose.yml 所在项目根目录下的 src 子目录
 #   ${SRC_ROOT_NAME:-app} -> compose 项目名后缀，默认 app
-{{ORACLE_COMPOSE_HINT}}#   ${NPM_PACKAGES_DIR:-./packages}
+{{ORACLE_COMPOSE_HINT}}#   ${NPM_PACKAGES_DIR:-deps/packages}
 #                         -> Npm Download 产物目录（启用 Node 时）
 # 离线使用：镜像已由 devcontainer-docker-images_{{ARCH}}_{{TS}}.tgz 导入，
 # pull_policy=never + make up --no-build 不会触发任何联网。

@@ -2,19 +2,19 @@
 # install.sh 会把本文件安装（或按行合并）到项目根目录。
 #
 # 作用：项目根目录作为 docker build context 时（make build 或手动 docker build .），
-# 排除离线产物与本地补装缓存，避免 wheels/、dist/ 等被发送进构建上下文、
-# 被误 COPY 进镜像层。wheels/ 仅在云端构建时经 bind mount 装入镜像（不落层，
+# 排除离线产物与本地补装缓存，避免 deps/、dist/ 等被发送进构建上下文、
+# 被误 COPY 进镜像层。deps/wheels 仅在云端构建时经 bind mount 装入镜像（不落层，
 # 运行容器内没有 wheels），重建镜像走联网 requirements.txt，无需随上下文或
-# git 分发 wheels。
+# git 分发 wheel。
 #
-# 注意：离线补装请走项目根目录的 build.sh——它使用只含 wheels 的临时上下文
+# 注意：离线补装请走项目根目录的 build.sh——它使用只含 deps/wheels 的临时上下文
 # 构建，不受本文件影响；不要在项目根目录直接 docker build 跑 Dockerfile.addon。
 .git
 .github
 .idea
 .vscode
 dist/
-wheels/
+deps/
 tarballs/
 .addon-build/
 __pycache__/
