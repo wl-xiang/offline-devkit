@@ -700,7 +700,8 @@ def workflow_inputs_snapshot():
         if value != default_value and value != "":
             minimal[name] = value
     meta = {"repo": _github_repo_url()}
-    return {"minimal": minimal, "normal": normal, "full": full, "meta": meta}
+    # meta 排在最前：一眼可见构建来源（repo），其后才是三层输入快照
+    return {"meta": meta, "minimal": minimal, "normal": normal, "full": full}
 
 
 def _github_repo_url():

@@ -135,14 +135,14 @@ zip 内含以下五个文件（`compression-level: 0`，仅存储不再二次压
 纯 JSON 文件，记录本次运行在
 GitHub 前端输入的原始参数值，顶层分四个 section：
 
+- `meta`（构建来源信息，非输入参数，排在最前）：当前包含 `repo` ——本
+  devcontainer 构建所在仓库的 GitHub URL（来自 CI 环境的
+  `GITHUB_SERVER_URL` / `GITHUB_REPOSITORY`；本地联调无 CI 环境时记 `""`）。
 - `full`（全量版）：记录全部 workflow inputs——留空字符串记 `""`，未勾选的
   checkbox 记 `false`；
 - `normal`（正常版）：省略留空字符串与默认值（未勾选）checkbox；
 - `minimal`（精简版）：再省略取默认值的参数（含 choice），只保留用户实际
   改动过的输入。该 section 同时以表格形式输出到运行页面的 **Summary**。
-- `meta`（构建来源信息，非输入参数）：当前包含 `repo` ——本 devcontainer
-  构建所在仓库的 GitHub URL（来自 CI 环境的 `GITHUB_SERVER_URL` /
-  `GITHUB_REPOSITORY`；本地联调无 CI 环境时记 `""`）。
 
 值为前端提交的原始字符串（checkbox 解析为布尔，其余不做规范化，如
 `app_port` 只写 `3000` 时原样记录）。

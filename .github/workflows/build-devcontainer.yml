@@ -449,7 +449,7 @@ jobs:
           text = Path(sys.argv[1]).read_text(encoding="utf-8")
           # 纯 JSON：JSONC 注释会导致 json.loads 解析失败
           data = json.loads(text)
-          assert list(data) == ["minimal", "normal", "full", "meta"], list(data)
+          assert list(data) == ["meta", "minimal", "normal", "full"], list(data)
           full = data["full"]
           assert list(full) == list(DEFAULTS), list(full)
           for name, (_default, kind) in DEFAULTS.items():
