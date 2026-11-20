@@ -78,6 +78,8 @@ make up (python main.py)
 | `enable_node` | boolean | — | `false` | 镜像内置 Node.js 24 + npm，用于前端离线开发（vite / webpack / vue / react） |
 | `npm_packages` | string | 用 `$` 分隔，如 `vite$webpack$webpack-cli$vue$react` | 空 | 构建期全局安装的 npm 包（需要 `enable_node=true`；构建机联网安装，内网容器可直接使用） |
 | `npm_packages_dir` | string | 相对/绝对路径 | `deps/packages` | **Npm Download 产物所在目录**：把该工作流产出的 `packages/` 内容（`*.tgz` + `package.json`）放这里，compose 会把它只读挂载到容器 `/opt/npm-packages`，供 `make npm-install` 或 `bash build.sh` 一键离线安装前端依赖。相对项目根或绝对路径（需 `enable_node=true`） |
+| `bootstrap_install` | choice | `none` / `pack_in_artifact` / `install_via_npm` | `none` | 预装 Bootstrap 前端库：`none` 不安装；`pack_in_artifact` 构建期下载 `bootstrap-<version>.tgz` 随 Artifact 分发，install.sh 自动解压到 `<项目根>/src/vendor/bootstrap-<version>/`（容器内 `/app/vendor/`）；`install_via_npm` 构建期在镜像内 npm 全局安装（未勾选 `enable_node` 时自动补装 Node.js 24 + npm 层） |
+| `bootstrap_version` | string | 版本号，如 `5.3.3` | 空（最新版） | bootstrap_install 两种模式使用的 Bootstrap 版本，留空拉最新版 |
 | `sidecars` | string | 逗号/空格分隔，如 `nginx postgres` | 空 | 启用的外挂服务：`nginx`（8080:80）、`postgres`（postgres:16，数据卷 pgdata） |
 | `app_depends_on` | string | 逗号/空格分隔，如 `nginx postgres` | 空 | app 服务 `depends_on` 的外挂服务（须在 `sidecars` 中同时启用） |
 | `prod_command` | string | 命令行 | `python main.py` | prod 服务启动命令（同时写入镜像 CMD 与 compose 的 app 服务 `command`，安装后可直接改 compose 免重建） |
@@ -126,6 +128,7 @@ zip 内含以下五个文件（`compression-level: 0`，仅存储不再二次压
 | `install.sh` | 安装脚本（与 src tgz 放同一目录） |
 | `readme.html` | 简易安装说明（建议把 zip 放到项目根目录 `dist/` 下解压后 `bash install.sh ../`；`--load` 可自动导入镜像） |
 | `devcontainer.json` | 本次运行的 workflow 输入参数快照（纯 JSON；随 `install.sh` 与 README.md 一起安装到项目根目录） |
+| `bootstrap-<version>.tgz` | 仅 `bootstrap_install=pack_in_artifact` 时存在：bootstrap 离线包（构建期从 npm 源下载，版本默认拉最新），`install.sh` 自动解压到 `<项目根>/src/vendor/bootstrap-<version>/` |
 
 #### devcontainer.json
 
@@ -133,7 +136,7 @@ zip 内含以下五个文件（`compression-level: 0`，仅存储不再二次压
 GitHub 前端输入的原始参数值，顶层分三个 section（键顺序与 workflow inputs
 定义顺序一致）：
 
-- `full`（全量版）：记录全部 21 个输入——留空字符串记 `""`，未勾选的
+- `full`（全量版）：记录全部 workflow inputs——留空字符串记 `""`，未勾选的
   checkbox 记 `false`；
 - `normal`（正常版）：省略留空字符串与默认值（未勾选）checkbox；
 - `minimal`（精简版）：再省略取默认值的参数（含 choice），只保留用户实际
@@ -207,7 +210,17 @@ bash install.sh --no-load ../    # 照常安装，但跳过镜像导入（--no-l
 bash install.sh --load-only      # 只导入镜像归档，不做任何安装操作
 bash install.sh -d               # 一键默认：项目根固定为 ../，源码放入 ../src/
 bash install.sh -d --no-load     # 一键默认安装，但跳过镜像导入
+bash install.sh --load --load-target dev ../
+                                 # 安装并只导入 dev 镜像（不导入 prod）
+bash install.sh --load-only --load-target prod
+                                 # 只导入 prod 镜像（部署用），不做安装
 ```
+
+`--load-target <dev|prod|app|all>` 配合 `--load` / `--load-only` / `-d` 使用，
+prod+dev 镜像模式下可选择只导入需要的镜像：`dev` = 仅 dev 镜像（不导入 prod）；
+`prod` = 仅 prod 镜像（不导入 dev）；`app` = 应用服务使用的镜像（= prod，仅
+dev 镜像模式下为 dev 镜像）；`all`（默认）= 导入归档内全部镜像。sidecar 镜像
+（nginx / postgres，如已打包）在任何 target 下都会一并导入。
 
 脚本会（先做全部前置检查、再写盘，任一检查失败都不会留下半套安装）：
 
@@ -513,6 +526,22 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
   是否存在 `.tgz`。
 - `make npm-install` 需要 dev 镜像（`image_mode=prod+dev` 或
   `dev-only`），与 `make shell` 一致。
+
+## Bootstrap 前端库（bootstrap_install）
+
+构建参数 `bootstrap_install` 决定是否预装 Bootstrap：
+
+- **`pack_in_artifact`（离线优先）**：构建期从 npm 源下载
+  `bootstrap-<version>.tgz`（版本默认拉最新，可用 `bootstrap_version` 固定），
+  随 Artifact 一起分发；`install.sh` 安装时自动解压到应用源码根目录
+  `<项目根>/src/vendor/bootstrap-<version>/`（即容器内
+  `/app/vendor/bootstrap-<version>/`），模板中直接引用其 `dist/` 下的 css/js
+  静态资源即可。vendor 目录已存在时安装终止（避免覆盖）。
+- **`install_via_npm`**：构建期在镜像内 `npm install -g bootstrap@<version>`。
+  未勾选 `enable_node` 时会自动补装 Node.js 24 + npm 镜像层（等效勾选）。
+  容器内静态资源位于 `/usr/local/lib/node_modules/bootstrap/dist/`，
+  用 `npm ls -g bootstrap` 查看版本。
+- **`none`（默认）**：不安装。
 
 ## 设计说明
 

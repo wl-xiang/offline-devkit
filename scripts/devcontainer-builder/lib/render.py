@@ -9,7 +9,11 @@ import json
 import shutil
 from pathlib import Path
 
-from .params import NPM_PACKAGES_CONTAINER_DIR, Params
+from .params import (
+    BOOTSTRAP_VENDOR_DIR,
+    NPM_PACKAGES_CONTAINER_DIR,
+    Params,
+)
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 BUILDER_DIR = TEMPLATES_DIR.parent
@@ -266,7 +270,44 @@ def _base_mapping(p):
         "NPM_MAKE_TARGETS": _npm_make_targets(p),
         "NPM_PHONY": _NPM_PHONY if (p.enable_node and p.dev_tools_enabled) else "",
         "NPM_CHECK": _npm_check(p),
+        # ---- Bootstrap 前端库 ----
+        "BOOTSTRAP_MODE": p.bootstrap_install,
+        "BOOTSTRAP_SPEC": p.bootstrap_spec,
+        "BOOTSTRAP_VENDOR_DIR": BOOTSTRAP_VENDOR_DIR,
+        "BOOTSTRAP_BLOCK": _bootstrap_npm_block(p),
+        # ---- install.sh --load-target：归档内的 sidecar 镜像（任何 target 都导入） ----
+        "SIDECAR_IMAGES": _sidecar_images(p),
     }
+
+
+def _sidecar_images(p):
+    """本次构建打包进镜像归档的外挂服务镜像（install.sh --load-target 过滤时
+    无论 dev/prod/app 都会一并导入）。"""
+    images = []
+    if p.enable_nginx:
+        images.append("nginx:stable")
+    if p.enable_postgres:
+        images.append("postgres:16")
+    return " ".join(images)
+
+
+def _bootstrap_npm_block(p):
+    """Dockerfile 中 bootstrap 的 npm 全局安装块（install_via_npm 模式）。
+
+    bootstrap_install=install_via_npm 时 enable_node 被强制开启（params.load），
+    因此本块只会在 NODE_BLOCK 之后渲染，npm 一定可用。
+    """
+    if not p.bootstrap_npm:
+        return ""
+    return (
+        "\n# 预装 Bootstrap 前端库（构建期联网 npm 全局安装，离线容器内可直接引用\n"
+        "# /usr/local/lib/node_modules/bootstrap/dist/ 下的 css/js 静态资源）\n"
+        f"RUN npm install -g --no-audit --no-fund --registry {p.npm_registry_url} "
+        f"bootstrap@{p.bootstrap_spec} \\\n"
+        "    && npm cache clean --force \\\n"
+        "    && rm -rf /tmp/npm-cache \\\n"
+        "    && npm ls -g --depth=0 bootstrap\n"
+    )
 
 
 def _apt_block(packages):
@@ -732,6 +773,28 @@ note "4. make shell 后运行 npm run dev -- --host 0.0.0.0（vite 默认 5173�
 '''
 
 
+def _bootstrap_notice_block(p):
+    """install.sh 中的 Bootstrap 提示（bootstrap_install 非 none 时）。"""
+    if p.bootstrap_pack:
+        vendor = f"$SRC_DIR/{BOOTSTRAP_VENDOR_DIR}"
+        return f'''
+echo ""
+printf '%s\\n' "${{C_BOLD}}Bootstrap 前端库（pack in artifact，本包自带离线 tgz）${{C_RESET}}"
+note "已把 bootstrap-<version>.tgz 解压到应用源码根目录 {vendor}/bootstrap-<version>/"
+note "  （容器内路径 /app/{BOOTSTRAP_VENDOR_DIR}/bootstrap-<version>/，Django/Jinja 可直接引用 dist/ 静态资源）"
+note "后续升级：重新构建时选择 pack_in_artifact 并指定 bootstrap_version，替换 vendor 目录"
+'''
+    if p.bootstrap_npm:
+        return f'''
+echo ""
+printf '%s\\n' "${{C_BOLD}}Bootstrap 前端库（install via npm，已打进镜像）${{C_RESET}}"
+note "镜像构建期已用 npm 全局安装 bootstrap@{p.bootstrap_spec}"
+note "容器内查看/引用：npm ls -g bootstrap；静态资源在 /usr/local/lib/node_modules/bootstrap/dist/"
+note "应用按需从该目录复制到自己的 static 目录（vendor 模式见 bootstrap_install=pack_in_artifact）"
+'''
+    return ""
+
+
 def render_install_sh(p, out_file):
     """渲染安装脚本到 dist/（独立 artifact，不进 src tgz）。"""
     content = _sub(
@@ -740,6 +803,7 @@ def render_install_sh(p, out_file):
             **_base_mapping(p),
             "ORACLE_NOTICE_BLOCK": _oracle_notice_block(p),
             "NPM_NOTICE_BLOCK": _npm_notice_block(p),
+            "BOOTSTRAP_NOTICE_BLOCK": _bootstrap_notice_block(p),
         },
     )
     path = Path(out_file)
@@ -914,6 +978,56 @@ def _npm_html_section(p):
 """
 
 
+def _bootstrap_readme_section(p):
+    if not p.bootstrap_pack:
+        return ""
+    vendor = f"src/{BOOTSTRAP_VENDOR_DIR}"
+    return f"""
+## Bootstrap 前端库（pack in artifact，本包自带离线 tgz）
+
+构建期已从 npm 源下载 `bootstrap-{p.bootstrap_spec if p.bootstrap_version != '' else '<latest>'}.tgz`
+随本 bundle 分发，install.sh 会自动把它解压到应用源码根目录
+`{vendor}/bootstrap-<version>/`（容器内路径 `/app/{BOOTSTRAP_VENDOR_DIR}/bootstrap-<version>/`）。
+
+1. 确认安装结果：`ls {vendor}/bootstrap-*/dist/css/bootstrap.min.css`
+2. 模板中按需引用 `<version>` 对应的 dist 静态资源（css/js）。
+3. 升级版本：重新构建时指定 `bootstrap_version`，替换 `{vendor}/` 下对应目录。
+"""
+
+
+def _bootstrap_html_section(p):
+    if not p.bootstrap_pack:
+        return ""
+    vendor = f"src/{BOOTSTRAP_VENDOR_DIR}"
+    step_no = "08" if p.oracle_enabled else "07"
+    return f"""
+    <section class="card">
+      <h2><span class="step-dot">{step_no}</span>Bootstrap 前端库（本包自带离线 tgz）</h2>
+      <p>构建期已从 npm 源下载 <code>bootstrap-*.tgz</code> 随 bundle 分发，install.sh
+      会自动解压到应用源码根目录 <code>{vendor}/bootstrap-&lt;version&gt;/</code>
+      （容器内 <code>/app/{BOOTSTRAP_VENDOR_DIR}/bootstrap-&lt;version&gt;/</code>），
+      Django / Jinja 模板可直接引用其中的 <code>dist/</code> 静态资源。</p>
+
+      <div class="step">
+        <div class="step-head">
+          <span class="step-badge">1</span>
+          <div>
+            <h3>确认安装结果</h3>
+            <p>检查 vendor 目录与 bootstrap 静态资源是否就位。</p>
+          </div>
+        </div>
+        <div class="codeblock">
+          <div class="codebar"><span class="code-label">项目根目录</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
+          <pre><code>ls {vendor}/bootstrap-*/dist/css/bootstrap.min.css</code></pre>
+        </div>
+      </div>
+
+      <div class="tip"><strong>升级版本：</strong>重新构建时填写 <code>bootstrap_version</code>
+      （留空拉最新版），install.sh 会安装到新的 <code>bootstrap-&lt;version&gt;</code> 目录。</div>
+    </section>
+"""
+
+
 def render_readme_html(p, out_file):
     """渲染 bundle 安装说明 readme.html 到 dist/（随 install.sh 等一起进 Artifact zip）。"""
     content = _sub(
@@ -922,6 +1036,7 @@ def render_readme_html(p, out_file):
             **_base_mapping(p),
             "ORACLE_SECTION": _oracle_html_section(p),
             "NPM_SECTION": _npm_html_section(p),
+            "BOOTSTRAP_SECTION": _bootstrap_html_section(p),
             "AGENT_HTML_SECTION": _agent_html_section(p),
         },
     )
@@ -1172,6 +1287,16 @@ def render_src_readme(p):
             node_summary += f"（全局预装：{', '.join(p.npm_package_list)}）"
     else:
         node_summary = "未启用"
+    if p.bootstrap_pack:
+        bootstrap_summary = (
+            "pack in artifact（install.sh 安装到 "
+            f"`src/{BOOTSTRAP_VENDOR_DIR}/bootstrap-<version>`，"
+            f"版本 {p.bootstrap_spec}）"
+        )
+    elif p.bootstrap_npm:
+        bootstrap_summary = f"install via npm（已打进镜像，bootstrap@{p.bootstrap_spec}）"
+    else:
+        bootstrap_summary = "未启用"
 
     return _sub(
         _load("README.src.tmpl"),
@@ -1182,7 +1307,9 @@ def render_src_readme(p):
             "DEV_TOOLS_NOTE": dev_note,
             "ORACLE_SUMMARY": oracle_summary,
             "NODE_SUMMARY": node_summary,
+            "BOOTSTRAP_SUMMARY": bootstrap_summary,
             "ORACLE_SECTION": _oracle_readme_section(p),
+            "BOOTSTRAP_SECTION": _bootstrap_readme_section(p),
             "NPM_SECTION": _npm_readme_section(p),
             "AGENT_SECTION": _agent_readme_section(p),
         },

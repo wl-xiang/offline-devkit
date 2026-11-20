@@ -38,6 +38,7 @@ def build_markdown(p, results):
     install_sh = results.get("install_sh")
     readme_html = results.get("readme_html")
     devcontainer_json = results.get("devcontainer_json")
+    bootstrap_tgz = results.get("bootstrap_tgz")
     skipped_docker = results.get("skipped_docker", False)
     bundle_name = p.bundle_name
 
@@ -90,9 +91,20 @@ def build_markdown(p, results):
     out.append(f"| Oracle Instant Client 19 | {oracle_mode} |")
     if p.enable_node:
         node_mode = f"Node.js {p.node_version} + npm"
+        if p.bootstrap_npm:
+            node_mode += f"（含 bootstrap@{p.bootstrap_spec} 全局预装）"
     else:
         node_mode = "未启用"
     out.append(f"| Node.js / npm | {node_mode} |")
+    if p.bootstrap_pack:
+        bootstrap_name = (bootstrap_tgz.name if bootstrap_tgz
+                          else f"bootstrap-{p.bootstrap_spec}.tgz")
+        out.append(f"| Bootstrap | pack in artifact（`{bootstrap_name}`"
+                   " 随 Artifact 分发，install.sh 安装到 "
+                   "`src/vendor/bootstrap-<version>`） |")
+    elif p.bootstrap_npm:
+        out.append(f"| Bootstrap | install via npm（构建期镜像内全局安装"
+                   f" `bootstrap@{p.bootstrap_spec}`） |")
     if p.enable_node:
         npm_pkg_summary = ", ".join(f"`{x}`" for x in p.npm_package_list) or "(无)"
         out.append(f"| npm 全局预装包 | {npm_pkg_summary} |")
@@ -176,7 +188,7 @@ def build_markdown(p, results):
     out.append("### 产物清单")
     out.append("")
     out.append(f"唯一 Artifact：**{bundle_name}**（zip 封装、仅存储不压缩，"
-               "解压即得以下五个文件）")
+               "解压即得以下文件）")
     out.append("")
     out.append("| 文件 | 大小 | SHA256 |")
     out.append("| --- | --- | --- |")
@@ -207,6 +219,13 @@ def build_markdown(p, results):
             f"| {human_size(devcontainer_json.stat().st_size)} "
             f"| `{sha256_of(devcontainer_json)}` |"
         )
+    if bootstrap_tgz:
+        out.append(
+            f"| {bootstrap_tgz.name}（bootstrap 离线包，install.sh 安装到"
+            " src/vendor/bootstrap-<version>） "
+            f"| {human_size(bootstrap_tgz.stat().st_size)} "
+            f"| `{sha256_of(bootstrap_tgz)}` |"
+        )
     out.append("")
 
     out.append("### 内网使用步骤")
@@ -214,7 +233,7 @@ def build_markdown(p, results):
     out.append("1. 从本次运行页面底部 **Artifacts** 下载唯一产物"
                f" **{bundle_name}**（zip 仅为封装、不压缩，解压得到"
                " 镜像归档 tgz、src tgz、install.sh、readme.html 与"
-               " devcontainer.json 五个文件），"
+               " devcontainer.json 等文件），"
                "传输到与目标平台一致的内网机器，并用上表 SHA256 校验完整性。")
     out.append("")
     out.append("2. **把 artifact zip 包放到你的项目根目录 `dist/` 文件夹下**"
@@ -387,6 +406,10 @@ def emit(p, results):
         if devcontainer_json:
             entries.append(("devcontainer_json", str(devcontainer_json)))
             entries.append(("devcontainer_json_name", devcontainer_json.name))
+        bootstrap_tgz = results.get("bootstrap_tgz")
+        if bootstrap_tgz:
+            entries.append(("bootstrap_tgz", str(bootstrap_tgz)))
+            entries.append(("bootstrap_name", bootstrap_tgz.name))
         entries.append(("images", ",".join(results.get("images") or [])))
         with open(output_path, "a", encoding="utf-8") as f:
             for key, value in entries:
