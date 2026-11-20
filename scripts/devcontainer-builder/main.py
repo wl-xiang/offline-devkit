@@ -140,8 +140,9 @@ def main():
     print(f"== 安装说明: {readme_html} ==")
 
     # workflow 输入参数快照：与 install.sh / readme.html 同级（zip 顶层），
-    # 随 Artifact 分发，install.sh 会把它安装到 <项目根>/docs/devcontainer/。
-    # 输出为纯 JSON 文件（minimal / normal / full 三层，无注释）。
+    # 随 Artifact 分发，install.sh 会把它安装到 <项目根>/devcontainer.json。
+    # 输出为纯 JSON 文件（minimal / normal / full 三层参数快照 + meta
+    # 构建来源信息，无注释）。
     devcontainer_json = REPO_ROOT / "dist" / "devcontainer.json"
     workflow_params_snapshot = params_mod.workflow_inputs_snapshot()
     devcontainer_json.write_text(

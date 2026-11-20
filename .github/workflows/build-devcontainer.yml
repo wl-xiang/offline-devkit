@@ -414,7 +414,7 @@ jobs:
             *) echo "::error::workflow 参数快照必须输出为 .json 文件"; exit 1 ;;
           esac
           python - "${{ steps.build.outputs.devcontainer_json }}" <<'PY'
-          import json, sys
+          import json, os, sys
           from pathlib import Path
 
           # workflow inputs 默认值（与 build-devcontainer.yml 的 inputs 保持同步）
@@ -445,14 +445,11 @@ jobs:
               "selinux_relabel": ("false", "boolean"),
               "mount_host_timezone": ("true", "boolean"),
               "enable_tz_shanghai": ("true", "boolean"),
-              # 非 workflow 输入：构建仓库 GitHub URL（full 始终存在，
-              # normal/minimal 仅在 GITHUB_REPOSITORY 可用时记录）
-              "repo": ("", "string"),
           }
           text = Path(sys.argv[1]).read_text(encoding="utf-8")
           # 纯 JSON：JSONC 注释会导致 json.loads 解析失败
           data = json.loads(text)
-          assert list(data) == ["minimal", "normal", "full"], list(data)
+          assert list(data) == ["minimal", "normal", "full", "meta"], list(data)
           full = data["full"]
           assert list(full) == list(DEFAULTS), list(full)
           for name, (_default, kind) in DEFAULTS.items():
@@ -471,9 +468,18 @@ jobs:
               default, kind = DEFAULTS[name]
               default_value = (default.lower() == "true") if kind == "boolean" else default
               assert value != default_value, (name, value, default)
+          # meta：构建来源信息（当前仅 repo）；CI 中必须等于本仓库 URL
+          meta = data["meta"]
+          assert list(meta) == ["repo"], list(meta)
+          expected_repo = ""
+          if os.environ.get("GITHUB_REPOSITORY"):
+              expected_repo = (os.environ.get("GITHUB_SERVER_URL")
+                               or "https://github.com") \
+                  + "/" + os.environ["GITHUB_REPOSITORY"]
+          assert meta["repo"] == expected_repo, (meta["repo"], expected_repo)
           print("devcontainer.json OK "
                 f"(minimal={len(data['minimal'])}, normal={len(data['normal'])}, "
-                f"full={len(full)})")
+                f"full={len(full)}, meta.repo={meta['repo'] or '(空)'})")
           PY
           sha256sum "${{ steps.build.outputs.devcontainer_json }}"
           echo "--- build.sh (from src tgz) ---"

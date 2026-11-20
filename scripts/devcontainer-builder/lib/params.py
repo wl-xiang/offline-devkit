@@ -666,7 +666,7 @@ WORKFLOW_INPUTS = (
 
 
 def workflow_inputs_snapshot():
-    """读取原始 workflow 输入，生成 minimal/normal/full 三层参数快照。
+    """读取原始 workflow 输入，生成 minimal/normal/full 三层参数快照 + meta。
 
     值为 GitHub 前端提交的原始字符串（checkbox 解析为布尔，其余不做规范化）；
     本地联调未设置的环境变量视为未提供（字符串记 ""、checkbox 记 false）。
@@ -676,18 +676,15 @@ def workflow_inputs_snapshot():
     - normal：省略留空字符串与默认值 checkbox
     - minimal：再省略取默认值的参数（含 choice），只保留用户实际改动过的输入
 
-    额外附加 `repo` 键（非 workflow 输入）：当前仓库的 GitHub URL
-    （GITHUB_SERVER_URL/GITHUB_REPOSITORY，CI 环境自动提供），告知用户本
-    devcontainer 是在哪个仓库构建的；full 始终包含该键（本地联调无
-    GITHUB_REPOSITORY 时记 ""），normal/minimal 仅在可用时记录。
+    另附顶层 `meta` section（非输入参数）：记录本次构建的来源信息，当前包含
+    `repo` —— 构建仓库的 GitHub URL（来自 CI 环境自动提供的
+    GITHUB_SERVER_URL / GITHUB_REPOSITORY；本地联调无该环境变量时记 ""），
+    告知用户本 devcontainer 是在哪个仓库构建的。
     """
     full = {}
     for name, env, kind, _default in WORKFLOW_INPUTS:
         raw = (os.environ.get(env) or "").strip()
         full[name] = raw.lower() in BOOL_TRUE if kind == "boolean" else raw
-
-    repo_url = _github_repo_url()
-    full["repo"] = repo_url
 
     normal = {}
     minimal = {}
@@ -702,10 +699,8 @@ def workflow_inputs_snapshot():
             normal[name] = value
         if value != default_value and value != "":
             minimal[name] = value
-    if repo_url:
-        normal["repo"] = repo_url
-        minimal["repo"] = repo_url
-    return {"minimal": minimal, "normal": normal, "full": full}
+    meta = {"repo": _github_repo_url()}
+    return {"minimal": minimal, "normal": normal, "full": full, "meta": meta}
 
 
 def _github_repo_url():

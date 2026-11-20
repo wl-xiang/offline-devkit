@@ -133,20 +133,19 @@ zip 内含以下五个文件（`compression-level: 0`，仅存储不再二次压
 #### devcontainer.json
 
 纯 JSON 文件，记录本次运行在
-GitHub 前端输入的原始参数值，顶层分三个 section（键顺序与 workflow inputs
-定义顺序一致）：
+GitHub 前端输入的原始参数值，顶层分四个 section：
 
 - `full`（全量版）：记录全部 workflow inputs——留空字符串记 `""`，未勾选的
   checkbox 记 `false`；
 - `normal`（正常版）：省略留空字符串与默认值（未勾选）checkbox；
 - `minimal`（精简版）：再省略取默认值的参数（含 choice），只保留用户实际
   改动过的输入。该 section 同时以表格形式输出到运行页面的 **Summary**。
+- `meta`（构建来源信息，非输入参数）：当前包含 `repo` ——本 devcontainer
+  构建所在仓库的 GitHub URL（来自 CI 环境的 `GITHUB_SERVER_URL` /
+  `GITHUB_REPOSITORY`；本地联调无 CI 环境时记 `""`）。
 
 值为前端提交的原始字符串（checkbox 解析为布尔，其余不做规范化，如
-`app_port` 只写 `3000` 时原样记录）。`minimal` / `normal` 中额外包含
-`repo` 键（构建仓库的 GitHub URL，来自 CI 环境的
-`GITHUB_SERVER_URL` / `GITHUB_REPOSITORY`），告知用户本 devcontainer
-是在哪个仓库构建的；`full` 始终包含该键（本地联调无 CI 环境时记 `""`）。
+`app_port` 只写 `3000` 时原样记录）。
 该文件仅用于追溯本次构建的输入，
 `install.sh` 会把它与 README.md 一样安装到项目根目录。
 
