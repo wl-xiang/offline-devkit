@@ -12,6 +12,9 @@
 #                                                  # （覆盖 --load / -d 的自动导入）
 #   bash install.sh --load-only                    # 只执行 docker load 同目录的
 #                                                  # 镜像归档，不做任何安装操作
+#   bash install.sh --load --load-target dev ../   # 安装并只导入 dev 镜像（不导入
+#                                                  # prod；sidecar 镜像仍会导入）
+#   bash install.sh --load-only --load-target prod # 只导入 prod 镜像（不导入 dev）
 #   bash install.sh -d | --default                 # 一键默认安装：自动启用 --load，
 #                                                  # 无需传路径，项目根固定为 ../，
 #                                                  # 应用源码放入 ../src/
@@ -58,9 +61,9 @@ note() { printf '%s\n' "  ${C_YELLOW}$*${C_RESET}"; }                   # 提示
 usage() {
     local code=${1:-2}
     cat <<EOF
-${C_BOLD}用法:${C_RESET} bash $0 [--load | --no-load] <INSTALL_PATH>
-       bash $0 -d | --default [--no-load]
-       bash $0 --load-only
+${C_BOLD}用法:${C_RESET} bash $0 [--load | --no-load] [--load-target <dev|prod|app|all>] <INSTALL_PATH>
+       bash $0 -d | --default [--no-load] [--load-target <dev|prod|app|all>]
+       bash $0 --load-only [--load-target <dev|prod|app|all>]
 
 在项目根目录安装离线 devcontainer 开发环境：解压源码/模板包，安装 Makefile、
 build.sh、Dockerfile、docker-compose.yml、devcontainer.json（workflow 输入
@@ -86,13 +89,25 @@ ${C_BOLD}选项:${C_RESET}
   --load-only           只执行镜像导入：在脚本所在目录查找
                         devcontainer-docker-images_*.tgz 并 docker load，
                         随后立即退出，不执行任何安装操作（无需 INSTALL_PATH）。
+  --load-target <t>     配合 --load / --load-only / -d 使用：只导入指定镜像，
+                        t ∈ dev|prod|app|all（默认 all = 导入归档内全部镜像）。
+                        dev  = 仅导入 dev 镜像（不导入 prod）
+                        prod = 仅导入 prod 镜像（不导入 dev）
+                        app  = 应用服务使用的镜像（= prod；仅 dev 镜像模式下
+                               为 dev 镜像）
+                        sidecar 镜像（nginx / postgres，如已打包）在任何
+                        target 下都会一并导入。
   -h, --help            显示本帮助并退出。
 
 ${C_BOLD}示例:${C_RESET}
   bash install.sh ../              # 在项目根目录的 dist/ 中安装到上一级项目根
   bash install.sh --load ../       # 同上，并在安装前自动导入镜像
+  bash install.sh --load --load-target dev ../
+                                   # 同上，但只导入 dev 镜像（不含 prod）
   bash install.sh --no-load ../    # 只做安装，不导入镜像（镜像稍后手动 docker load）
   bash install.sh --load-only      # 只导入镜像，不做安装
+  bash install.sh --load-only --load-target prod
+                                   # 只导入 prod 镜像（部署用），不做安装
   bash install.sh -d               # 一键默认：自动导入镜像，安装到 ../（源码在 ../src/）
   bash install.sh -d --no-load     # 一键默认安装，但跳过镜像导入
   bash install.sh -h               # 查看本帮助
@@ -109,8 +124,8 @@ EOF
     exit "$code"
 }
 
-# ---------- 镜像导入（--load / --load-only 共用） ----------
-load_images() {
+# ---------- 镜像导入（--load / --load-only 共用；--load-target 选择导入哪些镜像） ----------
+find_images_tgz() {
     command -v docker >/dev/null 2>&1 \
         || { err "镜像导入需要 docker 命令，但未在 PATH 中检测到 docker"; exit 1; }
     local -a img_tgzs
@@ -127,15 +142,94 @@ load_images() {
         printf '  %s\n' "${img_tgzs[@]}"
         exit 1
     fi
-    step "导入镜像归档（docker load）"
-    docker load -i "${img_tgzs[0]}"
-    ok "已导入 ${C_BOLD}${img_tgzs[0]}${C_RESET}"
+    printf '%s\n' "${img_tgzs[0]}"
+}
+
+load_images_all() {
+    local img_tgz=$1
+    step "导入镜像归档（docker load，全部镜像）"
+    docker load -i "$img_tgz"
+    ok "已导入 ${C_BOLD}${img_tgz}${C_RESET}"
+}
+
+# --load-target dev|prod|app：docker load 本身不支持按镜像过滤，这里从
+# docker save 归档中读出 manifest.json，筛出目标镜像（外加 sidecar 镜像）的
+# config 与 layer，重建一个临时归档后再 docker load。
+load_images_filtered() {
+    local img_tgz=$1 target=$2; shift 2
+    local -a want=("$@")
+    local manifest entry tags match cfg w found=0
+    local tmp
+    tmp=$(mktemp -d "${TMPDIR:-/tmp}/devc-load.XXXXXX") \
+        || { err "无法创建临时目录（按 target 过滤导入需要）"; exit 1; }
+    # 提前展开临时目录字面量：EXIT 时函数已返回，local 变量在 set -u 下不可见
+    trap "rm -rf '$tmp'" EXIT
+    if ! manifest=$(tar xzOf "$img_tgz" manifest.json 2>/dev/null) \
+        && ! manifest=$(tar xzOf "$img_tgz" ./manifest.json 2>/dev/null); then
+        err "镜像归档缺少 manifest.json，无法按 --load-target=$target 过滤"
+        echo "      （可去掉 --load-target 使用默认行为导入归档内全部镜像）"
+        exit 1
+    fi
+    local -a keep=("manifest.json")
+    while IFS= read -r entry; do
+        [ -n "$entry" ] || continue
+        tags=$(printf '%s' "$entry" | grep -o '"RepoTags": *\[[^]]*\]' | head -n 1 || true)
+        match=0
+        for w in "${want[@]}"; do
+            case "$tags" in *"\"$w\""*) match=1; break ;; esac
+        done
+        [ "$match" = "1" ] || continue
+        found=$((found + 1))
+        cfg=$(printf '%s' "$entry" | sed -n 's/.*"Config": *"\([^"]*\)".*/\1/p')
+        [ -n "$cfg" ] && keep+=("$cfg")
+        while IFS= read -r layer; do
+            [ -n "$layer" ] && keep+=("$layer")
+        done < <(printf '%s' "$entry" \
+            | grep -o '"Layers": *\[[^]]*\]' \
+            | sed -e 's/^"Layers": *\[//' -e 's/\]$//' -e 's/","/\n/g' -e 's/"//g' \
+            || true)
+    done <<EOF
+$(printf '%s' "$manifest" | sed 's/},{/}\n{/g')
+EOF
+    if [ "$found" -eq 0 ]; then
+        err "镜像归档中没有匹配 --load-target=$target 的镜像（期望: ${want[*]}）"
+        echo "      （本次构建可能未构建该镜像；可去掉 --load-target 导入全部镜像）"
+        exit 1
+    fi
+    printf '%s\n' "${keep[@]}" | awk 'NF' | sort -u > "$tmp/files.list"
+    step "按 --load-target=$target 过滤导入（${want[*]}）"
+    tar xzf "$img_tgz" -C "$tmp" -T "$tmp/files.list" \
+        || { err "解包镜像归档失败（按 target 过滤导入）"; exit 1; }
+    tar cf - -C "$tmp" -T "$tmp/files.list" | docker load
+    ok "已按 target=$target 导入 ${C_BOLD}$img_tgz${C_RESET} 中的目标镜像"
+}
+
+load_images() {
+    local img_tgz
+    img_tgz=$(find_images_tgz)
+    if [ "$LOAD_TARGET" = "all" ]; then
+        load_images_all "$img_tgz"
+        return
+    fi
+    # 目标镜像 + sidecar 镜像（任何 target 都一并导入）
+    local -a want
+    case "$LOAD_TARGET" in
+        dev)  want=({{DEV_IMAGE}}) ;;
+        prod) want=({{PROD_IMAGE}}) ;;
+        app)  want=({{APP_IMAGE}}) ;;
+    esac
+    local w
+    for w in {{SIDECAR_IMAGES}}; do
+        want+=("$w")
+    done
+    load_images_filtered "$img_tgz" "$LOAD_TARGET" "${want[@]}"
 }
 
 LOAD_IMAGES=0
 LOAD_ONLY=0
 NO_LOAD=0
 DEFAULT_MODE=0
+LOAD_TARGET=all
 while [ "$#" -gt 0 ]; do
     case "$1" in
         -h|--help) usage 0 ;;
@@ -143,6 +237,13 @@ while [ "$#" -gt 0 ]; do
         --load)    LOAD_IMAGES=1; NO_LOAD=0; shift ;;
         --no-load) LOAD_IMAGES=0; NO_LOAD=1; shift ;;
         --load-only) LOAD_ONLY=1; shift ;;
+        --load-target)
+            [ "$#" -ge 2 ] || { err "--load-target 需要一个值: dev|prod|app|all"; usage; }
+            case "$2" in
+                dev|prod|app|all) LOAD_TARGET=$2 ;;
+                *) err "--load-target 仅支持 dev|prod|app|all: $2"; usage ;;
+            esac
+            shift 2 ;;
         --)        shift; break ;;
         -*)        err "未知选项: $1"; usage ;;
         *)         break ;;
@@ -179,6 +280,12 @@ else
 fi
 [ -d "$INSTALL_PATH" ] || { err "INSTALL_PATH 不是目录: $INSTALL_PATH"; exit 1; }
 INSTALL_PATH=$(cd "$INSTALL_PATH" && pwd -P)
+
+# --load-target 只在会导入镜像（--load / --load-only / -d 且未被 --no-load 覆盖）时生效
+if [ "$LOAD_TARGET" != "all" ] && [ "$LOAD_IMAGES" = "0" ] && [ "$LOAD_ONLY" = "0" ]; then
+    note "--load-target 已忽略（未指定 --load / --load-only / -d，本次不会导入镜像）"
+    LOAD_TARGET=all
+fi
 
 # ---------- 可选：--load 在安装开始前自动导入镜像归档 ----------
 if [ "$LOAD_IMAGES" = "1" ]; then
@@ -252,6 +359,31 @@ if [ "$HAS_DEVCONTAINER_JSON" = "1" ] && [ -e "$INSTALL_PATH/devcontainer.json" 
     err "$INSTALL_PATH/devcontainer.json 已存在，避免覆盖你自己的文件，安装终止。"
     echo "  请先移动/重命名后重试。"
     fail=1
+fi
+# bootstrap（pack_in_artifact 模式）：bundle 内必须只有一个 bootstrap-*.tgz，
+# 且目标 vendor 目录不与用户现有文件冲突
+if [ "{{BOOTSTRAP_MODE}}" = "pack_in_artifact" ]; then
+    shopt -s nullglob
+    boot_tgzs=("$SCRIPT_DIR"/bootstrap-*.tgz)
+    shopt -u nullglob
+    if [ "${#boot_tgzs[@]}" -eq 0 ]; then
+        err "未在 $SCRIPT_DIR 找到 bootstrap-*.tgz（pack in artifact 模式需要 bundle 内的 bootstrap 离线包，与 install.sh 放在同一目录）"
+        fail=1
+    elif [ "${#boot_tgzs[@]}" -gt 1 ]; then
+        err "$SCRIPT_DIR 下有多个 bootstrap-*.tgz，请只保留本次使用的那个："
+        printf '  %s\n' "${boot_tgzs[@]}"
+        fail=1
+    else
+        BOOT_TGZ=${boot_tgzs[0]}
+        BOOT_VER=${BOOT_TGZ##*/bootstrap-}
+        BOOT_VER=${BOOT_VER%.tgz}
+        BOOT_VENDOR_DIR="$SRC_DIR/{{BOOTSTRAP_VENDOR_DIR}}/bootstrap-$BOOT_VER"
+        if [ -e "$BOOT_VENDOR_DIR" ]; then
+            err "$BOOT_VENDOR_DIR 已存在，避免覆盖你自己的文件，安装终止。"
+            echo "  请先移动/重命名后重试。"
+            fail=1
+        fi
+    fi
 fi
 [ "$fail" = "0" ] || exit 1
 
@@ -378,6 +510,15 @@ if [ "$NEEDS_MAIN_PY" = "1" ] && [ ! -e "$SRC_DIR/main.py" ]; then
     ok "已创建占位入口 $SRC_DIR/main.py（make up 默认运行 python main.py，请替换为真实入口）"
 fi
 
+# ---------- bootstrap（pack_in_artifact）：解压到 <src>/vendor/bootstrap-<version> ----------
+if [ "{{BOOTSTRAP_MODE}}" = "pack_in_artifact" ]; then
+    step "安装 Bootstrap 到源码根目录 {{BOOTSTRAP_VENDOR_DIR}}/"
+    mkdir -p "$BOOT_VENDOR_DIR"
+    # npm 包 tgz 顶层目录为 package/，strip 后内容即 bootstrap-<version>/
+    tar xzf "$BOOT_TGZ" -C "$BOOT_VENDOR_DIR" --strip-components=1
+    ok "已安装 $BOOT_VENDOR_DIR（容器内 /app/{{BOOTSTRAP_VENDOR_DIR}}/bootstrap-$BOOT_VER/，引用其 dist/ 静态资源）"
+fi
+
 # npm 离线包目录（默认项目根目录 deps/packages/）：提前创建，避免 docker 以 root
 # 身份自动创建空目录；产物由 Npm Download Action 解压后放入该目录。
 if [ "{{NODE_ENABLED}}" = "1" ]; then
@@ -402,6 +543,9 @@ if [ "$LOAD_IMAGES" = "1" ]; then
     else
         echo "镜像: 已导入（--load）"
     fi
+    if [ "$LOAD_TARGET" != "all" ]; then
+        echo "镜像: 按 --load-target=$LOAD_TARGET 只导入了指定镜像（其余镜像可去掉该选项重新导入）"
+    fi
 else
     if [ "$NO_LOAD" = "1" ]; then
         echo "镜像: 已跳过导入（--no-load）"
@@ -415,4 +559,4 @@ if [ "$COMPOSE_MODE" = "v1" ]; then
 elif [ "$COMPOSE_MODE" = "missing" ]; then
     printf '%s\n' "${C_RED}${C_BOLD}警告: 未检测到 docker compose 或 docker-compose，make 命令无法执行，请先安装 docker compose。${C_RESET}"
 fi
-{{ORACLE_NOTICE_BLOCK}}{{NPM_NOTICE_BLOCK}}
+{{ORACLE_NOTICE_BLOCK}}{{NPM_NOTICE_BLOCK}}{{BOOTSTRAP_NOTICE_BLOCK}}

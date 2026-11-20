@@ -14,7 +14,8 @@
        参数快照，由 lib/params.py 的 workflow_inputs_snapshot 生成）写入 dist/
     6. lib/summary.py 写 GITHUB_STEP_SUMMARY / GITHUB_OUTPUT，
        上传唯一 Artifact：<image_prefix>_devcontainer_<arch>_<ts>（zip，内含镜像归档
-       tgz、src tgz、install.sh、readme.html 与 devcontainer.json 五个文件）
+       tgz、src tgz、install.sh、readme.html 与 devcontainer.json 五个文件；
+       bootstrap_install=pack_in_artifact 时额外包含 bootstrap-<version>.tgz）
 
 本地联调可设置 DEVCONTAINER_SKIP_DOCKER=1 跳过 docker 步骤。
 """
@@ -27,6 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from lib import bootstrap as bootstrap_mod  # noqa: E402
 from lib import docker as docker_mod  # noqa: E402
 from lib import package as package_mod  # noqa: E402
 from lib import params as params_mod  # noqa: E402
@@ -64,6 +66,7 @@ def main():
     print(f"  preset_envs={[k for k, _v in p.preset_env_pairs]}")
     print(f"  node={p.enable_node}(v{p.node_version}) npm_packages={p.npm_package_list} "
           f"npm_packages_dir={p.npm_packages_dir}")
+    print(f"  bootstrap_install={p.bootstrap_install} bootstrap_version={p.bootstrap_spec}")
 
     work_dir = REPO_ROOT / "dist" / "devcontainer"
     if work_dir.exists():
@@ -73,6 +76,12 @@ def main():
 
     # 1. 模板渲染（requirements.txt 供下一步 pip download 使用）
     render_mod.render_all(p, staging)
+
+    # 1.5 bootstrap pack_in_artifact：构建期下载离线 tgz（随 Artifact 分发，
+    #     install.sh 在离线机器上解压到 <项目根>/src/vendor/bootstrap-<version>）
+    bootstrap_tgz = None
+    if p.bootstrap_pack:
+        bootstrap_tgz = bootstrap_mod.download_bootstrap_tgz(p, REPO_ROOT / "dist")
 
     # 2. pip download → wheels/
     wheels_count = pip_mod.download_wheels(p, staging)
@@ -131,8 +140,9 @@ def main():
     print(f"== 安装说明: {readme_html} ==")
 
     # workflow 输入参数快照：与 install.sh / readme.html 同级（zip 顶层），
-    # 随 Artifact 分发，install.sh 会把它安装到 <项目根>/docs/devcontainer/。
-    # 输出为纯 JSON 文件（minimal / normal / full 三层，无注释）。
+    # 随 Artifact 分发，install.sh 会把它安装到 <项目根>/devcontainer.json。
+    # 输出为纯 JSON 文件（minimal / normal / full 三层参数快照 + meta
+    # 构建来源信息，无注释）。
     devcontainer_json = REPO_ROOT / "dist" / "devcontainer.json"
     workflow_params_snapshot = params_mod.workflow_inputs_snapshot()
     devcontainer_json.write_text(
@@ -152,6 +162,7 @@ def main():
         "install_sh": install_sh,
         "readme_html": readme_html,
         "devcontainer_json": devcontainer_json,
+        "bootstrap_tgz": bootstrap_tgz,
         # minimal 只含用户实际改动过的输入，直接展示在构建摘要中
         "workflow_params_minimal": workflow_params_snapshot["minimal"],
         "images": images,

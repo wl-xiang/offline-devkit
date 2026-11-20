@@ -69,6 +69,18 @@ ORACLE_CLIENT_DIR = "/opt/oracle/instantclient19"
 # npm download Action 产物（packages/）在容器内的只读挂载点
 NPM_PACKAGES_CONTAINER_DIR = "/opt/npm-packages"
 
+# bootstrap 前端库的安装方式：
+#   none            = 不安装
+#   pack_in_artifact = 构建期下载 bootstrap-<version>.tgz 随 Artifact 分发，
+#                      install.sh 自动安装到 <项目根>/src/vendor/bootstrap-<version>
+#   install_via_npm  = 构建期在镜像内 npm 全局安装（等效 enable_node：
+#                      未勾选 enable_node 时自动补装 node+npm 层）
+BOOTSTRAP_INSTALL_MODES = ("none", "pack_in_artifact", "install_via_npm")
+
+# pack_in_artifact 模式下 bootstrap 在应用源码根目录（<项目根>/src，容器 /app）
+# 内的安装位置
+BOOTSTRAP_VENDOR_DIR = "vendor"
+
 # 预设环境变量的分隔符（workflow 输入框无法换行）
 ENV_PRESET_SEPARATOR = "》"
 
@@ -167,6 +179,8 @@ class Params:
     npm_registry: str
     npm_custom_registry_url: str
     npm_packages_dir: str
+    bootstrap_install: str
+    bootstrap_version: str
     selinux_relabel: bool
     mount_host_timezone: bool
     enable_tz_shanghai: bool
@@ -355,6 +369,25 @@ class Params:
         return f"{self.npm_packages_mount_source}:{NPM_PACKAGES_CONTAINER_DIR}:ro"
 
     @property
+    def bootstrap_pack(self):
+        """pack_in_artifact：构建期下载 bootstrap tgz 随 Artifact 分发。"""
+        return self.bootstrap_install == "pack_in_artifact"
+
+    @property
+    def bootstrap_npm(self):
+        """install_via_npm：构建期在镜像内 npm 全局安装 bootstrap。"""
+        return self.bootstrap_install == "install_via_npm"
+
+    @property
+    def bootstrap_enabled(self):
+        return self.bootstrap_install != "none"
+
+    @property
+    def bootstrap_spec(self):
+        """npm / registry 使用的 bootstrap 版本描述：latest 或指定版本。"""
+        return self.bootstrap_version or "latest"
+
+    @property
     def npm_packages_mount_source(self):
         """宿主机目录（相对项目根或绝对路径），compose 中可用 NPM_PACKAGES_DIR 覆盖。"""
         path = self.npm_packages_dir.removeprefix("./")
@@ -435,12 +468,16 @@ def load():
                   if "APP_PORT" in os.environ else "3000:3000"),
         env_file=_env("ENV_FILE", ""),
         preset_envs=_env("PRESET_ENVS", ""),
-        enable_node=_env_bool("ENABLE_NODE", False),
+        enable_node=(_env_bool("ENABLE_NODE", False)
+                     or _env("BOOTSTRAP_INSTALL", "none").strip().lower()
+                     == "install_via_npm"),
         node_version=_env("NODE_VERSION", "24"),
         npm_packages=_env("NPM_PACKAGES", ""),
         npm_registry=_env("NPM_REGISTRY", "Official (npmjs.org)"),
         npm_custom_registry_url=_env("NPM_CUSTOM_REGISTRY_URL", ""),
         npm_packages_dir=_env("NPM_PACKAGES_DIR", "deps/packages"),
+        bootstrap_install=_env("BOOTSTRAP_INSTALL", "none").strip().lower(),
+        bootstrap_version=_env("BOOTSTRAP_VERSION", "").strip(),
         selinux_relabel=_env_bool("SELINUX_RELABEL", False),
         mount_host_timezone=_env_bool("MOUNT_HOST_TIMEZONE", True),
         enable_tz_shanghai=_env_bool("ENABLE_TZ_SHANGHAI", True),
@@ -477,6 +514,18 @@ def validate(p):
         raise ParamError(
             f"不支持的 enable_oracle_instantclient: {p.oracle_instantclient_mode!r}，"
             f"可选: {', '.join(ORACLE_MODES)}"
+        )
+    if p.bootstrap_install not in BOOTSTRAP_INSTALL_MODES:
+        raise ParamError(
+            f"不支持的 bootstrap_install: {p.bootstrap_install!r}，"
+            f"可选: {', '.join(BOOTSTRAP_INSTALL_MODES)}"
+        )
+    if p.bootstrap_version and not re.match(
+        r"^[A-Za-z0-9._+~-]+$", p.bootstrap_version
+    ):
+        raise ParamError(
+            f"bootstrap_version 非法（仅允许版本号字符，如 5.3.3；"
+            f"留空表示拉最新版）: {p.bootstrap_version!r}"
         )
     if p.app_depends_on_nginx and not p.enable_nginx:
         raise ParamError("app_depends_on_nginx=true 需要同时设置 enable_nginx=true")
@@ -599,6 +648,8 @@ WORKFLOW_INPUTS = (
     ("enable_node", "ENABLE_NODE", "boolean", "false"),
     ("npm_packages", "NPM_PACKAGES", "string", ""),
     ("npm_packages_dir", "NPM_PACKAGES_DIR", "string", "deps/packages"),
+    ("bootstrap_install", "BOOTSTRAP_INSTALL", "choice", "none"),
+    ("bootstrap_version", "BOOTSTRAP_VERSION", "string", ""),
     ("sidecars", "SIDECARS", "string", ""),
     ("app_depends_on", "APP_DEPENDS_ON", "string", ""),
     ("prod_command", "PROD_COMMAND", "string", "python main.py"),
@@ -615,7 +666,7 @@ WORKFLOW_INPUTS = (
 
 
 def workflow_inputs_snapshot():
-    """读取原始 workflow 输入，生成 minimal/normal/full 三层参数快照。
+    """读取原始 workflow 输入，生成 minimal/normal/full 三层参数快照 + meta。
 
     值为 GitHub 前端提交的原始字符串（checkbox 解析为布尔，其余不做规范化）；
     本地联调未设置的环境变量视为未提供（字符串记 ""、checkbox 记 false）。
@@ -624,6 +675,11 @@ def workflow_inputs_snapshot():
     - full：记录全部输入（留空字符串记 ""、未勾选 checkbox 记 false）
     - normal：省略留空字符串与默认值 checkbox
     - minimal：再省略取默认值的参数（含 choice），只保留用户实际改动过的输入
+
+    另附顶层 `meta` section（非输入参数）：记录本次构建的来源信息，当前包含
+    `repo` —— 构建仓库的 GitHub URL（来自 CI 环境自动提供的
+    GITHUB_SERVER_URL / GITHUB_REPOSITORY；本地联调无该环境变量时记 ""），
+    告知用户本 devcontainer 是在哪个仓库构建的。
     """
     full = {}
     for name, env, kind, _default in WORKFLOW_INPUTS:
@@ -643,7 +699,19 @@ def workflow_inputs_snapshot():
             normal[name] = value
         if value != default_value and value != "":
             minimal[name] = value
-    return {"minimal": minimal, "normal": normal, "full": full}
+    meta = {"repo": _github_repo_url()}
+    # meta 排在最前：一眼可见构建来源（repo），其后才是三层输入快照
+    return {"meta": meta, "minimal": minimal, "normal": normal, "full": full}
+
+
+def _github_repo_url():
+    """本次构建所在仓库的 GitHub URL（无 GITHUB_REPOSITORY 时返回空串）。"""
+    repository = (os.environ.get("GITHUB_REPOSITORY") or "").strip()
+    if not repository:
+        return ""
+    server = (os.environ.get("GITHUB_SERVER_URL") or "").strip() \
+        or "https://github.com"
+    return f"{server}/{repository}"
 
 
 def workflow_params_json(snapshot):

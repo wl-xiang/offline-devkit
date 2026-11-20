@@ -358,7 +358,7 @@
           <div class="codebar"><span class="code-label">dist/ · 等价一键默认</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
           <pre><code>bash install.sh -d</code></pre>
         </div>
-        <p class="muted"><code>-d</code> / <code>--default</code> 固定项目根为 <code>../</code>（自动导入镜像），应用源码放入 <code>../src/</code>。</p>
+        <p class="muted"><code>-d</code> / <code>--default</code> 固定项目根为 <code>../</code>（自动导入镜像），应用源码放入 <code>../src/</code>。prod+dev 镜像模式下可用 <code>--load-target &lt;dev|prod|app|all&gt;</code> 只导入指定镜像（<code>dev</code>=仅 dev 镜像、<code>prod</code>/<code>app</code>=仅 prod 镜像、<code>all</code>=全部，默认；sidecar 镜像 nginx/postgres 在任何 target 下都会导入）。</p>
       </div>
 
       <div class="step">
@@ -478,7 +478,7 @@
       </ul>
       <p class="muted">详细说明见项目根目录的 <code>README.md</code>（与 <code>docs/devcontainer/README.md</code> 内容一致）。</p>
     </section>
-{{AGENT_HTML_SECTION}}{{ORACLE_SECTION}}{{NPM_SECTION}}
+{{AGENT_HTML_SECTION}}{{ORACLE_SECTION}}{{BOOTSTRAP_SECTION}}{{NPM_SECTION}}
   </main>
 
   <footer>
