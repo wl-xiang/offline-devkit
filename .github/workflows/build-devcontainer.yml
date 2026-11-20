@@ -445,6 +445,9 @@ jobs:
               "selinux_relabel": ("false", "boolean"),
               "mount_host_timezone": ("true", "boolean"),
               "enable_tz_shanghai": ("true", "boolean"),
+              # 非 workflow 输入：构建仓库 GitHub URL（full 始终存在，
+              # normal/minimal 仅在 GITHUB_REPOSITORY 可用时记录）
+              "repo": ("", "string"),
           }
           text = Path(sys.argv[1]).read_text(encoding="utf-8")
           # 纯 JSON：JSONC 注释会导致 json.loads 解析失败

@@ -143,7 +143,11 @@ GitHub 前端输入的原始参数值，顶层分三个 section（键顺序与 w
   改动过的输入。该 section 同时以表格形式输出到运行页面的 **Summary**。
 
 值为前端提交的原始字符串（checkbox 解析为布尔，其余不做规范化，如
-`app_port` 只写 `3000` 时原样记录）。该文件仅用于追溯本次构建的输入，
+`app_port` 只写 `3000` 时原样记录）。`minimal` / `normal` 中额外包含
+`repo` 键（构建仓库的 GitHub URL，来自 CI 环境的
+`GITHUB_SERVER_URL` / `GITHUB_REPOSITORY`），告知用户本 devcontainer
+是在哪个仓库构建的；`full` 始终包含该键（本地联调无 CI 环境时记 `""`）。
+该文件仅用于追溯本次构建的输入，
 `install.sh` 会把它与 README.md 一样安装到项目根目录。
 
 ### devcontainer-docker-images_<架构>_<yyyymmdd-HHMMSS>.tgz

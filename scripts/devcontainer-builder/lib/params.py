@@ -675,11 +675,19 @@ def workflow_inputs_snapshot():
     - full：记录全部输入（留空字符串记 ""、未勾选 checkbox 记 false）
     - normal：省略留空字符串与默认值 checkbox
     - minimal：再省略取默认值的参数（含 choice），只保留用户实际改动过的输入
+
+    额外附加 `repo` 键（非 workflow 输入）：当前仓库的 GitHub URL
+    （GITHUB_SERVER_URL/GITHUB_REPOSITORY，CI 环境自动提供），告知用户本
+    devcontainer 是在哪个仓库构建的；full 始终包含该键（本地联调无
+    GITHUB_REPOSITORY 时记 ""），normal/minimal 仅在可用时记录。
     """
     full = {}
     for name, env, kind, _default in WORKFLOW_INPUTS:
         raw = (os.environ.get(env) or "").strip()
         full[name] = raw.lower() in BOOL_TRUE if kind == "boolean" else raw
+
+    repo_url = _github_repo_url()
+    full["repo"] = repo_url
 
     normal = {}
     minimal = {}
@@ -694,7 +702,20 @@ def workflow_inputs_snapshot():
             normal[name] = value
         if value != default_value and value != "":
             minimal[name] = value
+    if repo_url:
+        normal["repo"] = repo_url
+        minimal["repo"] = repo_url
     return {"minimal": minimal, "normal": normal, "full": full}
+
+
+def _github_repo_url():
+    """本次构建所在仓库的 GitHub URL（无 GITHUB_REPOSITORY 时返回空串）。"""
+    repository = (os.environ.get("GITHUB_REPOSITORY") or "").strip()
+    if not repository:
+        return ""
+    server = (os.environ.get("GITHUB_SERVER_URL") or "").strip() \
+        or "https://github.com"
+    return f"{server}/{repository}"
 
 
 def workflow_params_json(snapshot):
