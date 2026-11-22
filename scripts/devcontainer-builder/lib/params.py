@@ -69,28 +69,36 @@ ORACLE_CLIENT_DIR = "/opt/oracle/instantclient19"
 # npm download Action 产物（packages/）在容器内的只读挂载点
 NPM_PACKAGES_CONTAINER_DIR = "/opt/npm-packages"
 
-# 预装前端框架（frontend_framework）：
-#   none      = 不安装
-#   bootstrap = 内置 Bootstrap（pack 模式引用 dist/ 下的 css/js 静态资源）
-#   tailwind  = 内置 Tailwind CSS（pack 模式用 @tailwindcss/browser 浏览器端
-#               运行时，npm 模式用 tailwindcss + @tailwindcss/cli 离线构建）
-FRAMEWORK_CHOICES = ("none", "bootstrap", "tailwind")
+# 预装前端框架 + 安装方式（css_framework_install，单个下拉参数）：
+#   none                        = 不安装（默认）
+#   bootstrap_pack_in_artifact  = Bootstrap：构建期下载 bootstrap-<version>.tgz
+#                                 随 Artifact 分发，install.sh 安装到
+#                                 <项目根>/src/vendor/bootstrap-<version>，
+#                                 模板直接引用 dist/ 下的 css/js 静态资源
+#   bootstrap_install_via_npm   = Bootstrap：构建期在镜像内 npm 全局安装
+#                                 （等效 enable_node：未勾选时自动补装 node+npm 层）
+#   tailwind_pack_in_artifact   = Tailwind：构建期下载 tailwindcss-browser-<version>.tgz
+#                                 （官方 @tailwindcss/browser 浏览器端运行时，
+#                                 <script src> 引入即用，无需 Node 构建）
+#   tailwind_install_via_npm    = Tailwind：镜像内全局安装 tailwindcss +
+#                                 @tailwindcss/cli 离线构建 CLI
+# 版本固定拉最新版（构建期从 registry 解析具体版本号）
+CSS_FRAMEWORK_INSTALL_CHOICES = (
+    "none",
+    "bootstrap_pack_in_artifact",
+    "bootstrap_install_via_npm",
+    "tailwind_pack_in_artifact",
+    "tailwind_install_via_npm",
+)
 
-# 前端框架的安装方式（frontend_install，仅 frontend_framework != none 时生效）：
-#   pack_in_artifact = 构建期下载 <框架标签>-<version>.tgz 随 Artifact 分发，
-#                      install.sh 自动安装到 <项目根>/src/vendor/<框架标签>-<version>
-#   install_via_npm  = 构建期在镜像内 npm 全局安装（等效 enable_node：
-#                      未勾选 enable_node 时自动补装 node+npm 层）
-FRAMEWORK_INSTALL_MODES = ("pack_in_artifact", "install_via_npm")
-
-# frontend_framework → 展示名（摘要 / README / 提示文案）
+# 框架名（css_framework_install 前半段）→ 展示名（摘要 / README / 提示文案）
 FRAMEWORK_NAMES = {
     "none": "",
     "bootstrap": "Bootstrap",
     "tailwind": "Tailwind CSS",
 }
 
-# frontend_framework → pack_in_artifact 模式下载的 npm 包名。
+# 框架名 → pack_in_artifact 模式下载的 npm 包名。
 # tailwind 取 @tailwindcss/browser：Tailwind 官方的浏览器端运行时，
 # dist/index.global.js 单文件自包含，<script src> 引入即在浏览器端编译
 # Tailwind 类名，离线可用、无需 Node 构建步骤
@@ -100,7 +108,7 @@ FRAMEWORK_PACK_PACKAGES = {
     "tailwind": "@tailwindcss/browser",
 }
 
-# frontend_framework → vendor 目录 / 产物文件名标签。npm scoped 包名含 @ 与 /
+# 框架名 → vendor 目录 / 产物文件名标签。npm scoped 包名含 @ 与 /
 # 不能直接做文件名，tailwind 统一使用 tailwindcss-browser
 FRAMEWORK_VENDOR_LABELS = {
     "none": "",
@@ -108,7 +116,7 @@ FRAMEWORK_VENDOR_LABELS = {
     "tailwind": "tailwindcss-browser",
 }
 
-# frontend_framework → install_via_npm 模式在镜像内 npm 全局安装的包。
+# 框架名 → install_via_npm 模式在镜像内 npm 全局安装的包。
 # Tailwind v4 的 CLI 独立发布为 @tailwindcss/cli（提供 tailwindcss 命令），
 # 与引擎 tailwindcss 按相同版本号发布
 FRAMEWORK_NPM_PACKAGES = {
@@ -219,9 +227,7 @@ class Params:
     npm_registry: str
     npm_custom_registry_url: str
     npm_packages_dir: str
-    frontend_framework: str
-    frontend_install: str
-    frontend_version: str
+    css_framework_install: str
     selinux_relabel: bool
     mount_host_timezone: bool
     enable_tz_shanghai: bool
@@ -410,42 +416,54 @@ class Params:
         return f"{self.npm_packages_mount_source}:{NPM_PACKAGES_CONTAINER_DIR}:ro"
 
     @property
+    def framework_name(self):
+        """none / bootstrap / tailwind（由 css_framework_install 解析）。"""
+        if self.css_framework_install == "none":
+            return "none"
+        return self.css_framework_install.split("_", 1)[0]
+
+    @property
+    def framework_install(self):
+        """pack_in_artifact / install_via_npm（css_framework_install=none 时为 none）。"""
+        if self.css_framework_install == "none":
+            return "none"
+        return self.css_framework_install.split("_", 1)[1]
+
+    @property
     def framework_enabled(self):
-        """frontend_framework != none：本次构建预装前端框架。"""
-        return self.frontend_framework != "none"
+        """css_framework_install != none：本次构建预装前端框架。"""
+        return self.css_framework_install != "none"
 
     @property
     def framework_pack(self):
         """pack_in_artifact：构建期下载框架离线 tgz 随 Artifact 分发。"""
-        return self.framework_enabled \
-            and self.frontend_install == "pack_in_artifact"
+        return self.framework_install == "pack_in_artifact"
 
     @property
     def framework_npm(self):
         """install_via_npm：构建期在镜像内 npm 全局安装框架。"""
-        return self.framework_enabled \
-            and self.frontend_install == "install_via_npm"
+        return self.framework_install == "install_via_npm"
 
     @property
     def framework_spec(self):
-        """npm / registry 使用的框架版本描述：latest 或指定版本。"""
-        return self.frontend_version or "latest"
+        """npm / registry 使用的框架版本描述：固定 latest（版本参数已移除）。"""
+        return "latest"
 
     @property
     def framework_package(self):
         """pack_in_artifact 模式下载的 npm 包名（如 bootstrap / @tailwindcss/browser）。"""
-        return FRAMEWORK_PACK_PACKAGES[self.frontend_framework]
+        return FRAMEWORK_PACK_PACKAGES[self.framework_name]
 
     @property
     def framework_vendor_label(self):
         """vendor 目录与产物文件名中的框架标签（如 bootstrap / tailwindcss-browser）。"""
-        return FRAMEWORK_VENDOR_LABELS[self.frontend_framework]
+        return FRAMEWORK_VENDOR_LABELS[self.framework_name]
 
     @property
     def framework_npm_packages(self):
         """install_via_npm 模式在镜像内全局安装的 pkg@<spec> 清单。"""
         return [f"{name}@{self.framework_spec}"
-                for name in FRAMEWORK_NPM_PACKAGES[self.frontend_framework]]
+                for name in FRAMEWORK_NPM_PACKAGES[self.framework_name]]
 
     @property
     def npm_packages_mount_source(self):
@@ -501,9 +519,8 @@ class Params:
 
 def load():
     """从环境变量读取参数并校验；失败抛出 ParamError。"""
-    # enable_node 派生逻辑需要先读框架参数（install_via_npm 强制开启 node）
-    frontend_framework = _env("FRONTEND_FRAMEWORK", "none").strip().lower()
-    frontend_install = _env("FRONTEND_INSTALL", "pack_in_artifact").strip().lower()
+    # enable_node 派生逻辑需要先读框架参数（*_install_via_npm 强制开启 node）
+    css_framework_install = _env("CSS_FRAMEWORK_INSTALL", "none").strip().lower()
     params = Params(
         platform=_env("PLATFORM", "linux-arm64"),
         python_version=_env("PYTHON_VERSION", "3.13"),
@@ -536,14 +553,11 @@ def load():
         npm_registry=_env("NPM_REGISTRY", "Official (npmjs.org)"),
         npm_custom_registry_url=_env("NPM_CUSTOM_REGISTRY_URL", ""),
         npm_packages_dir=_env("NPM_PACKAGES_DIR", "deps/packages"),
-        frontend_framework=frontend_framework,
-        frontend_install=frontend_install,
-        frontend_version=_env("FRONTEND_VERSION", "").strip(),
-        # install_via_npm 需要镜像内有 npm：框架启用且选了 npm 安装方式时
-        # 强制开启 enable_node（等效勾选，自动补装 node+npm 层）
+        css_framework_install=css_framework_install,
+        # *_install_via_npm 需要镜像内有 npm：强制开启 enable_node
+        # （等效勾选，自动补装 node+npm 层）
         enable_node=(_env_bool("ENABLE_NODE", False)
-                     or (frontend_framework != "none"
-                         and frontend_install == "install_via_npm")),
+                     or css_framework_install.endswith("_install_via_npm")),
         selinux_relabel=_env_bool("SELINUX_RELABEL", False),
         mount_host_timezone=_env_bool("MOUNT_HOST_TIMEZONE", True),
         enable_tz_shanghai=_env_bool("ENABLE_TZ_SHANGHAI", True),
@@ -581,22 +595,10 @@ def validate(p):
             f"不支持的 enable_oracle_instantclient: {p.oracle_instantclient_mode!r}，"
             f"可选: {', '.join(ORACLE_MODES)}"
         )
-    if p.frontend_framework not in FRAMEWORK_CHOICES:
+    if p.css_framework_install not in CSS_FRAMEWORK_INSTALL_CHOICES:
         raise ParamError(
-            f"不支持的 frontend_framework: {p.frontend_framework!r}，"
-            f"可选: {', '.join(FRAMEWORK_CHOICES)}"
-        )
-    if p.frontend_install not in FRAMEWORK_INSTALL_MODES:
-        raise ParamError(
-            f"不支持的 frontend_install: {p.frontend_install!r}，"
-            f"可选: {', '.join(FRAMEWORK_INSTALL_MODES)}"
-        )
-    if p.frontend_version and not re.match(
-        r"^[A-Za-z0-9._+~-]+$", p.frontend_version
-    ):
-        raise ParamError(
-            f"frontend_version 非法（仅允许版本号字符，如 5.3.3 / 4.3.5；"
-            f"留空表示拉最新版）: {p.frontend_version!r}"
+            f"不支持的 css_framework_install: {p.css_framework_install!r}，"
+            f"可选: {', '.join(CSS_FRAMEWORK_INSTALL_CHOICES)}"
         )
     if p.app_depends_on_nginx and not p.enable_nginx:
         raise ParamError("app_depends_on_nginx=true 需要同时设置 enable_nginx=true")
@@ -719,9 +721,7 @@ WORKFLOW_INPUTS = (
     ("enable_node", "ENABLE_NODE", "boolean", "false"),
     ("npm_packages", "NPM_PACKAGES", "string", ""),
     ("npm_packages_dir", "NPM_PACKAGES_DIR", "string", "deps/packages"),
-    ("frontend_framework", "FRONTEND_FRAMEWORK", "choice", "none"),
-    ("frontend_install", "FRONTEND_INSTALL", "choice", "pack_in_artifact"),
-    ("frontend_version", "FRONTEND_VERSION", "string", ""),
+    ("css_framework_install", "CSS_FRAMEWORK_INSTALL", "choice", "none"),
     ("sidecars", "SIDECARS", "string", ""),
     ("app_depends_on", "APP_DEPENDS_ON", "string", ""),
     ("prod_command", "PROD_COMMAND", "string", "python main.py"),

@@ -99,11 +99,11 @@ def build_markdown(p, results):
     if p.framework_pack:
         framework_name = (framework_tgz.name if framework_tgz
                           else f"{p.framework_vendor_label}-{p.framework_spec}.tgz")
-        out.append(f"| 前端框架 {FRAMEWORK_NAMES[p.frontend_framework]} | pack in artifact"
+        out.append(f"| 前端框架 {FRAMEWORK_NAMES[p.framework_name]} | pack in artifact"
                    f"（`{framework_name}` 随 Artifact 分发，install.sh 安装到 "
                    f"`src/{FRAMEWORK_VENDOR_DIR}/{p.framework_vendor_label}-<version>`） |")
     elif p.framework_npm:
-        out.append(f"| 前端框架 {FRAMEWORK_NAMES[p.frontend_framework]} | install via npm"
+        out.append(f"| 前端框架 {FRAMEWORK_NAMES[p.framework_name]} | install via npm"
                    f"（构建期镜像内全局安装 `{' '.join(p.framework_npm_packages)}`） |")
     if p.enable_node:
         npm_pkg_summary = ", ".join(f"`{x}`" for x in p.npm_package_list) or "(无)"

@@ -273,8 +273,8 @@ def _base_mapping(p):
         "NPM_CHECK": _npm_check(p),
         # ---- 前端框架（Bootstrap / Tailwind CSS）----
         "FRAMEWORK_ENABLED": "1" if p.framework_enabled else "0",
-        "FRAMEWORK_NAME": FRAMEWORK_NAMES[p.frontend_framework],
-        "FRAMEWORK_MODE": p.frontend_install,
+        "FRAMEWORK_NAME": FRAMEWORK_NAMES[p.framework_name],
+        "FRAMEWORK_MODE": p.framework_install,
         "FRAMEWORK_SPEC": p.framework_spec,
         "FRAMEWORK_VENDOR_LABEL": p.framework_vendor_label,
         "FRAMEWORK_VENDOR_DIR": FRAMEWORK_VENDOR_DIR,
@@ -298,8 +298,8 @@ def _sidecar_images(p):
 def _framework_npm_block(p):
     """Dockerfile 中前端框架的 npm 全局安装块（install_via_npm 模式）。
 
-    frontend_install=install_via_npm 时 enable_node 被强制开启（params.load），
-    因此本块只会在 NODE_BLOCK 之后渲染，npm 一定可用。
+    css_framework_install=*_install_via_npm 时 enable_node 被强制开启
+    （params.load），因此本块只会在 NODE_BLOCK 之后渲染，npm 一定可用。
     """
     if not p.framework_npm:
         return ""
@@ -779,7 +779,7 @@ note "4. make shell 后运行 npm run dev -- --host 0.0.0.0（vite 默认 5173�
 
 
 def _framework_notice_block(p):
-    """install.sh 中的前端框架提示（frontend_framework 非 none 时）。"""
+    """install.sh 中的前端框架提示（css_framework_install 非 none 时）。"""
     if not p.framework_enabled:
         return ""
     vendor = (f"$SRC_DIR/{FRAMEWORK_VENDOR_DIR}/"
@@ -787,7 +787,7 @@ def _framework_notice_block(p):
     container = (f"/app/{FRAMEWORK_VENDOR_DIR}/"
                  f"{p.framework_vendor_label}-<version>")
     if p.framework_pack:
-        if p.frontend_framework == "bootstrap":
+        if p.framework_name == "bootstrap":
             usage = (
                 f'note "  （容器内路径 {container}/，Django/Jinja 可直接引用 '
                 f'dist/ 下的 css/js 静态资源）"'
@@ -799,18 +799,18 @@ def _framework_notice_block(p):
             )
         return f'''
 echo ""
-printf '%s\\n' "${{C_BOLD}}{FRAMEWORK_NAMES[p.frontend_framework]}（pack in artifact，本包自带离线 tgz）${{C_RESET}}"
+printf '%s\\n' "${{C_BOLD}}{FRAMEWORK_NAMES[p.framework_name]}（pack in artifact，本包自带离线 tgz）${{C_RESET}}"
 note "已把 {p.framework_vendor_label}-<version>.tgz 解压到应用源码根目录 {vendor}/"
 {usage}
-note "后续升级：重新构建时选择 pack_in_artifact 并指定 frontend_version，替换 vendor 目录"
+note "后续升级：重新构建（自动拉取最新版），替换 vendor 目录"
 '''
-    if p.frontend_framework == "bootstrap":
+    if p.framework_name == "bootstrap":
         return f'''
 echo ""
 printf '%s\\n' "${{C_BOLD}}Bootstrap 前端库（install via npm，已打进镜像）${{C_RESET}}"
 note "镜像构建期已用 npm 全局安装 bootstrap@{p.framework_spec}"
 note "容器内查看/引用：npm ls -g bootstrap；静态资源在 /usr/local/lib/node_modules/bootstrap/dist/"
-note "应用按需从该目录复制到自己的 static 目录（离线 tgz 模式见 frontend_install=pack_in_artifact）"
+note "应用按需从该目录复制到自己的 static 目录（离线 tgz 模式见 css_framework_install=*_pack_in_artifact）"
 '''
     return f'''
 echo ""
@@ -818,7 +818,7 @@ printf '%s\\n' "${{C_BOLD}}Tailwind CSS（install via npm，已打进镜像）${
 note "镜像构建期已用 npm 全局安装 {' '.join(p.framework_npm_packages)}"
 note "容器内查看：tailwindcss --version；离线构建示例：tailwindcss -i ./src/input.css -o ./src/output.css --minify"
 note "  （入口 input.css 需含 @import 'tailwindcss';，CLI 扫描模板类名按需生成 CSS）"
-note "升级版本：重新构建时指定 frontend_version（tailwindcss 与 @tailwindcss/cli 同步发布）"
+note "升级版本：重新构建即可拉取最新版（tailwindcss 与 @tailwindcss/cli 同步发布）"
 '''
 
 
@@ -1012,8 +1012,8 @@ def _framework_readme_section(p):
         return ""
     label = p.framework_vendor_label
     vendor = f"src/{FRAMEWORK_VENDOR_DIR}/{label}"
-    tgz = f"{label}-{p.framework_spec if p.frontend_version else '<latest>'}.tgz"
-    if p.frontend_framework == "bootstrap":
+    tgz = f"{label}-<version>.tgz"
+    if p.framework_name == "bootstrap":
         return f"""
 ## Bootstrap 前端库（pack in artifact，本包自带离线 tgz）
 
@@ -1023,7 +1023,7 @@ def _framework_readme_section(p):
 
 1. 确认安装结果：`ls {vendor}-*/dist/css/bootstrap.min.css`
 2. 模板中按需引用 `<version>` 对应的 dist 静态资源（css/js）。
-3. 升级版本：重新构建时指定 `frontend_version`，替换 `{vendor}/` 下对应目录。
+3. 升级版本：重新构建（自动拉取最新版），替换 `{vendor}/` 下对应目录。
 """
     return f"""
 ## Tailwind CSS（pack in artifact，本包自带离线 tgz）
@@ -1041,7 +1041,7 @@ def _framework_readme_section(p):
    <script src="/static/{FRAMEWORK_VENDOR_DIR}/{label}-<version>/dist/index.global.js"></script>
    ```
 
-3. 升级版本：重新构建时指定 `frontend_version`，替换 `{vendor}/` 下对应目录。
+3. 升级版本：重新构建（自动拉取最新版），替换 `{vendor}/` 下对应目录。
 """
 
 
@@ -1052,7 +1052,7 @@ def _framework_html_section(p):
     label = p.framework_vendor_label
     vendor = f"src/{FRAMEWORK_VENDOR_DIR}/{label}"
     step_no = "08" if p.oracle_enabled else "07"
-    if p.frontend_framework == "bootstrap":
+    if p.framework_name == "bootstrap":
         check_cmd = f"ls {vendor}-*/dist/css/bootstrap.min.css"
         usage_html = (
             "Django / Jinja 模板可直接引用其中的 <code>dist/</code> 静态资源\n"
@@ -1084,7 +1084,7 @@ def _framework_html_section(p):
 """
     return f"""
     <section class="card">
-      <h2><span class="step-dot">{step_no}</span>{FRAMEWORK_NAMES[p.frontend_framework]}（本包自带离线 tgz）</h2>
+      <h2><span class="step-dot">{step_no}</span>{FRAMEWORK_NAMES[p.framework_name]}（本包自带离线 tgz）</h2>
       <p>构建期已从 npm 源下载 <code>{label}-*.tgz</code> 随 bundle 分发，install.sh
       会自动解压到应用源码根目录 <code>{vendor}-&lt;version&gt;/</code>
       （容器内 <code>/app/{FRAMEWORK_VENDOR_DIR}/{label}-&lt;version&gt;/</code>）。
@@ -1104,8 +1104,8 @@ def _framework_html_section(p):
         </div>
       </div>
 {extra_step}
-      <div class="tip"><strong>升级版本：</strong>重新构建时填写 <code>frontend_version</code>
-      （留空拉最新版），install.sh 会安装到新的 <code>{label}-&lt;version&gt;</code> 目录。</div>
+      <div class="tip"><strong>升级版本：</strong>重新构建即可拉取最新版，
+      install.sh 会安装到新的 <code>{label}-&lt;version&gt;</code> 目录。</div>
     </section>
 """
 
@@ -1371,13 +1371,13 @@ def render_src_readme(p):
         node_summary = "未启用"
     if p.framework_pack:
         framework_summary = (
-            f"{FRAMEWORK_NAMES[p.frontend_framework]}（pack in artifact，install.sh "
+            f"{FRAMEWORK_NAMES[p.framework_name]}（pack in artifact，install.sh "
             f"安装到 `src/{FRAMEWORK_VENDOR_DIR}/{p.framework_vendor_label}-<version>`，"
-            f"版本 {p.framework_spec}）"
+            f"版本 latest）"
         )
     elif p.framework_npm:
         framework_summary = (
-            f"{FRAMEWORK_NAMES[p.frontend_framework]}（install via npm，已打进镜像，"
+            f"{FRAMEWORK_NAMES[p.framework_name]}（install via npm，已打进镜像，"
             f"{' '.join(p.framework_npm_packages)}）"
         )
     else:

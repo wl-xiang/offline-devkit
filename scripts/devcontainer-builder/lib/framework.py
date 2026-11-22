@@ -1,4 +1,4 @@
-"""前端框架离线 tgz 的构建期下载（frontend_install=pack_in_artifact 模式）。
+"""前端框架离线 tgz 的构建期下载（css_framework_install=*_pack_in_artifact 模式）。
 
 从配置的 npm registry 拉取所选前端框架（bootstrap / @tailwindcss/browser）的
 npm 包 tgz（版本默认取 latest dist-tag），保存为 <框架标签>-<version>.tgz，
@@ -24,9 +24,7 @@ def _http_get(url, timeout=60):
 
 
 def resolve_version(p):
-    """解析要下载的框架包版本：显式指定时直接返回，否则查 latest dist-tag。"""
-    if p.frontend_version:
-        return p.frontend_version
+    """解析要下载的框架包版本：固定查 latest dist-tag（构建期解析具体版本号）。"""
     package = p.framework_package
     # scoped 包（@tailwindcss/browser）的 dist-tag 路径需把 scope 编码为 %2f
     url = (f"{p.npm_registry_url.rstrip('/')}/"

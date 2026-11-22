@@ -75,28 +75,17 @@ on:
         type: string
         required: true
         default: 'deps/packages'
-      frontend_framework:
-        description: 'Preinstall a frontend framework: none = install nothing; bootstrap = Bootstrap (reference its dist/ css/js static assets directly); tailwind = Tailwind CSS (pack_in_artifact ships the @tailwindcss/browser runtime JS referenced via <script src>, no build step; install_via_npm preinstalls the tailwindcss CLI for offline CSS builds).'
+      css_framework_install:
+        description: 'Preinstall a CSS framework: none = install nothing; bootstrap_pack_in_artifact = download bootstrap-<version>.tgz at build time into the artifact (install.sh extracts it to <project root>/src/vendor/bootstrap-<version>, reference its dist/ css/js directly); bootstrap_install_via_npm = npm global install of bootstrap inside the image at build time (auto-installs Node.js 24 + npm even if enable_node is unchecked); tailwind_pack_in_artifact = download tailwindcss-browser-<version>.tgz (official @tailwindcss/browser runtime, reference dist/index.global.js via <script src>, no Node build needed) into the artifact; tailwind_install_via_npm = npm global install of tailwindcss + @tailwindcss/cli inside the image at build time. Version always pulls the latest.'
         type: choice
         required: true
         default: 'none'
         options:
           - 'none'
-          - 'bootstrap'
-          - 'tailwind'
-      frontend_install:
-        description: 'How to install frontend_framework (ignored when none): pack_in_artifact = download <framework>-<version>.tgz at build time into the artifact (install.sh extracts it to <project root>/src/vendor/<framework>-<version>, version defaults to latest); install_via_npm = npm global install inside the image at build time (auto-installs Node.js 24 + npm into the image even if enable_node is unchecked).'
-        type: choice
-        required: true
-        default: 'pack_in_artifact'
-        options:
-          - 'pack_in_artifact'
-          - 'install_via_npm'
-      frontend_version:
-        description: 'Frontend framework version used by frontend_install (e.g. bootstrap 5.3.3, tailwindcss 4.3.5). Leave empty to pull the latest version.'
-        type: string
-        required: false
-        default: ''
+          - 'bootstrap_pack_in_artifact'
+          - 'bootstrap_install_via_npm'
+          - 'tailwind_pack_in_artifact'
+          - 'tailwind_install_via_npm'
       sidecars:
         description: 'Sidecar services to enable: nginx (8080:80) and/or postgres (postgres:16), separated by comma/space. Empty = none.'
         type: string
@@ -218,9 +207,7 @@ jobs:
           NPM_PACKAGES: ${{ inputs.npm_packages }}
           NPM_REGISTRY: 'Official (npmjs.org)'
           NPM_PACKAGES_DIR: ${{ inputs.npm_packages_dir }}
-          FRONTEND_FRAMEWORK: ${{ inputs.frontend_framework }}
-          FRONTEND_INSTALL: ${{ inputs.frontend_install }}
-          FRONTEND_VERSION: ${{ inputs.frontend_version }}
+          CSS_FRAMEWORK_INSTALL: ${{ inputs.css_framework_install }}
           ENABLE_NGINX: ${{ contains(inputs.sidecars, 'nginx') }}
           ENABLE_POSTGRES: ${{ contains(inputs.sidecars, 'postgres') }}
           APP_DEPENDS_ON_NGINX: ${{ contains(inputs.app_depends_on, 'nginx') }}
@@ -440,9 +427,7 @@ jobs:
               "enable_node": ("false", "boolean"),
               "npm_packages": ("", "string"),
               "npm_packages_dir": ("deps/packages", "string"),
-              "frontend_framework": ("none", "choice"),
-              "frontend_install": ("pack_in_artifact", "choice"),
-              "frontend_version": ("", "string"),
+              "css_framework_install": ("none", "choice"),
               "sidecars": ("", "string"),
               "app_depends_on": ("", "string"),
               "prod_command": ("python main.py", "string"),
@@ -563,9 +548,8 @@ jobs:
       - name: Verify oracle / npm / frontend framework wiring
         env:
           ORACLE_MODE: ${{ inputs.enable_oracle_instantclient }}
-          NODE_ENABLED: ${{ inputs.enable_node || (inputs.frontend_framework != 'none' && inputs.frontend_install == 'install_via_npm') }}
-          FRAMEWORK_MODE: ${{ inputs.frontend_framework }}
-          FRAMEWORK_INSTALL: ${{ inputs.frontend_install }}
+          NODE_ENABLED: ${{ inputs.enable_node || inputs.css_framework_install == 'bootstrap_install_via_npm' || inputs.css_framework_install == 'tailwind_install_via_npm' }}
+          CSS_FRAMEWORK_INSTALL: ${{ inputs.css_framework_install }}
           FRAMEWORK_TGZ: ${{ steps.build.outputs.framework_tgz }}
           DEV_ENABLED: ${{ inputs.build_dev_image || inputs.dev_image_only }}
           SRC_TGZ: ${{ steps.build.outputs.src_tgz }}
@@ -573,6 +557,14 @@ jobs:
           README_HTML: ${{ steps.build.outputs.readme_html }}
         run: |
           set -euo pipefail
+          # css_framework_install → 框架名 / 安装方式（none 时均为 none）
+          if [ "$CSS_FRAMEWORK_INSTALL" = "none" ]; then
+            FRAMEWORK=none
+            FRAMEWORK_INSTALL=none
+          else
+            FRAMEWORK="${CSS_FRAMEWORK_INSTALL%%_*}"
+            FRAMEWORK_INSTALL="${CSS_FRAMEWORK_INSTALL#*_}"
+          fi
           tar xzf "$SRC_TGZ" -O devcontainer-src/docker-compose.yml.tpl > /tmp/compose.tpl
           tar xzf "$SRC_TGZ" -O devcontainer-src/Dockerfile > /tmp/Dockerfile
           tar xzf "$SRC_TGZ" -O devcontainer-src/Makefile > /tmp/Makefile
@@ -634,31 +626,31 @@ jobs:
             echo "npm wiring OK"
           fi
 
-          if [ "$FRAMEWORK_MODE" != "none" ] && [ "$FRAMEWORK_INSTALL" = "pack_in_artifact" ]; then
+          if [ "$FRAMEWORK" != "none" ] && [ "$FRAMEWORK_INSTALL" = "pack_in_artifact" ]; then
             test -s "$FRAMEWORK_TGZ" \
               || { echo "::error::pack_in_artifact 模式未生成前端框架 tgz"; exit 1; }
             base=$(basename "$FRAMEWORK_TGZ")
-            if [ "$FRAMEWORK_MODE" = "bootstrap" ]; then
+            if [ "$FRAMEWORK" = "bootstrap" ]; then
               echo "$base" | grep -qE '^bootstrap-[A-Za-z0-9._+~-]+\.tgz$' \
                 || { echo "::error::bootstrap 产物文件名应为 bootstrap-<version>.tgz: $base"; exit 1; }
               tar tzf "$FRAMEWORK_TGZ" | grep -q '^package/dist/css/bootstrap.min.css' \
                 || { echo "::error::bootstrap tgz 不是 npm 包布局（缺少 package/dist/css/bootstrap.min.css）"; exit 1; }
               FW_LABEL=bootstrap
-            elif [ "$FRAMEWORK_MODE" = "tailwind" ]; then
+            elif [ "$FRAMEWORK" = "tailwind" ]; then
               echo "$base" | grep -qE '^tailwindcss-browser-[A-Za-z0-9._+~-]+\.tgz$' \
                 || { echo "::error::tailwind 产物文件名应为 tailwindcss-browser-<version>.tgz: $base"; exit 1; }
               tar tzf "$FRAMEWORK_TGZ" | grep -q '^package/dist/index.global.js' \
                 || { echo "::error::tailwind tgz 不是 @tailwindcss/browser 布局（缺少 package/dist/index.global.js）"; exit 1; }
               FW_LABEL=tailwindcss-browser
             else
-              echo "::error::不支持的 frontend_framework: $FRAMEWORK_MODE"; exit 1
+              echo "::error::不支持的 css_framework_install: $CSS_FRAMEWORK_INSTALL"; exit 1
             fi
             grep -q "vendor/$FW_LABEL-" "$INSTALL_SH" \
               || { echo "::error::install.sh 缺少 vendor/$FW_LABEL 安装逻辑"; exit 1; }
             grep -q "$FW_LABEL-" "$README_HTML" \
               || { echo "::error::readme.html 缺少前端框架安装说明"; exit 1; }
             echo "frontend framework wiring OK (pack_in_artifact: $base)"
-          elif [ "$FRAMEWORK_MODE" = "bootstrap" ] && [ "$FRAMEWORK_INSTALL" = "install_via_npm" ]; then
+          elif [ "$FRAMEWORK" = "bootstrap" ] && [ "$FRAMEWORK_INSTALL" = "install_via_npm" ]; then
             grep -q 'npm install -g' /tmp/Dockerfile \
               || { echo "::error::install_via_npm 模式 Dockerfile 缺少 npm 全局安装层"; exit 1; }
             grep -q 'bootstrap@' /tmp/Dockerfile \
@@ -668,7 +660,7 @@ jobs:
             grep -q 'bootstrap' "$INSTALL_SH" \
               || { echo "::error::install.sh 缺少 bootstrap 提示"; exit 1; }
             echo "frontend framework wiring OK (bootstrap install_via_npm)"
-          elif [ "$FRAMEWORK_MODE" = "tailwind" ] && [ "$FRAMEWORK_INSTALL" = "install_via_npm" ]; then
+          elif [ "$FRAMEWORK" = "tailwind" ] && [ "$FRAMEWORK_INSTALL" = "install_via_npm" ]; then
             grep -q 'npm install -g' /tmp/Dockerfile \
               || { echo "::error::install_via_npm 模式 Dockerfile 缺少 npm 全局安装层"; exit 1; }
             grep -q 'tailwindcss@' /tmp/Dockerfile \
@@ -682,11 +674,11 @@ jobs:
             echo "frontend framework wiring OK (tailwind install_via_npm)"
           else
             if grep -qE 'bootstrap@|tailwindcss@|@tailwindcss/cli@' /tmp/Dockerfile; then
-              echo "::error::frontend_framework=none 时 Dockerfile 不应安装前端框架"
+              echo "::error::css_framework_install=none 时 Dockerfile 不应安装前端框架"
               exit 1
             fi
             if [ -n "$FRAMEWORK_TGZ" ]; then
-              echo "::error::frontend_framework=none 时不应生成前端框架 tgz"
+              echo "::error::css_framework_install=none 时不应生成前端框架 tgz"
               exit 1
             fi
             echo "frontend framework wiring OK (none)"
@@ -705,7 +697,7 @@ jobs:
       # 避免 tgz 再被 zip 二次压缩。唯一产物
       # <image_prefix>_devcontainer_<架构>_<时间戳>（架构 amd64/arm64），
       # zip 内含镜像归档 tgz、src tgz、install.sh、readme.html、
-      # devcontainer.json 与（frontend_install=pack_in_artifact 模式下的）
+      # devcontainer.json 与（css_framework_install=*_pack_in_artifact 模式下的）
       # <框架标签>-<version>.tgz（bootstrap-*.tgz / tailwindcss-browser-*.tgz）
       - name: Upload bundle artifact (docker images tgz + src tgz + install.sh + readme.html + devcontainer.json + optional frontend framework tgz)
         uses: actions/upload-artifact@v4
