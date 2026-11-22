@@ -1,16 +1,18 @@
 # 由 scripts/devcontainer-builder 生成，请勿手工编辑。
 # 平台: {{DOCKER_PLATFORM}} | 镜像 TAG: {{TAG}}（时间戳: {{TS}}）
+# 预装语言环境 (target_codec): {{TARGET_CODEC}} | 外挂服务: {{ENABLE_EXTRA_SERVICES}}
 # 本模板由 install.sh 原样复制到项目根目录为 docker-compose.yml（去掉 .tpl 后缀）。
 # 模板内环境变量由 docker compose 在运行时解析（冒号杠默认值语法），
 # 可用环境变量覆盖：
 #   ${SRC_ROOT:-./src/}   -> 应用根目录，默认 ./src/ = docker-compose.yml 所在项目根目录下的 src 子目录
 #   ${SRC_ROOT_NAME:-app} -> compose 项目名后缀，默认 app
 {{ORACLE_COMPOSE_HINT}}#   ${NPM_PACKAGES_DIR:-deps/packages}
-#                         -> Npm Download 产物目录（启用 Node 时）
+#                         -> Npm Download 产物目录（预装 Node 时）
 # 离线使用：镜像已由 devcontainer-docker-images_{{ARCH}}_{{TS}}.tgz 导入，
 # pull_policy=never + make up --no-build 不会触发任何联网。
-# app 服务的 entrypoint / command 已显式写入（覆盖镜像 ENTRYPOINT / CMD），
-# 调整启动方式直接改 app 服务内这两项即可，无需重建镜像。
+# 启动方式：镜像 ENTRYPOINT 为 docker-run.sh（默认 cd /app 后运行预置入口），
+# 项目根的 docker-run.sh 已只读挂载覆盖镜像内副本，改根目录脚本即可调整启动
+# 方式，无需重建镜像；enable_extra_services 含 DB 服务时 app 自动 depends_on。
 name: {{IMAGE_PREFIX}}-${SRC_ROOT_NAME:-app}
 services:
   app:
@@ -25,11 +27,12 @@ services:
     restart: unless-stopped
     pull_policy: never
     user: "${HOST_UID:-0}:${HOST_GID:-0}"
-    volumes:
+{{APP_START_BLOCK}}    volumes:
       - {{APP_VOLUME}}
+      - {{DOCKER_RUN_MOUNT}}
 {{EXTRA_VOLUMES}}    networks:
       - app-net
-{{APP_START_BLOCK}}{{APP_OPTIONS_BLOCK}}{{DEPENDS_ON_BLOCK}}{{DEV_SERVICE_BLOCK}}{{SERVICE_BLOCKS}}
+{{APP_OPTIONS_BLOCK}}{{DEPENDS_ON_BLOCK}}{{DEV_SERVICE_BLOCK}}{{SERVICE_BLOCKS}}
 networks:
   app-net: {}
 {{VOLUMES_BLOCK}}

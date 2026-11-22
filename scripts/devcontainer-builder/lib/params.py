@@ -7,7 +7,6 @@
 import json
 import os
 import re
-import shlex
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -23,7 +22,42 @@ ARCH_MAP = {
     "linux-arm64": ("arm64", "aarch64"),
 }
 
-PYTHON_VERSIONS = ("3.10", "3.11", "3.12", "3.13")
+# 预装语言环境（target_codec，单个下拉参数）：python / golang / node24 的组合。
+# node24 含 npm + 全局 pnpm + npx（npx 随 npm）。python 版本固定 3.13、
+# golang 固定 1.26、node 固定 24（不再单独暴露为输入）。
+TARGET_CODEC_CHOICES = (
+    "python3.13",
+    "python3.13 + node24(npm+pnpm+npx)",
+    "golang1.26",
+    "golang1.26 + node24(npm+pnpm+npx)",
+    "python3.13 + golang1.26",
+    "python3.13 + golang1.26 + node24(npm+pnpm+npx)",
+)
+
+PYTHON_VERSION = "3.13"
+GO_VERSION = "1.26"
+NODE_VERSION = "24"
+
+# 外挂服务（enable_extra_services，单个下拉参数）：nginx 与/或一个 DB 服务。
+# DB 服务启用时 app 服务自动 depends_on（等待健康检查通过），无需用户配置。
+EXTRA_SERVICES_CHOICES = (
+    "none",
+    "nginx",
+    "postgres16",
+    "mysql8.4",
+    "mongo9",
+    "nginx + postgres16",
+    "nginx + mysql8.4",
+    "nginx + mongo9",
+)
+
+# 外挂服务选项 → 镜像引用
+EXTRA_SERVICES_IMAGES = {
+    "nginx": "nginx:stable",
+    "postgres16": "postgres:16",
+    "mysql8.4": "mysql:8.4",
+    "mongo9": "mongo:9",
+}
 
 # glibc → manylinux 标签（pip 实际使用 manylinux_<glibc>_<arch> 形式，
 # 其中 manylinux2014 与 manylinux_2_17 等价）
@@ -39,11 +73,8 @@ PIP_MIRRORS = {
     "thu": "https://pypi.tuna.tsinghua.edu.cn/simple",
 }
 
-# dev 镜像额外安装的工具（wheel 会随 wheels/ 一起下载）
+# dev 镜像额外安装的工具（wheel 会随 wheels/ 一起下载；仅 Python 环境时安装）
 DEV_PIP_TOOLS = ("ruff", "pytest", "pytest-cov")
-
-# 预装 lucide（SVG 图标库，Django/Jinja 模板渲染 lucide.dev 图标）的 pip 包名
-LUCIDE_PIP_PACKAGE = "lucide"
 
 # 预装 Playwright（pip 包 + chromium 浏览器，有头/无头共用同一浏览器二进制）。
 # pip 包随 requirements.txt/wheels 走统一安装；浏览器由 Dockerfile 的
@@ -132,8 +163,6 @@ FRAMEWORK_VENDOR_DIR = "vendor"
 # 预设环境变量的分隔符（workflow 输入框无法换行）
 ENV_PRESET_SEPARATOR = "》"
 
-NODE_VERSIONS = ("24",)
-
 # 与 .github/workflows/npm_download.yml 的 registry 选项保持一致
 NPM_REGISTRIES = {
     "npmmirror (taobao)": "https://registry.npmmirror.com",
@@ -171,12 +200,15 @@ IMAGE_PREFIX_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 
 BOOL_TRUE = {"1", "true", "yes", "on"}
 
-# 勾选 mount_host_timezone 时映射进容器（只读）的宿主机时区配置文件
+# 内置（不可配置）：app/dev 服务只读挂载的宿主机时区配置文件，
+# 以及镜像内时区（构建期自动补装 tzdata）
 TIMEZONE_MOUNTS = ("/etc/localtime:/etc/localtime:ro",
                    "/etc/timezone:/etc/timezone:ro")
-
-# 勾选 enable_tz_shanghai 时写入镜像的时区（UTC+8）
 TZ_SHANGHAI = "Asia/Shanghai"
+
+# 容器默认启动脚本（SRC Bundle 内 docker-run.sh，安装到项目根后由 compose
+# 只读挂载覆盖镜像内副本，Dockerfile ENTRYPOINT 指向它）
+DOCKER_RUN_CONTAINER_PATH = "/usr/local/bin/docker-run.sh"
 
 
 class ParamError(ValueError):
@@ -200,37 +232,30 @@ def _env_bool(name, default=False):
 @dataclass
 class Params:
     platform: str
-    python_version: str
+    target_codec: str
     glibc_version: str
     pip_mirror: str
     pip_packages: str
     apt_packages: str
     custom_install_cmd: str
-    enable_nginx: bool
-    enable_postgres: bool
-    enable_lucide: bool
     enable_playwright: bool
     oracle_instantclient_mode: str
-    app_depends_on_nginx: bool
-    app_depends_on_postgres: bool
-    prod_command: str
+    preset_envs: str
+    node_version: str
+    go_version: str
+    npm_packages: str
+    npm_registry: str
+    npm_custom_registry_url: str
+    npm_packages_dir: str
+    css_framework_install: str
+    extra_services: str
     build_dev_image: bool
     dev_image_only: bool
     image_prefix: str
     app_source_dir: str
     app_port: str
     env_file: str
-    preset_envs: str
-    enable_node: bool
-    node_version: str
-    npm_packages: str
-    npm_registry: str
-    npm_custom_registry_url: str
-    npm_packages_dir: str
-    css_framework_install: str
     selinux_relabel: bool
-    mount_host_timezone: bool
-    enable_tz_shanghai: bool
     image_tag: str
     ts: str
 
@@ -247,6 +272,47 @@ class Params:
     @property
     def pip_arch(self):
         return ARCH_MAP[self.platform][1]
+
+    @property
+    def python_version(self):
+        return PYTHON_VERSION
+
+    @property
+    def python_enabled(self):
+        """target_codec 预装 Python（python3.13）。"""
+        return "python3.13" in self.target_codec
+
+    @property
+    def go_enabled(self):
+        """target_codec 预装 Golang（golang1.26）。"""
+        return "golang1.26" in self.target_codec
+
+    @property
+    def enable_node(self):
+        """target_codec 预装 Node.js 24（npm + 全局 pnpm + npx）。"""
+        return "node24" in self.target_codec
+
+    @property
+    def enable_nginx(self):
+        """enable_extra_services 启用 nginx（8080:80 反代）。"""
+        return "nginx" in self.extra_services
+
+    @property
+    def enable_postgres(self):
+        return "postgres16" in self.extra_services
+
+    @property
+    def enable_mysql(self):
+        return "mysql8.4" in self.extra_services
+
+    @property
+    def enable_mongo(self):
+        return "mongo9" in self.extra_services
+
+    @property
+    def has_db_service(self):
+        """enable_extra_services 是否含 DB 服务（app 自动 depends_on 的依据）。"""
+        return self.enable_postgres or self.enable_mysql or self.enable_mongo
 
     @property
     def pip_platform_tag(self):
@@ -267,16 +333,14 @@ class Params:
 
     @property
     def preinstall_pip_packages(self):
-        """用户 pip 包 + 预装组件（lucide / oracledb）的合并清单。
+        """用户 pip 包 + 预装组件（playwright / oracledb）的合并清单。
 
         用于 requirements.txt 渲染与 pip download；用户已显式写出同名包时
-        不重复追加（版本以其声明为准）。
+        不重复追加（版本以其声明为准）。仅 target_codec 预装 Python 时使用。
         """
         pkgs = list(self.pip_package_list)
         existing = {x.lower().split("=")[0].split("<")[0].split(">")[0].split("!")[0].strip()
                     for x in pkgs}
-        if self.enable_lucide and "lucide" not in existing:
-            pkgs.append(LUCIDE_PIP_PACKAGE)
         if self.enable_playwright and "playwright" not in existing:
             pkgs.append(PLAYWRIGHT_PIP_PACKAGE)
         if (self.oracle_enabled
@@ -295,7 +359,9 @@ class Params:
 
     @property
     def dev_pip_tools(self):
-        return list(DEV_PIP_TOOLS) if self.dev_tools_enabled else []
+        """dev 镜像 Python 工具（ruff/pytest），仅预装 Python 时安装。"""
+        return list(DEV_PIP_TOOLS) if (self.dev_tools_enabled
+                                       and self.python_enabled) else []
 
     @property
     def tag(self):
@@ -340,10 +406,9 @@ class Params:
             images = [self.prod_image]
             if self.build_dev_image:
                 images.append(self.dev_image)
-        if self.enable_nginx:
-            images.append("nginx:stable")
-        if self.enable_postgres:
-            images.append("postgres:16")
+        for service in ("nginx", "postgres16", "mysql8.4", "mongo9"):
+            if service in self.extra_services:
+                images.append(EXTRA_SERVICES_IMAGES[service])
         return images
 
     @property
@@ -500,45 +565,43 @@ class Params:
 
     @property
     def timezone_volumes(self):
-        """宿主机时区配置只读挂载（勾选 mount_host_timezone 时生效）。"""
-        return list(TIMEZONE_MOUNTS) if self.mount_host_timezone else []
+        """宿主机时区配置只读挂载（内置启用，不可配置）。"""
+        return list(TIMEZONE_MOUNTS)
 
     @property
     def tz_env(self):
-        """镜像内时区：勾选 enable_tz_shanghai 时为 Asia/Shanghai，否则空。"""
-        return TZ_SHANGHAI if self.enable_tz_shanghai else ""
+        """镜像内时区（内置启用，不可配置）。"""
+        return TZ_SHANGHAI
 
     @property
-    def prod_command_args(self):
-        return shlex.split(self.prod_command)
-
-    @property
-    def prod_command_json(self):
-        return json.dumps(self.prod_command_args)
+    def docker_run_mount(self):
+        """app 服务把项目根 docker-run.sh 只读挂载覆盖镜像内副本的 compose 卷。"""
+        return f"./docker-run.sh:{DOCKER_RUN_CONTAINER_PATH}:ro"
 
 
 def load():
     """从环境变量读取参数并校验；失败抛出 ParamError。"""
-    # enable_node 派生逻辑需要先读框架参数（*_install_via_npm 强制开启 node）
-    css_framework_install = _env("CSS_FRAMEWORK_INSTALL", "none").strip().lower()
     params = Params(
         platform=_env("PLATFORM", "linux-arm64"),
-        python_version=_env("PYTHON_VERSION", "3.13"),
+        target_codec=_env("TARGET_CODEC", "python3.13"),
         glibc_version=_env("GLIBC_VERSION", "2.28"),
         pip_mirror=_env("PIP_MIRROR", "pypi.org"),
         pip_packages=_env("PIP_PACKAGES", ""),
         apt_packages=_env("APT_PACKAGES", ""),
         custom_install_cmd=_env("CUSTOM_INSTALL_CMD", ""),
-        enable_nginx=_env_bool("ENABLE_NGINX", False),
-        enable_postgres=_env_bool("ENABLE_POSTGRES", False),
-        enable_lucide=_env_bool("ENABLE_LUCIDE", False),
         enable_playwright=_env_bool("ENABLE_PLAYWRIGHT", False),
         oracle_instantclient_mode=_env(
             "ENABLE_ORACLE_INSTANTCLIENT", "none"
         ).lower(),
-        app_depends_on_nginx=_env_bool("APP_DEPENDS_ON_NGINX", False),
-        app_depends_on_postgres=_env_bool("APP_DEPENDS_ON_POSTGRES", False),
-        prod_command=_env("PROD_COMMAND", "python main.py"),
+        preset_envs=_env("PRESET_ENVS", ""),
+        node_version=_env("NODE_VERSION", NODE_VERSION),
+        go_version=_env("GO_VERSION", GO_VERSION),
+        npm_packages=_env("NPM_PACKAGES", ""),
+        npm_registry=_env("NPM_REGISTRY", "Official (npmjs.org)"),
+        npm_custom_registry_url=_env("NPM_CUSTOM_REGISTRY_URL", ""),
+        npm_packages_dir=_env("NPM_PACKAGES_DIR", "deps/packages"),
+        css_framework_install=_env("CSS_FRAMEWORK_INSTALL", "none").strip().lower(),
+        extra_services=_env("ENABLE_EXTRA_SERVICES", "none"),
         build_dev_image=_env_bool("BUILD_DEV_IMAGE", True),
         dev_image_only=_env_bool("DEV_IMAGE_ONLY", False),
         image_prefix=_env("IMAGE_PREFIX", "mydevc1"),
@@ -547,20 +610,7 @@ def load():
         app_port=(os.environ["APP_PORT"].strip()
                   if "APP_PORT" in os.environ else "3000:3000"),
         env_file=_env("ENV_FILE", ""),
-        preset_envs=_env("PRESET_ENVS", ""),
-        node_version=_env("NODE_VERSION", "24"),
-        npm_packages=_env("NPM_PACKAGES", ""),
-        npm_registry=_env("NPM_REGISTRY", "Official (npmjs.org)"),
-        npm_custom_registry_url=_env("NPM_CUSTOM_REGISTRY_URL", ""),
-        npm_packages_dir=_env("NPM_PACKAGES_DIR", "deps/packages"),
-        css_framework_install=css_framework_install,
-        # *_install_via_npm 需要镜像内有 npm：强制开启 enable_node
-        # （等效勾选，自动补装 node+npm 层）
-        enable_node=(_env_bool("ENABLE_NODE", False)
-                     or css_framework_install.endswith("_install_via_npm")),
         selinux_relabel=_env_bool("SELINUX_RELABEL", False),
-        mount_host_timezone=_env_bool("MOUNT_HOST_TIMEZONE", True),
-        enable_tz_shanghai=_env_bool("ENABLE_TZ_SHANGHAI", True),
         image_tag=_env("IMAGE_TAG", "latest"),
         ts=datetime.now(TZ_CN).strftime("%Y%m%d-%H%M%S"),
     )
@@ -572,10 +622,15 @@ def validate(p):
         raise ParamError(
             f"不支持的 platform: {p.platform!r}，可选: {', '.join(PLATFORM_MAP)}"
         )
-    if p.python_version not in PYTHON_VERSIONS:
+    if p.target_codec not in TARGET_CODEC_CHOICES:
         raise ParamError(
-            f"不支持的 python_version: {p.python_version!r}，"
-            f"可选: {', '.join(PYTHON_VERSIONS)}"
+            f"不支持的 target_codec: {p.target_codec!r}，"
+            f"可选: {', '.join(TARGET_CODEC_CHOICES)}"
+        )
+    if p.extra_services not in EXTRA_SERVICES_CHOICES:
+        raise ParamError(
+            f"不支持的 enable_extra_services: {p.extra_services!r}，"
+            f"可选: {', '.join(EXTRA_SERVICES_CHOICES)}"
         )
     if p.glibc_version not in GLIBC_MANYLINUX:
         raise ParamError(
@@ -600,20 +655,38 @@ def validate(p):
             f"不支持的 css_framework_install: {p.css_framework_install!r}，"
             f"可选: {', '.join(CSS_FRAMEWORK_INSTALL_CHOICES)}"
         )
-    if p.app_depends_on_nginx and not p.enable_nginx:
-        raise ParamError("app_depends_on_nginx=true 需要同时设置 enable_nginx=true")
-    if p.app_depends_on_postgres and not p.enable_postgres:
+    # Python 生态参数仅在 target_codec 预装 Python 时可用
+    if not p.python_enabled:
+        if p.pip_package_list:
+            raise ParamError(
+                "pip_packages 需要 target_codec 预装 Python"
+                "（python3.13 / python3.13 + golang1.26 系列）"
+            )
+        if p.enable_playwright:
+            raise ParamError(
+                "enable_playwright 需要 target_codec 预装 Python"
+                "（python3.13 / python3.13 + golang1.26 系列）"
+            )
+        if p.oracle_enabled:
+            raise ParamError(
+                "enable_oracle_instantclient 需要 target_codec 预装 Python"
+                "（python3.13 / python3.13 + golang1.26 系列）"
+            )
+    # *_install_via_npm 需要镜像内有 npm：target_codec 须含 node24
+    if (p.css_framework_install.endswith("_install_via_npm")
+            and not p.enable_node):
         raise ParamError(
-            "app_depends_on_postgres=true 需要同时设置 enable_postgres=true"
+            f"css_framework_install={p.css_framework_install} 需要 target_codec "
+            "预装 Node.js（node24 系列）"
         )
     if p.npm_registry not in NPM_REGISTRIES and p.npm_registry != NPM_OTHER_REGISTRY:
         raise ParamError(
             f"不支持的 npm_registry: {p.npm_registry!r}，可选: "
             f"{', '.join(NPM_REGISTRIES)}, {NPM_OTHER_REGISTRY}"
         )
-    if p.node_version not in NODE_VERSIONS:
+    if p.node_version != NODE_VERSION:
         raise ParamError(
-            f"不支持的 node_version: {p.node_version!r}，可选: {', '.join(NODE_VERSIONS)}"
+            f"不支持的 node_version: {p.node_version!r}（固定 {NODE_VERSION}）"
         )
     if p.npm_registry == NPM_OTHER_REGISTRY and not p.npm_custom_registry_url:
         raise ParamError(
@@ -627,7 +700,9 @@ def validate(p):
             f"{p.npm_custom_registry_url!r}"
         )
     if p.npm_packages and not p.enable_node:
-        raise ParamError("npm_packages 需要同时设置 enable_node=true")
+        raise ParamError(
+            "npm_packages 需要 target_codec 预装 Node.js（node24 系列）"
+        )
     for pkg in p.npm_package_list:
         if not NPM_PACKAGE_RE.match(pkg):
             raise ParamError(
@@ -664,8 +739,6 @@ def validate(p):
             f"image_prefix 非法（仅允许小写字母/数字/./_/-，且以字母或数字开头）: "
             f"{p.image_prefix!r}"
         )
-    if not p.prod_command_args:
-        raise ParamError(f"prod_command 无法解析为命令: {p.prod_command!r}")
     if not p.app_source_dir.strip():
         raise ParamError("app_source_dir 不能为空")
     if p.app_source_dir.startswith("~"):
@@ -704,27 +777,22 @@ def validate(p):
 #
 # 与 .github/workflows/build-devcontainer.yml 的 workflow_dispatch inputs
 # 一一对应：(输入名, 环境变量, 类型, workflow 默认值)。新增/修改 workflow
-# 输入时必须同步本表（含默认值），否则快照过滤会失真。sidecars /
-# app_depends_on / image_mode 在 build 步骤以原始值透传（ENABLE_NGINX 等
-# 派生布尔不含原始值，不在此列）。
+# 输入时必须同步本表（含默认值），否则快照过滤会失真。enable_extra_services
+# 在 build 步骤以原始值透传（enable_nginx 等派生布尔不含原始值，不在此列）。
 # ---------------------------------------------------------------------------
 WORKFLOW_INPUTS = (
     ("platform", "PLATFORM", "choice", "linux-amd64"),
-    ("python_version", "PYTHON_VERSION", "choice", "3.13"),
+    ("target_codec", "TARGET_CODEC", "choice", "python3.13"),
     ("pip_packages", "PIP_PACKAGES", "string", ""),
     ("apt_packages", "APT_PACKAGES", "string", ""),
     ("custom_install_cmd", "CUSTOM_INSTALL_CMD", "string", ""),
-    ("enable_lucide", "ENABLE_LUCIDE", "boolean", "false"),
     ("enable_playwright", "ENABLE_PLAYWRIGHT", "boolean", "false"),
     ("enable_oracle_instantclient", "ENABLE_ORACLE_INSTANTCLIENT", "choice", "none"),
     ("preset_envs", "PRESET_ENVS", "string", ""),
-    ("enable_node", "ENABLE_NODE", "boolean", "false"),
     ("npm_packages", "NPM_PACKAGES", "string", ""),
     ("npm_packages_dir", "NPM_PACKAGES_DIR", "string", "deps/packages"),
     ("css_framework_install", "CSS_FRAMEWORK_INSTALL", "choice", "none"),
-    ("sidecars", "SIDECARS", "string", ""),
-    ("app_depends_on", "APP_DEPENDS_ON", "string", ""),
-    ("prod_command", "PROD_COMMAND", "string", "python main.py"),
+    ("enable_extra_services", "ENABLE_EXTRA_SERVICES", "choice", "none"),
     ("image_mode", "IMAGE_MODE", "choice", "prod-only"),
     ("image_prefix", "IMAGE_PREFIX", "string", "mydevc1"),
     ("image_tag", "IMAGE_TAG", "choice", "latest"),
@@ -732,8 +800,6 @@ WORKFLOW_INPUTS = (
     ("app_port", "APP_PORT", "string", "3000:3000"),
     ("env_file", "ENV_FILE", "string", ""),
     ("selinux_relabel", "SELINUX_RELABEL", "boolean", "false"),
-    ("mount_host_timezone", "MOUNT_HOST_TIMEZONE", "boolean", "true"),
-    ("enable_tz_shanghai", "ENABLE_TZ_SHANGHAI", "boolean", "true"),
 )
 
 

@@ -31,11 +31,13 @@ def build_image(p, staging, target, image):
 
 
 def pull_service_images(p):
-    """按需拉取外挂服务镜像（与目标平台一致）。"""
-    if p.enable_nginx:
-        _run(["docker", "pull", "--platform", p.docker_platform, "nginx:stable"])
-    if p.enable_postgres:
-        _run(["docker", "pull", "--platform", p.docker_platform, "postgres:16"])
+    """按需拉取外挂服务镜像（与目标平台一致；清单来自 image_refs 中
+    除应用镜像外的部分，如 nginx / postgres / mysql / mongo）。"""
+    app_images = {p.prod_image, p.dev_image}
+    for image in p.image_refs:
+        if image in app_images:
+            continue
+        _run(["docker", "pull", "--platform", p.docker_platform, image])
 
 
 def image_list(p):

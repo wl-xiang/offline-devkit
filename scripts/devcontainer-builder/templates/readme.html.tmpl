@@ -358,7 +358,7 @@
           <div class="codebar"><span class="code-label">dist/ · 等价一键默认</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
           <pre><code>bash install.sh -d</code></pre>
         </div>
-        <p class="muted"><code>-d</code> / <code>--default</code> 固定项目根为 <code>../</code>（自动导入镜像），应用源码放入 <code>../src/</code>。prod+dev 镜像模式下可用 <code>--load-target &lt;dev|prod|app|all&gt;</code> 只导入指定镜像（<code>dev</code>=仅 dev 镜像、<code>prod</code>/<code>app</code>=仅 prod 镜像、<code>all</code>=全部，默认；sidecar 镜像 nginx/postgres 在任何 target 下都会导入）。</p>
+        <p class="muted"><code>-d</code> / <code>--default</code> 固定项目根为 <code>../</code>（自动导入镜像），应用源码放入 <code>../src/</code>。prod+dev 镜像模式下可用 <code>--load-target &lt;dev|prod|app|all&gt;</code> 只导入指定镜像（<code>dev</code>=仅 dev 镜像、<code>prod</code>/<code>app</code>=仅 prod 镜像、<code>all</code>=全部，默认；sidecar 镜像 nginx/postgres/mysql/mongo 在任何 target 下都会导入）。</p>
       </div>
 
       <div class="step">
@@ -472,8 +472,8 @@
       <h2><span class="step-dot">05</span>install.sh 做了什么</h2>
       <ul class="checks">
         <li>解压 src 包到 <code>&lt;项目根&gt;/docs/devcontainer</code>（原始文件副本，仅用于把改坏的根目录文件复制回去重置）。</li>
-        <li>把 <code>Makefile</code> / <code>build.sh</code> / <code>Dockerfile</code> / <code>README.md</code> / <code>devcontainer.json</code> / <code>.dockerignore</code> / <code>.gitignore</code> 安装到项目根目录，已存在同名文件时终止安装；把 <code>push-bundle.sh</code> / <code>apply-bundle.sh</code> / <code>rollback-bundle.sh</code> / <code>clean-images.sh</code> / <code>.env.example</code>（部署辅助脚本）安装到 <code>scripts/</code>（同名冲突时终止）；根目录 <code>.env.example</code>（docker-compose.yml 运行时变量模板）仅在缺失时安装。</li>
-        <li>复制 compose 模板到项目根目录为 <code>docker-compose.yml</code>；并把 <code>devcontainer.json</code>（workflow 输入参数快照）与 <code>README.md</code> 一样安装到项目根目录。</li>
+        <li>把 <code>Makefile</code> / <code>build.sh</code> / <code>Dockerfile</code> / <code>docker-run.sh</code> / <code>README.md</code> / <code>devcontainer.json</code> / <code>.dockerignore</code> / <code>.gitignore</code> 安装到项目根目录，已存在同名文件时终止安装；把 <code>push-bundle.sh</code> / <code>apply-bundle.sh</code> / <code>rollback-bundle.sh</code> / <code>clean-images.sh</code> / <code>.env.example</code>（部署辅助脚本）安装到 <code>scripts/</code>（同名冲突时终止）；根目录 <code>.env.example</code>（docker-compose.yml 运行时变量模板）仅在缺失时安装。</li>
+        <li>复制 compose 模板到项目根目录为 <code>docker-compose.yml</code>；并把 <code>devcontainer.json</code>（workflow 输入参数快照）与 <code>README.md</code> 一样安装到项目根目录。<code>docker-run.sh</code>（容器默认启动脚本）由 compose 只读挂载覆盖镜像内副本，改根目录脚本即可调整启动方式，无需重建镜像。</li>
         <li>创建 <code>deps/wheels/requirements.gitkeep.txt</code> 离线安装头（把 wheel 放进 <code>deps/wheels/</code> 后即可离线补装 Python 包）与 <code>deps/packages/packages.gitkeep.json</code> 占位文件（放入 Npm Download Action 产物内容后，<code>bash build.sh</code> 可一键离线加载前端依赖）。</li>
       </ul>
       <p class="muted">详细说明见项目根目录的 <code>README.md</code>（与 <code>docs/devcontainer/README.md</code> 内容一致）。</p>

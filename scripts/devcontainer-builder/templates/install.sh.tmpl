@@ -29,22 +29,26 @@
 #      后缀的 docker-compose.yml（模板内 ${SRC_ROOT:-./src/} 与
 #      ${SRC_ROOT_NAME:-app} 由 docker compose 运行时解析，默认 ./src/）
 #   3. 把 Makefile / build.sh / Dockerfile.addon(改名为 Dockerfile) /
-#      README.md / devcontainer.json（workflow 输入参数快照）复制到
-#      INSTALL_PATH，并把包内 scripts/（push-bundle.sh / apply-bundle.sh /
-#      rollback-bundle.sh / clean-images.sh / .env.example 部署辅助脚本）
-#      安装到 <INSTALL_PATH>/scripts/，同时安装/合并 .dockerignore 与
-#      .gitignore；另安装根目录 .env.example（docker-compose.yml 运行时变量
-#      模板，仅缺失时安装，已存在则保留原文件）
+#      docker-run.sh / README.md / devcontainer.json（workflow 输入参数快照）
+#      复制到 INSTALL_PATH，并把包内 scripts/（push-bundle.sh /
+#      apply-bundle.sh / rollback-bundle.sh / clean-images.sh / .env.example
+#      部署辅助脚本）安装到 <INSTALL_PATH>/scripts/，同时安装/合并
+#      .dockerignore 与 .gitignore；另安装根目录 .env.example
+#      （docker-compose.yml 运行时变量模板，仅缺失时安装，已存在则保留原文件）
 #      ——所有 make、build.sh 命令此后都在项目根目录执行
 #   4. 在 INSTALL_PATH/deps/wheels/ 下创建离线安装头 requirements.gitkeep.txt
 #      （内容 --no-index --find-links=./，缺失时才创建）；创建 deps/packages/
 #      并放入占位 packages.gitkeep.json（Npm Download Action 产物的 packages/
 #      内容放到该目录后，bash build.sh 可一键离线加载前端依赖）
 #   5. 准备应用源码目录 INSTALL_PATH/src（compose 默认把 ./src/ 挂载为 /app）；
-#      若其中没有 main.py 且启动命令为默认值，复制占位 main.py 到该目录
+#      按预装语言环境放置占位入口：缺 main.py 且预装 Python 时复制占位
+#      main.py；缺 main.go 且预装 Golang 时复制占位 main.go
+#   6. docker-run.sh（容器默认启动脚本）安装到项目根目录后由 compose 只读
+#      挂载覆盖镜像内副本，改根目录脚本即可调整启动方式（无需重建镜像）
 set -euo pipefail
 
-NEEDS_MAIN_PY={{NEEDS_MAIN_PY}}   # 1 = prod_command 为默认 python main.py
+NEEDS_MAIN_PY={{PYTHON_ENABLED}}   # 1 = target_codec 预装 Python（占位 main.py）
+NEEDS_MAIN_GO={{GO_ENABLED}}       # 1 = target_codec 预装 Golang（占位 main.go）
 
 # ---------- 输出着色（仅终端着色；重定向/CI/NO_COLOR 时自动退化为无色） ----------
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -95,8 +99,8 @@ ${C_BOLD}选项:${C_RESET}
                         prod = 仅导入 prod 镜像（不导入 dev）
                         app  = 应用服务使用的镜像（= prod；仅 dev 镜像模式下
                                为 dev 镜像）
-                        sidecar 镜像（nginx / postgres，如已打包）在任何
-                        target 下都会一并导入。
+                        sidecar 镜像（nginx / postgres / mysql / mongo，
+                        如已打包）在任何 target 下都会一并导入。
   -h, --help            显示本帮助并退出。
 
 ${C_BOLD}示例:${C_RESET}
@@ -312,10 +316,10 @@ COMPOSE_FILE="$INSTALL_PATH/docker-compose.yml"
 SRC_DIR="$INSTALL_PATH/src"   # 应用源码目录（compose 默认把 ./src/ 挂载为 /app）
 
 # 复制到项目根目录的根目录操作文件：包内文件名 -> 根目录文件名
-# （Dockerfile.addon 改名 Dockerfile；README.md 按原名安装。
+# （Dockerfile.addon 改名 Dockerfile；README.md 与 docker-run.sh 按原名安装。
 #  devcontainer.json 不在包内，由 install.sh 同目录的 bundle 文件提供，
 #  同样安装到项目根目录；部署辅助脚本见下方 scripts/ 目录安装）
-COPY_ROOT_FILES=("Makefile:Makefile" "build.sh:build.sh" "Dockerfile.addon:Dockerfile" "README.md:README.md")
+COPY_ROOT_FILES=("Makefile:Makefile" "build.sh:build.sh" "Dockerfile.addon:Dockerfile" "README.md:README.md" "docker-run.sh:docker-run.sh")
 
 # 安装到项目根 scripts/ 的部署辅助脚本（包内 scripts/ -> <根>/scripts/，
 # Makefile 的 push/apply/rollback/clean 目标按 ./scripts/<脚本> 调用）
@@ -409,7 +413,7 @@ for pair in "${COPY_ROOT_FILES[@]}"; do
     ok "已创建 $INSTALL_PATH/$dst_name ${C_DIM}(来自 $src_name)${C_RESET}"
 done
 # zip/tar 传输可能丢失可执行位，显式恢复
-chmod 755 "$INSTALL_PATH/build.sh"
+chmod 755 "$INSTALL_PATH/build.sh" "$INSTALL_PATH/docker-run.sh"
 
 # 部署辅助脚本：包内 scripts/ -> <根>/scripts/（Makefile 的 push/apply/
 # rollback/clean 目标按 ./scripts/<脚本> 调用；前置校验已确认无同名冲突，
@@ -507,7 +511,11 @@ mkdir -p "$SRC_DIR"
 ok "已准备源码目录 $SRC_DIR"
 if [ "$NEEDS_MAIN_PY" = "1" ] && [ ! -e "$SRC_DIR/main.py" ]; then
     cp "$DEST/main.py" "$SRC_DIR/main.py"
-    ok "已创建占位入口 $SRC_DIR/main.py（make up 默认运行 python main.py，请替换为真实入口）"
+    ok "已创建占位入口 $SRC_DIR/main.py（docker-run.sh 默认运行 python main.py，请替换为真实入口）"
+fi
+if [ "$NEEDS_MAIN_GO" = "1" ] && [ ! -e "$SRC_DIR/main.go" ]; then
+    cp "$DEST/main.go" "$SRC_DIR/main.go"
+    ok "已创建占位入口 $SRC_DIR/main.go（docker-run.sh 默认运行 go run main.go，请替换为真实入口）"
 fi
 
 # ---------- 前端框架（pack_in_artifact）：解压到 <src>/vendor/<框架标签>-<version> ----------

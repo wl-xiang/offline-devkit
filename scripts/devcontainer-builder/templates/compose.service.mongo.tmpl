@@ -1,0 +1,14 @@
+  mongo:
+    image: mongo:9
+    restart: unless-stopped
+    pull_policy: never
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.runCommand({ ping: 1 })' >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    volumes:
+      - mongodata:/data/db
+    networks:
+      - app-net

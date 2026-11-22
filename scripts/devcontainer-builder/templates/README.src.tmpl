@@ -7,7 +7,8 @@
 安装后的目录布局：
 
 - **项目根目录**：`Makefile`、`Dockerfile`（离线补装用，由 Dockerfile.addon 改名）、
-  `build.sh`、`README.md`（本文件副本）、`.dockerignore`、`.gitignore`、
+  `build.sh`、`docker-run.sh`（容器默认启动脚本，compose 只读挂载覆盖镜像内副本，
+  改它即可调整启动方式）、`README.md`（本文件副本）、`.dockerignore`、`.gitignore`、
   `docker-compose.yml`、`.env.example`（docker-compose.yml 运行时变量模板，
   默认值与 compose 内置默认值一致）、`devcontainer.json`（workflow 输入参数
   快照）、`deps/wheels/`（离线补装 wheel，含离线安装头
@@ -17,7 +18,7 @@
   `scripts/.env.example`）。
   —— 你日常操作的位置。
 - **`src/`**：应用源码目录，由 compose 默认挂载为容器内 `/app`；install.sh 会
-  自动创建该目录并按需放入占位 `main.py`。
+  自动创建该目录并按预装语言环境放入占位 `main.py` / `main.go`。
 - **`docs/devcontainer/`**：上述文件的**原始副本** + `docker-compose.yml.tpl` +
   nginx 配置等。只在根目录文件被改坏时，从这里复制回去重置；
   **不要在该目录下直接运行任何脚本**（脚本按执行时的工作目录解析路径）。
@@ -26,7 +27,7 @@
 | 项目 | 值 |
 | --- | --- |
 | 平台 | {{DOCKER_PLATFORM}} |
-| Python | {{PYTHON_VERSION}} |
+| 预装语言环境 (target_codec) | {{TARGET_CODEC}} |
 | 构建时间戳 (UTC+8) | `{{TS}}` |
 | 镜像 TAG | `{{TAG}}` |
 | 镜像 | {{IMAGE_SUMMARY}} |
@@ -58,11 +59,11 @@ bash install.sh --load ../
 cd ..
 make check
 
-# 3. 开发
+# 3. 开发（按预装语言环境提供：Python 环境含 lint/compile/test，交互 shell 始终可用）
 make shell        # 交互式 bash
-make lint         # ruff check .
-make compile      # python -m compileall -q .
-make test         # pytest -q
+make lint         # ruff check .（预装 Python 时）
+make compile      # python -m compileall -q .（预装 Python 时）
+make test         # pytest -q（预装 Python 时）
 
 # 4. 运行（--no-build，不联网）
 make up && make logs
@@ -83,9 +84,10 @@ make down         # 停止
   后缀。需要调整时可用
   环境变量覆盖（如 `SRC_ROOT=/path/to/app docker compose up`），或直接改项目
   根目录的 `docker-compose.yml`（`.tpl` 保持原样，留作参考）。
-- app 服务的启动方式已显式写入 `docker-compose.yml`：`entrypoint: []`（清空
-  镜像 ENTRYPOINT）+ `command`（默认构建参数 `prod_command`）。调整启动命令
-  直接改这两行即可，无需重建镜像；换成自定义启动脚本的写法见文件内注释。
+- app 服务的启动方式由镜像 ENTRYPOINT（`docker-run.sh`）承载：默认 `cd /app`
+  后运行预置入口（python main.py / go run main.go）。项目根的 `docker-run.sh`
+  已只读挂载覆盖镜像内副本，改根目录脚本即可调整启动命令，无需重建镜像；
+  `docker compose run --rm app <命令>` 会透传执行命令（临时调试用）。
 - `.tpl` 后缀确保该模板不会被 docker compose 自动发现，也不会与项目根目录下
   你自己的 compose 配置发生 `-f` / `*.override.yaml` 合并（compose 对 ports
   等列表只做并集、无法通过 override 移除）。
@@ -95,8 +97,9 @@ make down         # 停止
   挂载目录不会出现 root 属主文件（`.pytest_cache` / `.ruff_cache` 等）。
   容器内需要 root 时（如 `pip install` 到系统目录）：
   `make shell HOST_UID=0 HOST_GID=0`。
-- 若应用源码目录 `src/` 下原本没有 `main.py`，install.sh 会复制一个占位入口到
-  `src/main.py`（`make up` 默认运行 `python main.py`）。请替换为你的真实应用入口。
+- 若应用源码目录 `src/` 下缺占位入口，install.sh 会按预装语言环境复制占位
+  `main.py`（python main.py）或 `main.go`（go run main.go）。请替换为你的
+  真实应用入口。
 - `.dockerignore` / `.gitignore` 由 install.sh 安装到项目根目录（已存在时仅
   追加缺失条目）：构建上下文与 git 忽略 `dist/`（bundle 产物）、`deps/`
   （离线依赖：deps/wheels、deps/packages）、`.addon-build/`（补装构建临时目录）等，
@@ -132,7 +135,7 @@ make down         # 停止
   自动取最新的 `backup_src_*.tgz` 覆盖回 `src/`（回滚前同样会先备份当前版本）。
 - `make clean`（等价 `bash scripts/clean-images.sh`）：在项目根一键清除本
   DevContainer 使用的镜像——镜像清单取自 `docker-compose.yml` 的 services
-  声明（app / dev / nginx / postgres 等），`make clean ARGS="-y"` 可跳过确认；
+  声明（app / dev / nginx / postgres / mysql / mongo 等），`make clean ARGS="-y"` 可跳过确认；
   `make clean ARGS="--no-name"` 改为清除名称与 Tag 均为 `<none>` 的悬空镜像。
   镜像被容器占用时请先 `make down`；清除后可用
   `bash dist/install.sh --load-only` 或 `docker load -i` 重新导入镜像归档。

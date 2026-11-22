@@ -54,14 +54,16 @@ def main():
         return 2
 
     print("== 参数 ==")
-    print(f"  platform={p.docker_platform} python={p.python_version} "
+    print(f"  platform={p.docker_platform} target_codec={p.target_codec} "
           f"glibc={p.glibc_version} ({p.pip_platform_tag}) "
           f"mirror={p.pip_mirror} ts={p.ts} (UTC+8) image_tag={p.tag}")
     print(f"  pip_packages={p.pip_package_list} apt_packages={p.apt_package_list} "
           f"build_dev_image={p.build_dev_image} dev_image_only={p.dev_image_only}")
-    print(f"  nginx={p.enable_nginx}(depends={p.app_depends_on_nginx}) "
-          f"postgres={p.enable_postgres}(depends={p.app_depends_on_postgres})")
-    print(f"  lucide={p.enable_lucide} playwright={p.enable_playwright} "
+    print(f"  enable_extra_services={p.extra_services} "
+          f"(nginx={p.enable_nginx} postgres={p.enable_postgres} "
+          f"mysql={p.enable_mysql} mongo={p.enable_mongo} "
+          f"db_depends={p.has_db_service})")
+    print(f"  playwright={p.enable_playwright} "
           f"oracle_instantclient={p.oracle_instantclient_mode}")
     print(f"  preset_envs={[k for k, _v in p.preset_env_pairs]}")
     print(f"  node={p.enable_node}(v{p.node_version}) npm_packages={p.npm_package_list} "

@@ -1,6 +1,6 @@
 # devcontainer-builder
 
-离线 Python 开发环境镜像构建工具：解析参数 → 渲染模板 → pip download →
+离线开发环境镜像构建工具：解析参数 → 渲染模板 → pip download →
 docker 构建 → 打包 → Summary。由 `.github/workflows/build-devcontainer.yml`
 调用，也可本地运行。内网使用手册见 `docs/offline-devcontainer.md`。
 
@@ -29,14 +29,22 @@ scripts/devcontainer-builder/
     ├── Dockerfile.devonly.tmpl    # 仅 dev 镜像模式的单阶段 Dockerfile
     ├── Dockerfile.oracle.tmpl     # Oracle runtime_deps_only 块：运行依赖/环境变量（客户端由 compose 挂载）
     ├── Dockerfile.oracle.full.tmpl # Oracle full 块：运行依赖 + 官方 Basic 包下载解压 + 环境变量
-    ├── Dockerfile.node.tmpl       # Node.js/npm 块（从官方 node 镜像复制，enable_node 时插入）
+    ├── Dockerfile.node.tmpl       # Node.js/npm 块（从官方 node 镜像复制，target_codec 含 node24 时插入）
     ├── compose.base.tmpl          # compose 模板骨架（app 服务 + 占位块；输出为 .tpl）
     ├── compose.service.nginx.tmpl # nginx 服务子模板
     ├── compose.service.postgres.tmpl # postgres 服务子模板（含健康检查）
-    ├── nginx.conf.tmpl            # nginx 反代配置（启用 nginx 且指定 app_port 时）
+    ├── compose.service.mysql.tmpl    # mysql 服务子模板（含 mysqladmin ping 健康检查）
+    ├── compose.service.mongo.tmpl    # mongo 服务子模板（含 mongosh ping 健康检查）
+    ├── nginx.conf.tmpl            # nginx 反代配置（enable_extra_services 含 nginx 且指定 app_port 时）
     ├── Makefile.tmpl              # make 目标（安装到项目根，路径按 pwd 解析）
     ├── requirements.txt.tmpl      # pip 包清单（含预装组件）
-    ├── main.py.tmpl               # 占位入口（install.sh 在应用源码目录 src/ 无 main.py 时复制）
+    ├── main.py.tmpl               # 占位入口（预装 Python 时随包分发；install.sh 在应用源码
+    │                              #  目录 src/ 无 main.py 时复制）
+    ├── main.go.tmpl               # 占位入口（预装 Golang 时随包分发；install.sh 在 src/ 无
+    │                              #  main.go 时复制，go run main.go）
+    ├── docker-run.sh.tmpl         # 容器默认启动脚本（镜像 ENTRYPOINT：cd /app 后运行预置入口
+    │                              #  python main.py / go run main.go；install.sh 安装到项目根，
+    │                              #  compose 只读挂载覆盖镜像内副本，改脚本即改启动方式）
     ├── install.sh.tmpl            # 安装脚本（复制/改名根目录操作文件、安装 scripts/ 部署辅助脚本、
     │                              #  合并忽略文件、deps gitkeep 占位文件）
     ├── env.example.tmpl           # 根目录 .env.example（docker-compose.yml 运行时变量模板）
@@ -55,25 +63,20 @@ scripts/devcontainer-builder/
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `PLATFORM` | `linux-arm64` | `linux-amd64` / `linux-arm64` |
-| `PYTHON_VERSION` | `3.13` | `3.10` / `3.11` / `3.12` / `3.13` |
+| `TARGET_CODEC` | `python3.13` | 预装语言环境（6 个组合：`python3.13` / `golang1.26` / `python3.13 + golang1.26` 及各自的 `+ node24(npm+pnpm+npx)` 变体；node24 = npm + 全局 pnpm + npx，Python 固定 3.13、Go 固定 1.26、Node 固定 24） |
 | `GLIBC_VERSION` | `2.28` | 固定值（workflow 不再暴露），控制 manylinux 标签 |
 | `PIP_MIRROR` | `pypi.org` | 固定值（workflow 不再暴露），pip 源 |
 | `PIP_PACKAGES` | 空 | `$` 分隔的 pip 包列表 |
 | `APT_PACKAGES` | 空 | 空格分隔的 APT 包 |
 | `CUSTOM_INSTALL_CMD` | 空 | 镜像内的个性化安装命令 |
-| `ENABLE_LUCIDE` | `false` | 预装 lucide（SVG 图标库，Django/Jinja 模板用，pip 包） |
 | `ENABLE_ORACLE_INSTANTCLIENT` | `none` | `none` / `runtime_deps_only`（运行依赖 + 环境变量 + `oracledb==2.5.1`，客户端由 compose 挂载）/ `full`（运行时依赖 + 官方 Basic 包完整安装进镜像） |
 | `PRESET_ENVS` | 空 | 预设环境变量，单个 `》` 分隔的 `KEY=VALUE`（注入 app/dev 服务） |
-| `ENABLE_NODE` | `false` | 镜像内置 Node.js + npm（前端离线开发） |
 | `NODE_VERSION` | `24` | 固定值（workflow 不再暴露） |
-| `NPM_PACKAGES` | 空 | `$` 分隔的全局 npm 包（需 `ENABLE_NODE=true`） |
+| `GO_VERSION` | `1.26` | 固定值（workflow 不再暴露） |
+| `NPM_PACKAGES` | 空 | `$` 分隔的全局 npm 包（需 target_codec 含 node24） |
 | `NPM_REGISTRY` | `Official (npmjs.org)` | 固定为官方源（workflow 不再暴露） |
-| `NPM_PACKAGES_DIR` | `packages` | Npm Download 产物目录，只读挂载到 `/opt/npm-packages` |
-| `ENABLE_NGINX` | `false` | 启用 nginx 服务 |
-| `ENABLE_POSTGRES` | `false` | 启用 postgres 服务 |
-| `APP_DEPENDS_ON_NGINX` | `false` | app depends_on nginx |
-| `APP_DEPENDS_ON_POSTGRES` | `false` | app depends_on postgres |
-| `PROD_COMMAND` | `python main.py` | prod 服务命令 |
+| `NPM_PACKAGES_DIR` | `deps/packages` | Npm Download 产物目录，只读挂载到 `/opt/npm-packages` |
+| `ENABLE_EXTRA_SERVICES` | `none` | 外挂服务原始值透传（`none` / `nginx` / `postgres16` / `mysql8.4` / `mongo9` / `nginx + …`）；`enable_nginx` / `enable_postgres` / `enable_mysql` / `enable_mongo` 布尔由该原始值解析派生，含 DB 服务时 app 自动 depends_on（等待健康检查通过） |
 | `BUILD_DEV_IMAGE` | `true` | 是否构建 dev 镜像 |
 | `DEV_IMAGE_ONLY` | `false` | 仅构建 dev 镜像：不再区分 prod/dev，部署也用 dev 镜像，镜像归档只含该镜像（优先于 `BUILD_DEV_IMAGE`） |
 | `IMAGE_PREFIX` | `mydevc1` | 镜像名前缀（prod `<prefix>:<tag>` / dev `<prefix>-dev:<tag>`；Artifact 名为 `<prefix>_devcontainer_<arch>_<ts>`） |
@@ -82,8 +85,6 @@ scripts/devcontainer-builder/
 | `APP_PORT` | `3000:3000` | 端口映射 `host:container`（单端口等价同端口）；启用 nginx 时只暴露容器端口 |
 | `ENV_FILE` | 空 | 注入 app 服务的 env 文件，逗号/空格分隔 |
 | `SELINUX_RELABEL` | `false` | 挂载追加 `:z`（SELinux Enforcing 主机） |
-| `MOUNT_HOST_TIMEZONE` | `true` | app/dev 服务只读挂载宿主机 `/etc/localtime` 与 `/etc/timezone`（容器时间跟随宿主机） |
-| `ENABLE_TZ_SHANGHAI` | `true` | 镜像内设置 `TZ=Asia/Shanghai`（UTC+8，构建期补装 tzdata） |
 | `DEVCONTAINER_SKIP_DOCKER` | 空 | 置 `1` 跳过 docker 步骤（本地联调） |
 
 ## 本地运行
@@ -121,9 +122,9 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   到 `<根>/docs/devcontainer/`（**原始副本**，仅用于把改坏的根目录文件复制回
   重置，不在该目录运行脚本）；把 compose 模板原样复制到项目根为
   `docker-compose.yml`（仅去掉 `.tpl` 后缀，不做渲染）；把 `Makefile` /
-  `build.sh` / `Dockerfile.addon`（改名 `Dockerfile`）/ `README.md`（按原名
-  安装）/ `devcontainer.json`（workflow 输入参数快照，与 README.md 一样安装
-  到项目根）复制到项目根，把包内 `scripts/`（`push-bundle.sh` /
+  `build.sh` / `Dockerfile.addon`（改名 `Dockerfile`）/ `docker-run.sh` /
+  `README.md`（按原名安装）/ `devcontainer.json`（workflow 输入参数快照，与
+  README.md 一样安装到项目根）复制到项目根，把包内 `scripts/`（`push-bundle.sh` /
   `apply-bundle.sh` / `rollback-bundle.sh` / `clean-images.sh` /
   `.env.example`）安装到 `<根>/scripts/`（同名冲突时终止；目录已存在但无同名
   文件时合并安装），安装/合并 `.dockerignore` 与
@@ -132,8 +133,9 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   离线安装头（`--no-index --find-links=./`，pip 按该文件所在目录解析相对
   find-links）与 `<根>/deps/packages/packages.gitkeep.json`（Npm Download
   产物内容放这里；`.gitignore` 忽略 deps/ 下除这两个 gitkeep 占位文件以外的
-  全部内容）；创建应用源码目录 `<根>/src/`（compose 默认挂载为 /app），缺少
-  main.py 且 prod_command 为默认值时在其中放置占位入口。根目录 `.env.example`
+  全部内容）；创建应用源码目录 `<根>/src/`（compose 默认挂载为 /app），按
+  预装语言环境放置占位入口：预装 Python 缺 main.py 时复制占位 main.py，
+  预装 Golang 缺 main.go 时复制占位 main.go。根目录 `.env.example`
   （docker-compose.yml 运行时变量模板，默认值与 compose 内置默认值一致）仅在
   缺失时安装。`-d/--default` 为
   一键写法：项目根固定为 `../`，源码放入 `../src/`。
@@ -145,7 +147,7 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
 - **clean-images.sh（make clean）**：安装到项目根 `scripts/` 的
   `scripts/clean-images.sh` 从项目根 `docker-compose.yml`（按脚本目录上一级
   解析）的 services 声明中提取 `image:` 值（app / dev /
-  nginx / postgres 等），确认后用 `docker rmi -f` 逐个删除；本机不存在的
+  nginx / postgres / mysql / mongo 等），确认后用 `docker rmi -f` 逐个删除；本机不存在的
   镜像自动跳过，`-y` 跳过确认，Makefile 的 `clean` 目标支持 `ARGS` 透传
   （`make clean ARGS="-y"`）。`--no-name` 改为清除 REPOSITORY 与 TAG 均为
   `<none>` 的悬空镜像（不需要 compose 文件）。清除后可用
@@ -161,11 +163,10 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   按清单装，否则装目录下全部 `*.whl`（空清单不会静默 no-op）。回滚 = 重新
   docker load 原 `devcontainer-docker-images_<架构>_<时间戳>.tgz`。workflow 的
   Verify 步骤含 mock docker 干跑回归测试，持续断言补装上下文不受
-  .dockerignore 影响。`enable_node` 时 build.sh 还支持一键加载前端依赖：把
-  Npm Download Action 产物的 `packages/` 内容放到 `deps/packages/`，执行
-  `bash build.sh` 即通过 dev 服务容器离线安装到挂载的源码目录（/app）。
-- **预装组件（勾选项）**：`enable_lucide` → 追加 pip 包 `lucide`（纯 Python
-  wheel，Django/Jinja 模板渲染 lucide.dev SVG 图标）；`enable_oracle_instantclient`
+  .dockerignore 影响。target_codec 含 node24 时 build.sh 还支持一键加载前端
+  依赖：把 Npm Download Action 产物的 `packages/` 内容放到 `deps/packages/`，
+  执行 `bash build.sh` 即通过 dev 服务容器离线安装到挂载的源码目录（/app）。
+- **预装组件（勾选项）**：`enable_oracle_instantclient`
   三选一：`none` 不安装；`runtime_deps_only` 只安装 `libaio1` / `libnsl2` 并配置
   `ORACLE_HOME` / `LD_LIBRARY_PATH` / `TNS_ADMIN`，客户端由 compose 把
   `${ORACLE_CLIENT_DIR:-/opt/oracle/instantclient19}` 只读挂载到容器
@@ -173,10 +174,13 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   [oracle2excel](https://github.com/wl-xiang/oracle2excel/blob/main/Dockerfile)
   在构建期下载官方 Instant Client 19 Basic 包并解压进镜像（客户端随镜像分发，
   不生成挂载）。后两者都追加 `oracledb==2.5.1`；
-  `enable_node` → 从官方 `node:24-slim-bookworm` 复制 node/npm，可选
+  node24（`target_codec` 含 node24）→ 从官方 `node:24-slim-bookworm` 复制
+  node/npm 并经 npm 全局安装 pnpm（node24 = npm + pnpm + npx），可选
   `npm_packages` 构建期从官方 npm 源全局安装；Npm Download 产物目录由 compose
-  只读挂载到 `/opt/npm-packages`，配合 `make npm-install` 离线安装前端依赖。
-  两者的 pip 包并入 requirements.txt 与 pip download（用户显式列出同名包时
+  只读挂载到 `/opt/npm-packages`，配合 `make npm-install` 离线安装前端依赖
+  （`css_framework_install=*_install_via_npm` 等 npm 依赖不再自动补装 Node 层，
+  target_codec 缺 node24 时直接校验报错）。
+  预装 pip 包并入 requirements.txt 与 pip download（用户显式列出同名包时
   以用户声明为准），环境变量与 workflow inputs 一一对应；
   `enable_playwright` → 追加 pip 包 `playwright`，并在 INSTALL 之后执行
   `playwright install --with-deps chromium`（有头/无头共用同一浏览器；
@@ -193,18 +197,20 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   ruff/pytest/compileall 缓存（`.ruff_cache`/`.pytest_cache`/`__pycache__`）
   以 root 属主污染挂载目录。
 - **仅 dev 镜像模式**（`dev_image_only=true`）：Dockerfile 渲染为单阶段 dev
-  镜像，compose 的 app 服务直接使用该 dev 镜像，启动命令同样由 compose 的
-  `command` 显式承载（镜像 CMD 为 bash），镜像归档只包含这一个镜像（不再生成
+  镜像，compose 的 app 服务直接使用该 dev 镜像，启动方式同样由镜像
+  ENTRYPOINT（docker-run.sh）承载（镜像 `CMD ["bash"]` 供 make shell 使用），
+  镜像归档只包含这一个镜像（不再生成
   prod 镜像文件）。app/dev 两个服务保留：
   prod+dev 模式两服务镜像本就不同，统一模板可避免生成器分支；dev 服务无
   restart/ports/depends_on，工具型 `compose run` 不会误拉起外挂服务。
-- **启动方式显式写入 compose**：prod/dev 镜像默认命令通过 `CMD` 承载
-  （直接 `docker run` 仍可用）；安装生成的 `docker-compose.yml` 在 app 服务
-  上固定写入 `entrypoint: []`（清空镜像 ENTRYPOINT）与 `command`（默认
-  `prod_command`），用户直接改这两行即可调整启动命令，或按模板注释换成自定义
-  启动脚本（挂载 `./my-start.sh` → `entrypoint: ["/bin/bash",
-  "/opt/my-start.sh"]` + `command: []`），均无需重建镜像；
-  `docker compose run --rm app <命令>` 仍按传入命令执行，
+- **启动方式由镜像 ENTRYPOINT（docker-run.sh）承载**：镜像构建时 COPY
+  `docker-run.sh` 并设为 `ENTRYPOINT ["/usr/local/bin/docker-run.sh"]`，脚本
+  默认 `cd /app` 后运行预置入口（预装 Python 时 `python main.py`、纯 Golang
+  时 `go run main.go`），带参数调用时透传 exec；安装生成的
+  `docker-compose.yml` 在 app 服务上写 `command: []`（不向 ENTRYPOINT 追加
+  参数），并把项目根的 docker-run.sh 只读挂载到 `/usr/local/bin/docker-run.sh`
+  覆盖镜像内副本——直接改项目根的 docker-run.sh 即可调整启动方式，无需重建
+  镜像；`docker compose run --rm app <命令>` 仍按传入命令执行（透传 exec），
   `make shell` 走 dev 镜像的 `CMD ["bash"]`，互不冲突。
 - **compose run 与 profile**：命令行显式指定的服务会自动激活其 profiles
   （compose v2 行为），因此 `DEV_RUN` 无需 `--profile dev`；但
@@ -228,9 +234,9 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   构建期，安装/下载/`apt-get purge --auto-remove` 在同一 RUN 层完成，不残留
   在运行时镜像。dev 与 prod 共享基础层，`docker save` 归档中公共层只存一份。
 - **AI Agent 约定**：src 产物 `README.md`（按原名安装到项目根）与
-  `readme.html` 均包含「给 AI Agent 的使用约定」：Python/Node 命令一律通过
-  `docker compose run --rm dev ...` / `make test` 等在容器内执行，不依赖宿主机
-  Python；workflow 的 Verify 步骤会 grep 校验该段落存在。
+  `readme.html` 均包含「给 AI Agent 的使用约定」：Python / Go / Node 命令一律
+  通过 `docker compose run --rm dev ...` / `make test` 等在容器内执行，不依赖
+  宿主机环境；workflow 的 Verify 步骤会 grep 校验该段落存在。
 - **glibc 语义**：基础镜像固定 slim-bookworm（glibc 2.36），glibc 参数仅决定
   pip download 请求的 manylinux 标签集合（目标 glibc 及以下全部标签）。
 - **YAML 安全**：compose 中的 `command`、`/app` 挂载与 `environment` 值使用

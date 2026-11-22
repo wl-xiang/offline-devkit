@@ -1,0 +1,20 @@
+#!/bin/sh
+# 容器默认启动脚本（镜像 ENTRYPOINT，由 scripts/devcontainer-builder 生成，请勿手工编辑）。
+# target_codec: {{TARGET_CODEC}}
+#
+# 默认行为：cd /app 后运行预置入口（{{DOCKER_RUN_DEFAULT_COMMAND}}）。
+# 本脚本由 install.sh 安装到项目根目录，docker-compose.yml 把它只读挂载覆盖
+# 镜像内副本 —— 修改项目根的 docker-run.sh 即可自定义启动方式，无需重建镜像。
+#
+# 带参数调用时透传执行（不改变默认行为）：
+#   docker compose run --rm app python -c "..."   # 临时执行命令
+set -e
+
+cd /app
+
+# 透传：`docker compose run --rm app <命令>` 时直接 exec 该命令
+if [ "$#" -gt 0 ]; then
+    exec "$@"
+fi
+
+exec {{DOCKER_RUN_DEFAULT_COMMAND}}
