@@ -78,8 +78,9 @@ make up (python main.py)
 | `enable_node` | boolean | — | `false` | 镜像内置 Node.js 24 + npm，用于前端离线开发（vite / webpack / vue / react） |
 | `npm_packages` | string | 用 `$` 分隔，如 `vite$webpack$webpack-cli$vue$react` | 空 | 构建期全局安装的 npm 包（需要 `enable_node=true`；构建机联网安装，内网容器可直接使用） |
 | `npm_packages_dir` | string | 相对/绝对路径 | `deps/packages` | **Npm Download 产物所在目录**：把该工作流产出的 `packages/` 内容（`*.tgz` + `package.json`）放这里，compose 会把它只读挂载到容器 `/opt/npm-packages`，供 `make npm-install` 或 `bash build.sh` 一键离线安装前端依赖。相对项目根或绝对路径（需 `enable_node=true`） |
-| `bootstrap_install` | choice | `none` / `pack_in_artifact` / `install_via_npm` | `none` | 预装 Bootstrap 前端库：`none` 不安装；`pack_in_artifact` 构建期下载 `bootstrap-<version>.tgz` 随 Artifact 分发，install.sh 自动解压到 `<项目根>/src/vendor/bootstrap-<version>/`（容器内 `/app/vendor/`）；`install_via_npm` 构建期在镜像内 npm 全局安装（未勾选 `enable_node` 时自动补装 Node.js 24 + npm 层） |
-| `bootstrap_version` | string | 版本号，如 `5.3.3` | 空（最新版） | bootstrap_install 两种模式使用的 Bootstrap 版本，留空拉最新版 |
+| `frontend_framework` | choice | `none` / `bootstrap` / `tailwind` | `none` | 预装前端框架：`none` 不安装；`bootstrap` 内置 Bootstrap（引用其 `dist/` 下的 css/js 静态资源）；`tailwind` 内置 Tailwind CSS（`pack_in_artifact` 下发 `@tailwindcss/browser` 浏览器端运行时，`<script src>` 引入即用；`install_via_npm` 预装 `tailwindcss` + `@tailwindcss/cli` 离线构建 CLI） |
+| `frontend_install` | choice | `pack_in_artifact` / `install_via_npm` | `pack_in_artifact` | 前端框架的安装方式（`frontend_framework=none` 时忽略）：`pack_in_artifact` 构建期下载 `<框架标签>-<version>.tgz` 随 Artifact 分发，install.sh 自动解压到 `<项目根>/src/vendor/<框架标签>-<version>/`（容器内 `/app/vendor/`）；`install_via_npm` 构建期在镜像内 npm 全局安装（未勾选 `enable_node` 时自动补装 Node.js 24 + npm 层） |
+| `frontend_version` | string | 版本号，如 `5.3.3` / `4.3.5` | 空（最新版） | frontend_install 两种模式使用的前端框架版本，留空拉最新版（Tailwind 的 `tailwindcss` 与 `@tailwindcss/cli` 按同一版本号安装） |
 | `sidecars` | string | 逗号/空格分隔，如 `nginx postgres` | 空 | 启用的外挂服务：`nginx`（8080:80）、`postgres`（postgres:16，数据卷 pgdata） |
 | `app_depends_on` | string | 逗号/空格分隔，如 `nginx postgres` | 空 | app 服务 `depends_on` 的外挂服务（须在 `sidecars` 中同时启用） |
 | `prod_command` | string | 命令行 | `python main.py` | prod 服务启动命令（同时写入镜像 CMD 与 compose 的 app 服务 `command`，安装后可直接改 compose 免重建） |
@@ -128,7 +129,7 @@ zip 内含以下五个文件（`compression-level: 0`，仅存储不再二次压
 | `install.sh` | 安装脚本（与 src tgz 放同一目录） |
 | `readme.html` | 简易安装说明（建议把 zip 放到项目根目录 `dist/` 下解压后 `bash install.sh ../`；`--load` 可自动导入镜像） |
 | `devcontainer.json` | 本次运行的 workflow 输入参数快照（纯 JSON；随 `install.sh` 与 README.md 一起安装到项目根目录） |
-| `bootstrap-<version>.tgz` | 仅 `bootstrap_install=pack_in_artifact` 时存在：bootstrap 离线包（构建期从 npm 源下载，版本默认拉最新），`install.sh` 自动解压到 `<项目根>/src/vendor/bootstrap-<version>/` |
+| `<框架标签>-<version>.tgz` | 仅 `frontend_install=pack_in_artifact` 时存在：前端框架离线包（bootstrap → `bootstrap-<version>.tgz`，tailwind → `tailwindcss-browser-<version>.tgz`，构建期从 npm 源下载，版本默认拉最新），`install.sh` 自动解压到 `<项目根>/src/vendor/<框架标签>-<version>/` |
 
 #### devcontainer.json
 
@@ -530,21 +531,57 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
 - `make npm-install` 需要 dev 镜像（`image_mode=prod+dev` 或
   `dev-only`），与 `make shell` 一致。
 
-## Bootstrap 前端库（bootstrap_install）
+## 前端框架预装（frontend_framework + frontend_install）
 
-构建参数 `bootstrap_install` 决定是否预装 Bootstrap：
+构建参数 `frontend_framework` 选择预装的前端框架，`frontend_install` 选择安装
+方式（`frontend_framework=none` 时忽略）；`frontend_version` 固定版本（留空拉
+最新版）：
+
+### Bootstrap
 
 - **`pack_in_artifact`（离线优先）**：构建期从 npm 源下载
-  `bootstrap-<version>.tgz`（版本默认拉最新，可用 `bootstrap_version` 固定），
-  随 Artifact 一起分发；`install.sh` 安装时自动解压到应用源码根目录
-  `<项目根>/src/vendor/bootstrap-<version>/`（即容器内
+  `bootstrap-<version>.tgz`，随 Artifact 一起分发；`install.sh` 安装时自动解压
+  到应用源码根目录 `<项目根>/src/vendor/bootstrap-<version>/`（即容器内
   `/app/vendor/bootstrap-<version>/`），模板中直接引用其 `dist/` 下的 css/js
   静态资源即可。vendor 目录已存在时安装终止（避免覆盖）。
 - **`install_via_npm`**：构建期在镜像内 `npm install -g bootstrap@<version>`。
   未勾选 `enable_node` 时会自动补装 Node.js 24 + npm 镜像层（等效勾选）。
   容器内静态资源位于 `/usr/local/lib/node_modules/bootstrap/dist/`，
   用 `npm ls -g bootstrap` 查看版本。
-- **`none`（默认）**：不安装。
+
+### Tailwind CSS
+
+- **`pack_in_artifact`（离线优先）**：构建期从 npm 源下载
+  `tailwindcss-browser-<version>.tgz`（Tailwind 官方浏览器端运行时
+  `@tailwindcss/browser`，`dist/index.global.js` 单文件自包含），随 Artifact
+  一起分发；`install.sh` 安装时自动解压到
+  `<项目根>/src/vendor/tailwindcss-browser-<version>/`。模板中以静态目录 URL
+  引用该 JS（路径按应用静态目录调整），即可在浏览器端编译 Tailwind 类名，
+  **无需 Node 构建步骤**：
+
+  ```html
+  <script src="/static/vendor/tailwindcss-browser-<version>/dist/index.global.js"></script>
+  ```
+
+- **`install_via_npm`**：构建期在镜像内
+  `npm install -g tailwindcss@<version> @tailwindcss/cli@<version>`（两者按同一
+  版本号发布，未勾选 `enable_node` 时同样自动补装 Node.js 层）。容器内
+  `tailwindcss --version` 查看版本，离线构建示例：
+
+  ```bash
+  # 入口 input.css 需含 @import "tailwindcss";
+  tailwindcss -i ./src/input.css -o ./src/output.css --minify
+  ```
+
+  CLI 扫描模板中的类名按需生成 CSS，产物放到应用静态目录即可。
+
+### 通用说明
+
+- **`none`（默认）**：不安装任何前端框架。
+- `pack_in_artifact` 模式 vendor 目录已存在时安装终止（避免覆盖）；升级版本时
+  重新构建并在 `frontend_version` 填新版本，替换 vendor 目录。
+- `install_via_npm` 模式会在未勾选 `enable_node` 时自动补装 Node.js 24 + npm
+  镜像层（等效勾选）。
 
 ## 设计说明
 

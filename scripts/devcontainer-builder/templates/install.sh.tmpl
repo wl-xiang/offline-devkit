@@ -360,26 +360,26 @@ if [ "$HAS_DEVCONTAINER_JSON" = "1" ] && [ -e "$INSTALL_PATH/devcontainer.json" 
     echo "  请先移动/重命名后重试。"
     fail=1
 fi
-# bootstrap（pack_in_artifact 模式）：bundle 内必须只有一个 bootstrap-*.tgz，
+# 前端框架（pack_in_artifact 模式）：bundle 内必须只有一个 <框架标签>-*.tgz，
 # 且目标 vendor 目录不与用户现有文件冲突
-if [ "{{BOOTSTRAP_MODE}}" = "pack_in_artifact" ]; then
+if [ "{{FRAMEWORK_ENABLED}}" = "1" ] && [ "{{FRAMEWORK_MODE}}" = "pack_in_artifact" ]; then
     shopt -s nullglob
-    boot_tgzs=("$SCRIPT_DIR"/bootstrap-*.tgz)
+    fw_tgzs=("$SCRIPT_DIR"/{{FRAMEWORK_VENDOR_LABEL}}-*.tgz)
     shopt -u nullglob
-    if [ "${#boot_tgzs[@]}" -eq 0 ]; then
-        err "未在 $SCRIPT_DIR 找到 bootstrap-*.tgz（pack in artifact 模式需要 bundle 内的 bootstrap 离线包，与 install.sh 放在同一目录）"
+    if [ "${#fw_tgzs[@]}" -eq 0 ]; then
+        err "未在 $SCRIPT_DIR 找到 {{FRAMEWORK_VENDOR_LABEL}}-*.tgz（pack in artifact 模式需要 bundle 内的 {{FRAMEWORK_NAME}} 离线包，与 install.sh 放在同一目录）"
         fail=1
-    elif [ "${#boot_tgzs[@]}" -gt 1 ]; then
-        err "$SCRIPT_DIR 下有多个 bootstrap-*.tgz，请只保留本次使用的那个："
-        printf '  %s\n' "${boot_tgzs[@]}"
+    elif [ "${#fw_tgzs[@]}" -gt 1 ]; then
+        err "$SCRIPT_DIR 下有多个 {{FRAMEWORK_VENDOR_LABEL}}-*.tgz，请只保留本次使用的那个："
+        printf '  %s\n' "${fw_tgzs[@]}"
         fail=1
     else
-        BOOT_TGZ=${boot_tgzs[0]}
-        BOOT_VER=${BOOT_TGZ##*/bootstrap-}
-        BOOT_VER=${BOOT_VER%.tgz}
-        BOOT_VENDOR_DIR="$SRC_DIR/{{BOOTSTRAP_VENDOR_DIR}}/bootstrap-$BOOT_VER"
-        if [ -e "$BOOT_VENDOR_DIR" ]; then
-            err "$BOOT_VENDOR_DIR 已存在，避免覆盖你自己的文件，安装终止。"
+        FW_TGZ=${fw_tgzs[0]}
+        FW_VER=${FW_TGZ##*/{{FRAMEWORK_VENDOR_LABEL}}-}
+        FW_VER=${FW_VER%.tgz}
+        FW_VENDOR_DIR="$SRC_DIR/{{FRAMEWORK_VENDOR_DIR}}/{{FRAMEWORK_VENDOR_LABEL}}-$FW_VER"
+        if [ -e "$FW_VENDOR_DIR" ]; then
+            err "$FW_VENDOR_DIR 已存在，避免覆盖你自己的文件，安装终止。"
             echo "  请先移动/重命名后重试。"
             fail=1
         fi
@@ -510,13 +510,13 @@ if [ "$NEEDS_MAIN_PY" = "1" ] && [ ! -e "$SRC_DIR/main.py" ]; then
     ok "已创建占位入口 $SRC_DIR/main.py（make up 默认运行 python main.py，请替换为真实入口）"
 fi
 
-# ---------- bootstrap（pack_in_artifact）：解压到 <src>/vendor/bootstrap-<version> ----------
-if [ "{{BOOTSTRAP_MODE}}" = "pack_in_artifact" ]; then
-    step "安装 Bootstrap 到源码根目录 {{BOOTSTRAP_VENDOR_DIR}}/"
-    mkdir -p "$BOOT_VENDOR_DIR"
-    # npm 包 tgz 顶层目录为 package/，strip 后内容即 bootstrap-<version>/
-    tar xzf "$BOOT_TGZ" -C "$BOOT_VENDOR_DIR" --strip-components=1
-    ok "已安装 $BOOT_VENDOR_DIR（容器内 /app/{{BOOTSTRAP_VENDOR_DIR}}/bootstrap-$BOOT_VER/，引用其 dist/ 静态资源）"
+# ---------- 前端框架（pack_in_artifact）：解压到 <src>/vendor/<框架标签>-<version> ----------
+if [ "{{FRAMEWORK_ENABLED}}" = "1" ] && [ "{{FRAMEWORK_MODE}}" = "pack_in_artifact" ]; then
+    step "安装 {{FRAMEWORK_NAME}} 到源码根目录 {{FRAMEWORK_VENDOR_DIR}}/"
+    mkdir -p "$FW_VENDOR_DIR"
+    # npm 包 tgz 顶层目录为 package/，strip 后内容即 <框架标签>-<version>/
+    tar xzf "$FW_TGZ" -C "$FW_VENDOR_DIR" --strip-components=1
+    ok "已安装 $FW_VENDOR_DIR（容器内 /app/{{FRAMEWORK_VENDOR_DIR}}/{{FRAMEWORK_VENDOR_LABEL}}-$FW_VER/，引用其 dist/ 静态资源）"
 fi
 
 # npm 离线包目录（默认项目根目录 deps/packages/）：提前创建，避免 docker 以 root
@@ -559,4 +559,4 @@ if [ "$COMPOSE_MODE" = "v1" ]; then
 elif [ "$COMPOSE_MODE" = "missing" ]; then
     printf '%s\n' "${C_RED}${C_BOLD}警告: 未检测到 docker compose 或 docker-compose，make 命令无法执行，请先安装 docker compose。${C_RESET}"
 fi
-{{ORACLE_NOTICE_BLOCK}}{{NPM_NOTICE_BLOCK}}{{BOOTSTRAP_NOTICE_BLOCK}}
+{{ORACLE_NOTICE_BLOCK}}{{NPM_NOTICE_BLOCK}}{{FRAMEWORK_NOTICE_BLOCK}}
