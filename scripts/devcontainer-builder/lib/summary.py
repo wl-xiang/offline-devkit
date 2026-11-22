@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 from .package import human_size
-from .params import Params
+from .params import FRAMEWORK_NAMES, FRAMEWORK_VENDOR_DIR, Params
 
 
 def _yes_no(flag):
@@ -38,7 +38,7 @@ def build_markdown(p, results):
     install_sh = results.get("install_sh")
     readme_html = results.get("readme_html")
     devcontainer_json = results.get("devcontainer_json")
-    bootstrap_tgz = results.get("bootstrap_tgz")
+    framework_tgz = results.get("framework_tgz")
     skipped_docker = results.get("skipped_docker", False)
     bundle_name = p.bundle_name
 
@@ -91,20 +91,20 @@ def build_markdown(p, results):
     out.append(f"| Oracle Instant Client 19 | {oracle_mode} |")
     if p.enable_node:
         node_mode = f"Node.js {p.node_version} + npm"
-        if p.bootstrap_npm:
-            node_mode += f"（含 bootstrap@{p.bootstrap_spec} 全局预装）"
+        if p.framework_npm:
+            node_mode += f"（含 {' '.join(p.framework_npm_packages)} 全局预装）"
     else:
         node_mode = "未启用"
     out.append(f"| Node.js / npm | {node_mode} |")
-    if p.bootstrap_pack:
-        bootstrap_name = (bootstrap_tgz.name if bootstrap_tgz
-                          else f"bootstrap-{p.bootstrap_spec}.tgz")
-        out.append(f"| Bootstrap | pack in artifact（`{bootstrap_name}`"
-                   " 随 Artifact 分发，install.sh 安装到 "
-                   "`src/vendor/bootstrap-<version>`） |")
-    elif p.bootstrap_npm:
-        out.append(f"| Bootstrap | install via npm（构建期镜像内全局安装"
-                   f" `bootstrap@{p.bootstrap_spec}`） |")
+    if p.framework_pack:
+        framework_name = (framework_tgz.name if framework_tgz
+                          else f"{p.framework_vendor_label}-{p.framework_spec}.tgz")
+        out.append(f"| 前端框架 {FRAMEWORK_NAMES[p.framework_name]} | pack in artifact"
+                   f"（`{framework_name}` 随 Artifact 分发，install.sh 安装到 "
+                   f"`src/{FRAMEWORK_VENDOR_DIR}/{p.framework_vendor_label}-<version>`） |")
+    elif p.framework_npm:
+        out.append(f"| 前端框架 {FRAMEWORK_NAMES[p.framework_name]} | install via npm"
+                   f"（构建期镜像内全局安装 `{' '.join(p.framework_npm_packages)}`） |")
     if p.enable_node:
         npm_pkg_summary = ", ".join(f"`{x}`" for x in p.npm_package_list) or "(无)"
         out.append(f"| npm 全局预装包 | {npm_pkg_summary} |")
@@ -219,12 +219,12 @@ def build_markdown(p, results):
             f"| {human_size(devcontainer_json.stat().st_size)} "
             f"| `{sha256_of(devcontainer_json)}` |"
         )
-    if bootstrap_tgz:
+    if framework_tgz:
         out.append(
-            f"| {bootstrap_tgz.name}（bootstrap 离线包，install.sh 安装到"
-            " src/vendor/bootstrap-<version>） "
-            f"| {human_size(bootstrap_tgz.stat().st_size)} "
-            f"| `{sha256_of(bootstrap_tgz)}` |"
+            f"| {framework_tgz.name}（前端框架离线包，install.sh 安装到"
+            f" src/{FRAMEWORK_VENDOR_DIR}/{p.framework_vendor_label}-<version>） "
+            f"| {human_size(framework_tgz.stat().st_size)} "
+            f"| `{sha256_of(framework_tgz)}` |"
         )
     out.append("")
 
@@ -406,10 +406,10 @@ def emit(p, results):
         if devcontainer_json:
             entries.append(("devcontainer_json", str(devcontainer_json)))
             entries.append(("devcontainer_json_name", devcontainer_json.name))
-        bootstrap_tgz = results.get("bootstrap_tgz")
-        if bootstrap_tgz:
-            entries.append(("bootstrap_tgz", str(bootstrap_tgz)))
-            entries.append(("bootstrap_name", bootstrap_tgz.name))
+        framework_tgz = results.get("framework_tgz")
+        if framework_tgz:
+            entries.append(("framework_tgz", str(framework_tgz)))
+            entries.append(("framework_name", framework_tgz.name))
         entries.append(("images", ",".join(results.get("images") or [])))
         with open(output_path, "a", encoding="utf-8") as f:
             for key, value in entries:

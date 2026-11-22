@@ -10,7 +10,8 @@ import shutil
 from pathlib import Path
 
 from .params import (
-    BOOTSTRAP_VENDOR_DIR,
+    FRAMEWORK_NAMES,
+    FRAMEWORK_VENDOR_DIR,
     NPM_PACKAGES_CONTAINER_DIR,
     Params,
 )
@@ -270,11 +271,14 @@ def _base_mapping(p):
         "NPM_MAKE_TARGETS": _npm_make_targets(p),
         "NPM_PHONY": _NPM_PHONY if (p.enable_node and p.dev_tools_enabled) else "",
         "NPM_CHECK": _npm_check(p),
-        # ---- Bootstrap 前端库 ----
-        "BOOTSTRAP_MODE": p.bootstrap_install,
-        "BOOTSTRAP_SPEC": p.bootstrap_spec,
-        "BOOTSTRAP_VENDOR_DIR": BOOTSTRAP_VENDOR_DIR,
-        "BOOTSTRAP_BLOCK": _bootstrap_npm_block(p),
+        # ---- 前端框架（Bootstrap / Tailwind CSS）----
+        "FRAMEWORK_ENABLED": "1" if p.framework_enabled else "0",
+        "FRAMEWORK_NAME": FRAMEWORK_NAMES[p.framework_name],
+        "FRAMEWORK_MODE": p.framework_install,
+        "FRAMEWORK_SPEC": p.framework_spec,
+        "FRAMEWORK_VENDOR_LABEL": p.framework_vendor_label,
+        "FRAMEWORK_VENDOR_DIR": FRAMEWORK_VENDOR_DIR,
+        "FRAMEWORK_BLOCK": _framework_npm_block(p),
         # ---- install.sh --load-target：归档内的 sidecar 镜像（任何 target 都导入） ----
         "SIDECAR_IMAGES": _sidecar_images(p),
     }
@@ -291,22 +295,23 @@ def _sidecar_images(p):
     return " ".join(images)
 
 
-def _bootstrap_npm_block(p):
-    """Dockerfile 中 bootstrap 的 npm 全局安装块（install_via_npm 模式）。
+def _framework_npm_block(p):
+    """Dockerfile 中前端框架的 npm 全局安装块（install_via_npm 模式）。
 
-    bootstrap_install=install_via_npm 时 enable_node 被强制开启（params.load），
-    因此本块只会在 NODE_BLOCK 之后渲染，npm 一定可用。
+    css_framework_install=*_install_via_npm 时 enable_node 被强制开启
+    （params.load），因此本块只会在 NODE_BLOCK 之后渲染，npm 一定可用。
     """
-    if not p.bootstrap_npm:
+    if not p.framework_npm:
         return ""
+    pkgs = " ".join(p.framework_npm_packages)
+    names = " ".join(x.rsplit("@", 1)[0] for x in p.framework_npm_packages)
     return (
-        "\n# 预装 Bootstrap 前端库（构建期联网 npm 全局安装，离线容器内可直接引用\n"
-        "# /usr/local/lib/node_modules/bootstrap/dist/ 下的 css/js 静态资源）\n"
+        "\n# 预装前端框架（构建期联网 npm 全局安装，离线容器内可直接使用）\n"
         f"RUN npm install -g --no-audit --no-fund --registry {p.npm_registry_url} "
-        f"bootstrap@{p.bootstrap_spec} \\\n"
+        f"{pkgs} \\\n"
         "    && npm cache clean --force \\\n"
         "    && rm -rf /tmp/npm-cache \\\n"
-        "    && npm ls -g --depth=0 bootstrap\n"
+        f"    && npm ls -g --depth=0 {names}\n"
     )
 
 
@@ -773,26 +778,48 @@ note "4. make shell 后运行 npm run dev -- --host 0.0.0.0（vite 默认 5173�
 '''
 
 
-def _bootstrap_notice_block(p):
-    """install.sh 中的 Bootstrap 提示（bootstrap_install 非 none 时）。"""
-    if p.bootstrap_pack:
-        vendor = f"$SRC_DIR/{BOOTSTRAP_VENDOR_DIR}"
+def _framework_notice_block(p):
+    """install.sh 中的前端框架提示（css_framework_install 非 none 时）。"""
+    if not p.framework_enabled:
+        return ""
+    vendor = (f"$SRC_DIR/{FRAMEWORK_VENDOR_DIR}/"
+              f"{p.framework_vendor_label}-<version>")
+    container = (f"/app/{FRAMEWORK_VENDOR_DIR}/"
+                 f"{p.framework_vendor_label}-<version>")
+    if p.framework_pack:
+        if p.framework_name == "bootstrap":
+            usage = (
+                f'note "  （容器内路径 {container}/，Django/Jinja 可直接引用 '
+                f'dist/ 下的 css/js 静态资源）"'
+            )
+        else:
+            usage = (
+                f'note "  （容器内文件 {container}/dist/index.global.js，在模板中以'
+                f'静态目录 URL 引用即可在浏览器端编译 Tailwind 类名，无需构建）"'
+            )
         return f'''
 echo ""
-printf '%s\\n' "${{C_BOLD}}Bootstrap 前端库（pack in artifact，本包自带离线 tgz）${{C_RESET}}"
-note "已把 bootstrap-<version>.tgz 解压到应用源码根目录 {vendor}/bootstrap-<version>/"
-note "  （容器内路径 /app/{BOOTSTRAP_VENDOR_DIR}/bootstrap-<version>/，Django/Jinja 可直接引用 dist/ 静态资源）"
-note "后续升级：重新构建时选择 pack_in_artifact 并指定 bootstrap_version，替换 vendor 目录"
+printf '%s\\n' "${{C_BOLD}}{FRAMEWORK_NAMES[p.framework_name]}（pack in artifact，本包自带离线 tgz）${{C_RESET}}"
+note "已把 {p.framework_vendor_label}-<version>.tgz 解压到应用源码根目录 {vendor}/"
+{usage}
+note "后续升级：重新构建（自动拉取最新版），替换 vendor 目录"
 '''
-    if p.bootstrap_npm:
+    if p.framework_name == "bootstrap":
         return f'''
 echo ""
 printf '%s\\n' "${{C_BOLD}}Bootstrap 前端库（install via npm，已打进镜像）${{C_RESET}}"
-note "镜像构建期已用 npm 全局安装 bootstrap@{p.bootstrap_spec}"
+note "镜像构建期已用 npm 全局安装 bootstrap@{p.framework_spec}"
 note "容器内查看/引用：npm ls -g bootstrap；静态资源在 /usr/local/lib/node_modules/bootstrap/dist/"
-note "应用按需从该目录复制到自己的 static 目录（vendor 模式见 bootstrap_install=pack_in_artifact）"
+note "应用按需从该目录复制到自己的 static 目录（离线 tgz 模式见 css_framework_install=*_pack_in_artifact）"
 '''
-    return ""
+    return f'''
+echo ""
+printf '%s\\n' "${{C_BOLD}}Tailwind CSS（install via npm，已打进镜像）${{C_RESET}}"
+note "镜像构建期已用 npm 全局安装 {' '.join(p.framework_npm_packages)}"
+note "容器内查看：tailwindcss --version；离线构建示例：tailwindcss -i ./src/input.css -o ./src/output.css --minify"
+note "  （入口 input.css 需含 @import 'tailwindcss';，CLI 扫描模板类名按需生成 CSS）"
+note "升级版本：重新构建即可拉取最新版（tailwindcss 与 @tailwindcss/cli 同步发布）"
+'''
 
 
 def render_install_sh(p, out_file):
@@ -803,7 +830,7 @@ def render_install_sh(p, out_file):
             **_base_mapping(p),
             "ORACLE_NOTICE_BLOCK": _oracle_notice_block(p),
             "NPM_NOTICE_BLOCK": _npm_notice_block(p),
-            "BOOTSTRAP_NOTICE_BLOCK": _bootstrap_notice_block(p),
+            "FRAMEWORK_NOTICE_BLOCK": _framework_notice_block(p),
         },
     )
     path = Path(out_file)
@@ -978,52 +1005,107 @@ def _npm_html_section(p):
 """
 
 
-def _bootstrap_readme_section(p):
-    if not p.bootstrap_pack:
+def _framework_readme_section(p):
+    """bundle README 的前端框架段落（仅 pack in artifact 模式；npm 模式提示见
+    install.sh 安装完成输出）。"""
+    if not p.framework_pack:
         return ""
-    vendor = f"src/{BOOTSTRAP_VENDOR_DIR}"
-    return f"""
+    label = p.framework_vendor_label
+    vendor = f"src/{FRAMEWORK_VENDOR_DIR}/{label}"
+    tgz = f"{label}-<version>.tgz"
+    if p.framework_name == "bootstrap":
+        return f"""
 ## Bootstrap 前端库（pack in artifact，本包自带离线 tgz）
 
-构建期已从 npm 源下载 `bootstrap-{p.bootstrap_spec if p.bootstrap_version != '' else '<latest>'}.tgz`
-随本 bundle 分发，install.sh 会自动把它解压到应用源码根目录
-`{vendor}/bootstrap-<version>/`（容器内路径 `/app/{BOOTSTRAP_VENDOR_DIR}/bootstrap-<version>/`）。
+构建期已从 npm 源下载 `{tgz}` 随本 bundle 分发，install.sh 会自动把它解压到
+应用源码根目录 `{vendor}-<version>/`（容器内路径
+`/app/{FRAMEWORK_VENDOR_DIR}/{label}-<version>/`）。
 
-1. 确认安装结果：`ls {vendor}/bootstrap-*/dist/css/bootstrap.min.css`
+1. 确认安装结果：`ls {vendor}-*/dist/css/bootstrap.min.css`
 2. 模板中按需引用 `<version>` 对应的 dist 静态资源（css/js）。
-3. 升级版本：重新构建时指定 `bootstrap_version`，替换 `{vendor}/` 下对应目录。
+3. 升级版本：重新构建（自动拉取最新版），替换 `{vendor}/` 下对应目录。
+"""
+    return f"""
+## Tailwind CSS（pack in artifact，本包自带离线 tgz）
+
+构建期已从 npm 源下载 `{tgz}`（Tailwind 官方浏览器端运行时
+`@tailwindcss/browser`）随本 bundle 分发，install.sh 会自动把它解压到应用源码
+根目录 `{vendor}-<version>/`，容器内文件
+`/app/{FRAMEWORK_VENDOR_DIR}/{label}-<version>/dist/index.global.js`。
+
+1. 确认安装结果：`ls {vendor}-*/dist/index.global.js`
+2. 模板中以静态目录 URL 引用该 JS（路径按应用静态目录调整），即可在浏览器端
+   编译 Tailwind 类名，无需 Node 构建：
+
+   ```html
+   <script src="/static/{FRAMEWORK_VENDOR_DIR}/{label}-<version>/dist/index.global.js"></script>
+   ```
+
+3. 升级版本：重新构建（自动拉取最新版），替换 `{vendor}/` 下对应目录。
 """
 
 
-def _bootstrap_html_section(p):
-    if not p.bootstrap_pack:
+def _framework_html_section(p):
+    """readme.html 中的前端框架卡片（仅 pack in artifact 模式）。"""
+    if not p.framework_pack:
         return ""
-    vendor = f"src/{BOOTSTRAP_VENDOR_DIR}"
+    label = p.framework_vendor_label
+    vendor = f"src/{FRAMEWORK_VENDOR_DIR}/{label}"
     step_no = "08" if p.oracle_enabled else "07"
+    if p.framework_name == "bootstrap":
+        check_cmd = f"ls {vendor}-*/dist/css/bootstrap.min.css"
+        usage_html = (
+            "Django / Jinja 模板可直接引用其中的 <code>dist/</code> 静态资源\n"
+            "      （css/js）。"
+        )
+        extra_step = ""
+    else:
+        check_cmd = f"ls {vendor}-*/dist/index.global.js"
+        usage_html = (
+            "该包是 Tailwind 官方浏览器端运行时 <code>@tailwindcss/browser</code>：\n"
+            "      模板中以静态目录 URL 引用 <code>dist/index.global.js</code>"
+            "（路径按应用静态目录调整），即可在浏览器端编译 Tailwind 类名，"
+            "无需 Node 构建。"
+        )
+        extra_step = f"""
+      <div class="step">
+        <div class="step-head">
+          <span class="step-badge">2</span>
+          <div>
+            <h3>模板引用（URL 按应用静态目录调整）</h3>
+            <p>&lt;script src="/static/{FRAMEWORK_VENDOR_DIR}/{label}-&lt;version&gt;/dist/index.global.js"&gt;&lt;/script&gt;</p>
+          </div>
+        </div>
+        <div class="codeblock">
+          <div class="codebar"><span class="code-label">模板</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
+          <pre><code>&lt;script src="/static/{FRAMEWORK_VENDOR_DIR}/{label}-&lt;version&gt;/dist/index.global.js"&gt;&lt;/script&gt;</code></pre>
+        </div>
+      </div>
+"""
     return f"""
     <section class="card">
-      <h2><span class="step-dot">{step_no}</span>Bootstrap 前端库（本包自带离线 tgz）</h2>
-      <p>构建期已从 npm 源下载 <code>bootstrap-*.tgz</code> 随 bundle 分发，install.sh
-      会自动解压到应用源码根目录 <code>{vendor}/bootstrap-&lt;version&gt;/</code>
-      （容器内 <code>/app/{BOOTSTRAP_VENDOR_DIR}/bootstrap-&lt;version&gt;/</code>），
-      Django / Jinja 模板可直接引用其中的 <code>dist/</code> 静态资源。</p>
+      <h2><span class="step-dot">{step_no}</span>{FRAMEWORK_NAMES[p.framework_name]}（本包自带离线 tgz）</h2>
+      <p>构建期已从 npm 源下载 <code>{label}-*.tgz</code> 随 bundle 分发，install.sh
+      会自动解压到应用源码根目录 <code>{vendor}-&lt;version&gt;/</code>
+      （容器内 <code>/app/{FRAMEWORK_VENDOR_DIR}/{label}-&lt;version&gt;/</code>）。
+      {usage_html}</p>
 
       <div class="step">
         <div class="step-head">
           <span class="step-badge">1</span>
           <div>
             <h3>确认安装结果</h3>
-            <p>检查 vendor 目录与 bootstrap 静态资源是否就位。</p>
+            <p>检查 vendor 目录与静态资源是否就位。</p>
           </div>
         </div>
         <div class="codeblock">
           <div class="codebar"><span class="code-label">项目根目录</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
-          <pre><code>ls {vendor}/bootstrap-*/dist/css/bootstrap.min.css</code></pre>
+          <pre><code>{check_cmd}</code></pre>
         </div>
       </div>
-
-      <div class="tip"><strong>升级版本：</strong>重新构建时填写 <code>bootstrap_version</code>
-      （留空拉最新版），install.sh 会安装到新的 <code>bootstrap-&lt;version&gt;</code> 目录。</div>
+{extra_step}
+      <div class="tip"><strong>升级版本：</strong>重新构建即可拉取最新版，
+      install.sh 会安装到新的 <code>{label}-&lt;version&gt;</code> 目录。</div>
     </section>
 """
 
@@ -1036,7 +1118,7 @@ def render_readme_html(p, out_file):
             **_base_mapping(p),
             "ORACLE_SECTION": _oracle_html_section(p),
             "NPM_SECTION": _npm_html_section(p),
-            "BOOTSTRAP_SECTION": _bootstrap_html_section(p),
+            "FRAMEWORK_SECTION": _framework_html_section(p),
             "AGENT_HTML_SECTION": _agent_html_section(p),
         },
     )
@@ -1287,16 +1369,19 @@ def render_src_readme(p):
             node_summary += f"（全局预装：{', '.join(p.npm_package_list)}）"
     else:
         node_summary = "未启用"
-    if p.bootstrap_pack:
-        bootstrap_summary = (
-            "pack in artifact（install.sh 安装到 "
-            f"`src/{BOOTSTRAP_VENDOR_DIR}/bootstrap-<version>`，"
-            f"版本 {p.bootstrap_spec}）"
+    if p.framework_pack:
+        framework_summary = (
+            f"{FRAMEWORK_NAMES[p.framework_name]}（pack in artifact，install.sh "
+            f"安装到 `src/{FRAMEWORK_VENDOR_DIR}/{p.framework_vendor_label}-<version>`，"
+            f"版本 latest）"
         )
-    elif p.bootstrap_npm:
-        bootstrap_summary = f"install via npm（已打进镜像，bootstrap@{p.bootstrap_spec}）"
+    elif p.framework_npm:
+        framework_summary = (
+            f"{FRAMEWORK_NAMES[p.framework_name]}（install via npm，已打进镜像，"
+            f"{' '.join(p.framework_npm_packages)}）"
+        )
     else:
-        bootstrap_summary = "未启用"
+        framework_summary = "未启用"
 
     return _sub(
         _load("README.src.tmpl"),
@@ -1307,9 +1392,9 @@ def render_src_readme(p):
             "DEV_TOOLS_NOTE": dev_note,
             "ORACLE_SUMMARY": oracle_summary,
             "NODE_SUMMARY": node_summary,
-            "BOOTSTRAP_SUMMARY": bootstrap_summary,
+            "FRAMEWORK_SUMMARY": framework_summary,
             "ORACLE_SECTION": _oracle_readme_section(p),
-            "BOOTSTRAP_SECTION": _bootstrap_readme_section(p),
+            "FRAMEWORK_SECTION": _framework_readme_section(p),
             "NPM_SECTION": _npm_readme_section(p),
             "AGENT_SECTION": _agent_readme_section(p),
         },

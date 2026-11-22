@@ -15,7 +15,7 @@
     6. lib/summary.py 写 GITHUB_STEP_SUMMARY / GITHUB_OUTPUT，
        上传唯一 Artifact：<image_prefix>_devcontainer_<arch>_<ts>（zip，内含镜像归档
        tgz、src tgz、install.sh、readme.html 与 devcontainer.json 五个文件；
-       bootstrap_install=pack_in_artifact 时额外包含 bootstrap-<version>.tgz）
+       css_framework_install=*_pack_in_artifact 时额外包含 <框架标签>-<version>.tgz）
 
 本地联调可设置 DEVCONTAINER_SKIP_DOCKER=1 跳过 docker 步骤。
 """
@@ -28,8 +28,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from lib import bootstrap as bootstrap_mod  # noqa: E402
 from lib import docker as docker_mod  # noqa: E402
+from lib import framework as framework_mod  # noqa: E402
 from lib import package as package_mod  # noqa: E402
 from lib import params as params_mod  # noqa: E402
 from lib import pip as pip_mod  # noqa: E402
@@ -66,7 +66,7 @@ def main():
     print(f"  preset_envs={[k for k, _v in p.preset_env_pairs]}")
     print(f"  node={p.enable_node}(v{p.node_version}) npm_packages={p.npm_package_list} "
           f"npm_packages_dir={p.npm_packages_dir}")
-    print(f"  bootstrap_install={p.bootstrap_install} bootstrap_version={p.bootstrap_spec}")
+    print(f"  css_framework_install={p.css_framework_install}")
 
     work_dir = REPO_ROOT / "dist" / "devcontainer"
     if work_dir.exists():
@@ -77,11 +77,13 @@ def main():
     # 1. 模板渲染（requirements.txt 供下一步 pip download 使用）
     render_mod.render_all(p, staging)
 
-    # 1.5 bootstrap pack_in_artifact：构建期下载离线 tgz（随 Artifact 分发，
-    #     install.sh 在离线机器上解压到 <项目根>/src/vendor/bootstrap-<version>）
-    bootstrap_tgz = None
-    if p.bootstrap_pack:
-        bootstrap_tgz = bootstrap_mod.download_bootstrap_tgz(p, REPO_ROOT / "dist")
+    # 1.5 前端框架 pack_in_artifact：构建期下载离线 tgz（随 Artifact 分发，
+    #     install.sh 在离线机器上解压到 <项目根>/src/vendor/<框架标签>-<version>）
+    framework_tgz = None
+    if p.framework_pack:
+        framework_tgz = framework_mod.download_framework_tgz(
+            p, REPO_ROOT / "dist"
+        )
 
     # 2. pip download → wheels/
     wheels_count = pip_mod.download_wheels(p, staging)
@@ -162,7 +164,7 @@ def main():
         "install_sh": install_sh,
         "readme_html": readme_html,
         "devcontainer_json": devcontainer_json,
-        "bootstrap_tgz": bootstrap_tgz,
+        "framework_tgz": framework_tgz,
         # minimal 只含用户实际改动过的输入，直接展示在构建摘要中
         "workflow_params_minimal": workflow_params_snapshot["minimal"],
         "images": images,
