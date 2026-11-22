@@ -438,19 +438,23 @@ make up && make logs
   时只启动默认 nginx，需要自行提供配置文件。
 - **postgres**（`enable_extra_services` 含 `postgres16`）：`postgres:16`，compose
   服务名固定为 `db`，带 `pg_isready` 健康检查，仅容器网络内可达，连接串
-  `postgres://postgres:postgres@db:5432/postgres`，数据持久化在 `pgdata`
-  卷（`make down` 不删除数据卷）。
+  `postgres://postgres:postgres@db:5432/postgres`，数据持久化在项目根
+  `./volumes/pgdata` 目录（bind mount，`make down` 不删除数据）。
 - **mysql**（`enable_extra_services` 含 `mysql8.4`）：`mysql:8.4`，compose
   服务名固定为 `db`，root 密码 `mysql` 并预置 `app` 库，带 `mysqladmin ping`
   健康检查，仅容器网络内可达，连接串 `mysql://root:mysql@db:3306/app`，
-  数据持久化在 `mysqldata` 卷。
+  数据持久化在项目根 `./volumes/mysqldata` 目录（bind mount）。
 - **mongo**（`enable_extra_services` 含 `mongo9`）：`mongo:9`，compose 服务名
   固定为 `db`，带 `mongosh ping` 健康检查，仅容器网络内可达，连接串
-  `mongodb://db:27017`，数据持久化在 `mongodata` 卷。
+  `mongodb://db:27017`，数据持久化在项目根 `./volumes/mongodata` 目录
+  （bind mount）。
 - 内置依赖逻辑：`enable_extra_services` 含 DB 服务（postgres16 / mysql8.4 /
   mongo9 任一）时，app 服务自动 `depends_on` 服务名 `db` 并等待健康检查通过
   （`condition: service_healthy`），避免启动期连接被拒；nginx 不产生
   `depends_on`。
+- 所有 DB 数据目录统一映射到项目根 `volumes/` 下（`./volumes/pgdata` /
+  `./volumes/mysqldata` / `./volumes/mongodata`），首次 `make up` 时由
+  Docker 自动创建，数据随项目根目录走（备份/迁移直接拷贝该目录）。
 - 所有服务均设置 `restart: unless-stopped` 与 `pull_policy: never`，离线环境
   不会尝试拉取镜像。
 

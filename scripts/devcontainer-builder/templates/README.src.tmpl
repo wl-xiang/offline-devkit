@@ -102,8 +102,8 @@ make down         # 停止
   真实应用入口。
 - `.dockerignore` / `.gitignore` 由 install.sh 安装到项目根目录（已存在时仅
   追加缺失条目）：构建上下文与 git 忽略 `dist/`（bundle 产物）、`deps/`
-  （离线依赖：deps/wheels、deps/packages）、`.addon-build/`（补装构建临时目录）等，
-  避免大文件进入镜像层或被误提交。
+  （离线依赖：deps/wheels、deps/packages）、`volumes/`（DB 数据目录）、
+  `.addon-build/`（补装构建临时目录）等，避免大文件进入镜像层或被误提交。
 - **离线补装 Python 包**：发现缺包时，在联网机器用本仓库的
   `scripts/pip/pip_download.py` 下载 wheel 到项目根目录 `deps/wheels/`，然后在
   项目根目录执行 `bash build.sh`——基于现有镜像生成 addon 新镜像（prod 为

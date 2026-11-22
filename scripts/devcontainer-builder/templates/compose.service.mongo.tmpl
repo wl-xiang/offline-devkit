@@ -9,6 +9,6 @@
       retries: 10
       start_period: 30s
     volumes:
-      - mongodata:/data/db
+      - ./volumes/mongodata:/data/db
     networks:
       - app-net

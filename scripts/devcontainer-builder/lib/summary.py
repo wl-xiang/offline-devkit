@@ -292,15 +292,16 @@ def build_markdown(p, results):
     if p.enable_postgres:
         out.append("postgres 已启用（compose 服务名 `db`）: 连接串 "
                    "`postgres://postgres:postgres@db:5432/postgres`，"
-                   "数据持久化在 `pgdata` 卷。")
+                   "数据持久化在项目根 `./volumes/pgdata` 目录（bind mount）。")
         out.append("")
     if p.enable_mysql:
         out.append("mysql 已启用（compose 服务名 `db`）: 连接 `mysql -h db -uroot -pmysql`"
-                   "（root 密码 `mysql`，预置数据库 `app`），数据持久化在 `mysqldata` 卷。")
+                   "（root 密码 `mysql`，预置数据库 `app`），数据持久化在项目根 "
+                   "`./volumes/mysqldata` 目录（bind mount）。")
         out.append("")
     if p.enable_mongo:
         out.append("mongo 已启用（compose 服务名 `db`）: 连接串 `mongodb://db:27017`，"
-                   "数据持久化在 `mongodata` 卷。")
+                   "数据持久化在项目根 `./volumes/mongodata` 目录（bind mount）。")
         out.append("")
     if p.enable_nginx:
         out.append("nginx 已启用: 宿主机 `http://<host>:8080` → 容器 80 端口。")

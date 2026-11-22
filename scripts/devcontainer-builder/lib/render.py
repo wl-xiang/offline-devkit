@@ -694,14 +694,9 @@ def render_compose(p):
     if service_blocks:
         service_blocks += "\n"
 
-    volumes = []
-    if p.enable_postgres:
-        volumes.append("  pgdata: {}")
-    if p.enable_mysql:
-        volumes.append("  mysqldata: {}")
-    if p.enable_mongo:
-        volumes.append("  mongodata: {}")
-    volumes_block = "volumes:\n" + "\n".join(volumes) + "\n" if volumes else ""
+    # DB 数据落盘改为宿主机 bind mount（项目根 ./volumes/<name> 目录），
+    # 不再使用 compose 命名卷，顶层 volumes: 声明随之移除。
+    volumes_block = ""
 
     return _sub(
         _load("compose.base.tmpl"),
@@ -1425,11 +1420,11 @@ def render_src_readme(p):
     if p.enable_nginx:
         services.append("nginx:stable (宿主机 8080 → 容器 80)")
     if p.enable_postgres:
-        services.append("postgres:16 (compose 服务名 db, 数据卷 pgdata)")
+        services.append("postgres:16 (compose 服务名 db, 数据目录 ./volumes/pgdata)")
     if p.enable_mysql:
-        services.append("mysql:8.4 (compose 服务名 db, 数据卷 mysqldata)")
+        services.append("mysql:8.4 (compose 服务名 db, 数据目录 ./volumes/mysqldata)")
     if p.enable_mongo:
-        services.append("mongo:9 (compose 服务名 db, 数据卷 mongodata)")
+        services.append("mongo:9 (compose 服务名 db, 数据目录 ./volumes/mongodata)")
     services_summary = "、".join(services) if services else "无"
 
     if p.dev_image_only:

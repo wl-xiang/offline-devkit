@@ -12,6 +12,6 @@
       retries: 10
       start_period: 30s
     volumes:
-      - mysqldata:/var/lib/mysql
+      - ./volumes/mysqldata:/var/lib/mysql
     networks:
       - app-net
