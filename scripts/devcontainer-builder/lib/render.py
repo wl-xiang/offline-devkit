@@ -10,10 +10,14 @@ import shutil
 from pathlib import Path
 
 from .params import (
+    DOCKER_RUN_CONTAINER_PATH,
+    EXTRA_SERVICES_IMAGES,
     FRAMEWORK_NAMES,
     FRAMEWORK_VENDOR_DIR,
+    GO_VERSION,
     NPM_PACKAGES_CONTAINER_DIR,
     Params,
+    PYTHON_VERSION,
 )
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -67,6 +71,10 @@ shell: check-dev ## 进入 dev 容器交互式 bash
 dev: check-dev ## 等价于 shell
 \t$(DEV_RUN)
 
+"""
+
+# Makefile 中 Python 开发目标（仅 target_codec 预装 Python 时生成）
+_PY_MAKE_TARGETS = """\
 lint: check-dev ## ruff 静态检查
 \t$(DEV_RUN) ruff check .
 
@@ -78,7 +86,9 @@ test: check-dev ## 运行 pytest
 
 """
 
-_DEV_PHONY = "check-dev shell dev lint compile test "
+_DEV_PHONY = "check-dev shell dev "
+
+_PY_PHONY = "lint compile test "
 
 # 前端离线开发（enable_node）：Makefile 变量与 npm 目标
 _NPM_MAKE_VARS = """\
@@ -230,6 +240,9 @@ def _base_mapping(p):
         "PLATFORM": p.platform,
         "DOCKER_PLATFORM": p.docker_platform,
         "PYTHON_VERSION": p.python_version,
+        "TARGET_CODEC": p.target_codec,
+        "ENABLE_EXTRA_SERVICES": p.extra_services,
+        "GO_VERSION": p.go_version,
         "GLIBC_VERSION": p.glibc_version,
         "MANYLINUX_LABEL": p.manylinux_label,
         "PIP_PLATFORM_TAG": p.pip_platform_tag,
@@ -241,16 +254,21 @@ def _base_mapping(p):
         "APP_BUILD_TARGET": p.app_build_target,
         "APP_SOURCE_DIR": p.app_source_dir,
         "APP_VOLUME": json.dumps(p.mount_path),
-        "NEEDS_MAIN_PY": "1" if p.prod_command == "python main.py" else "0",
+        # 占位入口按 target_codec 生成：python3.13 → main.py，golang1.26 → main.go
+        "PYTHON_ENABLED": "1" if p.python_enabled else "0",
+        "GO_ENABLED": "1" if p.go_enabled else "0",
         "IMAGE_LIST": " ".join(p.image_refs),
         "DEV_IMAGE": p.dev_image,
-        "PROD_COMMAND": p.prod_command,
-        # YAML 双引号标量（json.dumps 的转义规则与 YAML 兼容）
-        "PROD_COMMAND_YAML": json.dumps(p.prod_command),
-        "PROD_COMMAND_JSON": p.prod_command_json,
-        # 用户包 + 预装组件（lucide / oracledb）的合并清单
+        # 用户包 + 预装组件（playwright / oracledb）的合并清单
         "PIP_PACKAGES_LINES": "\n".join(p.preinstall_pip_packages),
         "DEV_PIP_TOOLS": " ".join(p.dev_pip_tools),
+        # ---- 基础镜像与 Golang 工具链（target_codec 决定） ----
+        "BASE_IMAGE": _base_image(p),
+        "GO_STAGE": _go_stage(p),
+        "GO_BLOCK": _go_block(p),
+        # ---- 容器默认启动脚本（镜像 ENTRYPOINT；项目根同名脚本只读挂载覆盖） ----
+        "DOCKER_RUN_CONTAINER_PATH": DOCKER_RUN_CONTAINER_PATH,
+        "DOCKER_RUN_MOUNT": p.docker_run_mount,
         # ---- Oracle（runtime_deps_only：客户端由 compose 挂载；full：客户端内置） ----
         "ORACLE_MODE": p.oracle_instantclient_mode,
         "ORACLE_ENABLED": "1" if p.oracle_enabled else "0",
@@ -284,14 +302,45 @@ def _base_mapping(p):
     }
 
 
+def _base_image(p):
+    """基础镜像：预装 Python 时用 python:slim-bookworm，纯 Golang 时用
+    golang:slim-bookworm（python+go 组合在 python 基础上 COPY golang 工具链）。"""
+    if p.python_enabled:
+        return f"python:{PYTHON_VERSION}-slim-bookworm"
+    return f"golang:{GO_VERSION}-slim-bookworm"
+
+
+def _go_stage(p):
+    """Golang 构建阶段：python+go 组合时从官方 golang 镜像复制工具链。"""
+    if not (p.python_enabled and p.go_enabled):
+        return ""
+    return (
+        f"# ---- Golang 构建阶段：仅用于复制 go 工具链，不进入最终镜像 ----\n"
+        f"FROM --platform={p.docker_platform} golang:{GO_VERSION}-slim-bookworm AS golang\n"
+        "\n"
+    )
+
+
+def _go_block(p):
+    """Golang 工具链安装块：python+go 组合时 COPY --from=golang 到最终镜像
+    （纯 golang 时工具链已在基础镜像内，无需本块）。"""
+    if not (p.python_enabled and p.go_enabled):
+        return ""
+    return (
+        f"\n# ---- Golang {GO_VERSION} 工具链（python+go 组合：从官方 golang 镜像复制） ----\n"
+        "COPY --from=golang /usr/local/go /usr/local/go\n"
+        "ENV PATH=/usr/local/go/bin:/go/bin:${PATH} \\\n"
+        "    GOPATH=/go\n"
+    )
+
+
 def _sidecar_images(p):
     """本次构建打包进镜像归档的外挂服务镜像（install.sh --load-target 过滤时
     无论 dev/prod/app 都会一并导入）。"""
     images = []
-    if p.enable_nginx:
-        images.append("nginx:stable")
-    if p.enable_postgres:
-        images.append("postgres:16")
+    for service in ("nginx", "postgres16", "mysql8.4", "mongo9"):
+        if service in p.extra_services:
+            images.append(EXTRA_SERVICES_IMAGES[service])
     return " ".join(images)
 
 
@@ -372,7 +421,7 @@ def _extra_volumes(p):
 
 
 def _tz_env_block(p):
-    """镜像内时区：勾选 enable_tz_shanghai 时写入 ENV TZ（配合 tzdata 生效）。"""
+    """镜像内时区（内置启用）：写入 ENV TZ=Asia/Shanghai（配合 tzdata 生效）。"""
     if not p.tz_env:
         return ""
     return f"ENV TZ={p.tz_env}\n"
@@ -417,18 +466,21 @@ def _node_stage(p):
 
 
 def _node_block(p):
-    """Node.js 运行时 + 可选的全局 npm 包（enable_node 时）。"""
+    """Node.js 运行时 + 全局工具（enable_node 时）：pnpm 必装（node24 = npm +
+    pnpm + npx），可选追加用户 npm 包。"""
     if not p.enable_node:
         return ""
     text = _sub(_load("Dockerfile.node.tmpl"), {"NODE_VERSION": p.node_version})
-    if p.npm_package_list:
-        text += (
-            "\n# 预装前端工具（构建期联网安装到全局，离线容器内可直接使用）\n"
-            f"RUN npm install -g --no-audit --no-fund --registry {p.npm_registry_url} "
-            f"{' '.join(p.npm_package_list)} \\\n"
-            "    && npm cache clean --force \\\n"
-            "    && rm -rf /tmp/npm-cache\n"
-        )
+    pkgs = ["pnpm", *p.npm_package_list]
+    text += (
+        "\n# 预装前端工具（构建期联网安装到全局，离线容器内可直接使用；"
+        "node24 = npm + pnpm + npx）\n"
+        f"RUN npm install -g --no-audit --no-fund --registry {p.npm_registry_url} "
+        f"{' '.join(pkgs)} \\\n"
+        "    && npm cache clean --force \\\n"
+        "    && rm -rf /tmp/npm-cache \\\n"
+        "    && pnpm --version\n"
+    )
     return text
 
 
@@ -475,7 +527,10 @@ def _npm_check(p):
     )
 
 
-def _install_block(local_wheels, req_path="requirements.txt"):
+def _install_block(p, local_wheels, req_path="requirements.txt"):
+    # 纯 Golang 环境（无 Python/pip）：无 requirements.txt 安装层
+    if not p.python_enabled:
+        return "# 纯 Golang 环境：无 Python 依赖安装层（go run main.go 直接运行源码）\n"
     if local_wheels:
         return (
             "# wheels 经 BuildKit bind mount 只读挂载参与安装，不复制进任何镜像层：\n"
@@ -497,6 +552,8 @@ def _install_block(local_wheels, req_path="requirements.txt"):
 
 def _dev_pip_block(p, local_wheels):
     tools = " ".join(p.dev_pip_tools)
+    if not tools:
+        return ""
     if local_wheels:
         return (
             "# dev 工具的 wheel 已随 wheels/ 一起下载，同样经 bind mount 安装，不落镜像层\n"
@@ -516,12 +573,10 @@ def render_dockerfile(p, local_wheels=True):
                 else "docs/devcontainer/requirements.txt")
     base = {
         **_base_mapping(p),
-        # 勾选 enable_tz_shanghai 时补装 tzdata（slim 镜像不带，TZ 环境变量才生效）
-        "APT_BLOCK": _apt_block(
-            p.apt_package_list + (["tzdata"] if p.enable_tz_shanghai else [])
-        ),
+        # tzdata 内置补装（slim 镜像不带，内置 TZ=Asia/Shanghai 环境变量才生效）
+        "APT_BLOCK": _apt_block(p.apt_package_list + ["tzdata"]),
         "CUSTOM_INSTALL_BLOCK": _custom_install_block(p.custom_install_cmd),
-        "INSTALL_BLOCK": _install_block(local_wheels, req_path),
+        "INSTALL_BLOCK": _install_block(p, local_wheels, req_path),
         "DEV_PIP_BLOCK": _dev_pip_block(p, local_wheels),
         "ORACLE_BLOCK": _oracle_block(p),
         "NODE_BLOCK": _node_block(p),
@@ -548,22 +603,21 @@ def render_src_dockerfile(p, staging):
 
 
 def _app_start_block(p):
-    """app 服务的启动方式：显式覆盖镜像 ENTRYPOINT/CMD，便于直接改 compose。
+    """app 服务的启动方式：启动命令由镜像 ENTRYPOINT（docker-run.sh）承载，
+    compose 置空 command 并挂载项目根 docker-run.sh 覆盖镜像内副本。
 
-    镜像默认命令由 Dockerfile 的 CMD 承载；这里固定写入 entrypoint: []
-    （清空镜像 ENTRYPOINT）与 command（默认 prod_command），用户无需重建镜像
-    即可调整启动命令，或按注释换成自定义启动脚本。
+    镜像内已 COPY 一份 docker-run.sh 并设为 ENTRYPOINT；项目根的同名脚本由
+    install.sh 安装、compose 只读挂载到同一路径，用户改根目录脚本即可调整
+    启动方式（默认 cd /app 后运行预置入口），无需重建镜像。
     """
     return (
-        "    # ---- 启动方式：直接改下面两项即可，无需重建镜像 ----\n"
-        "    # 镜像自带的 ENTRYPOINT / CMD 已被显式覆盖：entrypoint 为空 = 清空镜像\n"
-        "    # ENTRYPOINT；command 承载默认启动命令（构建参数 prod_command）。\n"
-        "    # 需要自定义启动脚本时，在 app 已有 volumes 下追加脚本挂载并修改：\n"
-        "    #     - ./my-start.sh:/opt/my-start.sh:ro\n"
-        "    #   entrypoint: [\"/bin/bash\", \"/opt/my-start.sh\"]\n"
-        "    #   command: []   # 按需清空，避免镜像 CMD 被追加为脚本参数\n"
-        "    entrypoint: []\n"
-        f"    command: {p.prod_command_json}  # 使用自定义 entrypoint 时改为 []\n"
+        "    # ---- 启动方式：镜像 ENTRYPOINT 为 /usr/local/bin/docker-run.sh ----\n"
+        "    # 默认行为：cd /app 后运行预置入口（python main.py / go run main.go）。\n"
+        "    # 项目根的 docker-run.sh 已只读挂载到镜像内同一路径，直接改根目录的\n"
+        "    # docker-run.sh 即可自定义启动方式（无需重建镜像）；command: [] 表示\n"
+        "    # 不向 ENTRYPOINT 追加参数。临时调试可透传命令：\n"
+        "    #   docker compose run --rm app <命令>   # docker-run.sh 会 exec 该命令\n"
+        "    command: []\n"
     )
 
 
@@ -597,15 +651,12 @@ def _env_file_path(path):
 
 
 def _depends_on_block(p):
-    """app 的启动依赖；postgres 等待健康检查通过，避免首次连接被拒。"""
-    if not p.app_depends_on_nginx and not p.app_depends_on_postgres:
+    """app 的启动依赖（内置逻辑）：enable_extra_services 含 DB 服务时自动
+    depends_on 该 DB 并等待健康检查通过，避免首次连接被拒。
+    DB 在 compose 中的服务名固定为 `db`。"""
+    if not p.has_db_service:
         return ""
-    lines = ["    depends_on:\n"]
-    if p.app_depends_on_nginx:
-        lines.append("      nginx:\n        condition: service_started\n")
-    if p.app_depends_on_postgres:
-        lines.append("      postgres:\n        condition: service_healthy\n")
-    return "".join(lines)
+    return "    depends_on:\n      db:\n        condition: service_healthy\n"
 
 
 def _nginx_service(p):
@@ -635,11 +686,17 @@ def render_compose(p):
         services.append(_nginx_service(p))
     if p.enable_postgres:
         services.append(_load("compose.service.postgres.tmpl").rstrip("\n"))
+    if p.enable_mysql:
+        services.append(_load("compose.service.mysql.tmpl").rstrip("\n"))
+    if p.enable_mongo:
+        services.append(_load("compose.service.mongo.tmpl").rstrip("\n"))
     service_blocks = "\n".join(services)
     if service_blocks:
         service_blocks += "\n"
 
-    volumes_block = "volumes:\n  pgdata: {}\n" if p.enable_postgres else ""
+    # DB 数据落盘改为宿主机 bind mount（项目根 ./volumes/<name> 目录），
+    # 不再使用 compose 命名卷，顶层 volumes: 声明随之移除。
+    volumes_block = ""
 
     return _sub(
         _load("compose.base.tmpl"),
@@ -665,13 +722,18 @@ def render_makefile(p):
     dev_targets = ""
     if p.dev_tools_enabled:
         dev_targets = _sub(_DEV_MAKE_TARGETS, _base_mapping(p))
+        if p.python_enabled:
+            dev_targets += _sub(_PY_MAKE_TARGETS, _base_mapping(p))
+    phony_dev = _DEV_PHONY if p.dev_tools_enabled else ""
+    if p.dev_tools_enabled and p.python_enabled:
+        phony_dev += _PY_PHONY
     npm_phony = _NPM_PHONY if (p.enable_node and p.dev_tools_enabled) else ""
     return _sub(
         _load("Makefile.tmpl"),
         {
             **_base_mapping(p),
             "DEV_TARGETS": dev_targets,
-            "PHONY_DEV": _DEV_PHONY if p.dev_tools_enabled else "",
+            "PHONY_DEV": phony_dev,
             "NPM_TARGETS": _npm_make_targets(p),
             "PHONY_NPM": npm_phony,
         },
@@ -729,9 +791,31 @@ def render_env_example(p):
 
 
 def render_main_py():
-    """占位入口：install.sh 在应用源码目录 <项目根>/src 无 main.py 且启动
-    命令为默认值时复制过去。"""
+    """占位入口（target_codec 预装 Python 时随包分发）：install.sh 在应用源码
+    目录 <项目根>/src 无 main.py 时复制过去。"""
     return _load("main.py.tmpl")
+
+
+def render_main_go():
+    """占位入口（target_codec 预装 Golang 时随包分发）：install.sh 在应用源码
+    目录 <项目根>/src 无 main.go 时复制过去。"""
+    return _load("main.go.tmpl")
+
+
+def render_docker_run_sh(p):
+    """容器默认启动脚本（镜像 ENTRYPOINT）：cd /app 后运行预置入口。
+
+    - 预装 Python → python main.py（python3.13 + golang1.26 组合同为 python 优先）；
+    - 纯 Golang → go run main.go。
+    带参数调用时透传执行（`docker compose run --rm app <命令>` 仍可用）。
+    SRC Bundle 随包分发，install.sh 安装到项目根，compose 只读挂载覆盖镜像内
+    副本，改根目录脚本即可调整启动方式，无需重建镜像。
+    """
+    default_cmd = "python main.py" if p.python_enabled else "go run main.go"
+    return _sub(_load("docker-run.sh.tmpl"), {
+        "DOCKER_RUN_DEFAULT_COMMAND": default_cmd,
+        "TARGET_CODEC": p.target_codec,
+    })
 
 
 def _oracle_notice_block(p):
@@ -983,7 +1067,7 @@ def _npm_html_section(p):
           <span class="step-badge">3</span>
           <div>
             <h3>启动前端开发服务器</h3>
-            <p>推荐把构建参数 <code>prod_command</code> 设为
+            <p>推荐把项目根 <code>docker-run.sh</code> 的默认命令改为
             <code>npm run dev -- --host 0.0.0.0</code>、<code>app_port</code> 设为前端端口映射
             （vite 5173 / webpack 8080），<code>make up</code> 即带宿主机端口映射并支持热更新。</p>
           </div>
@@ -1197,7 +1281,7 @@ def _npm_readme_section(p):
    ```
    等价于容器内 `npm install --offline {NPM_PACKAGES_CONTAINER_DIR}/*.tgz`。
 3. 开发调试（二选一）：
-   - 推荐：构建参数 `prod_command` 设为 `npm run dev -- --host 0.0.0.0`，
+   - 推荐：把项目根 `docker-run.sh` 的默认命令改为 `npm run dev -- --host 0.0.0.0`，
      `app_port` 设为前端端口映射（vite `5173:5173` / webpack `8080:8080`），`make up` 即带
      宿主机端口映射；源码经 `/app` 挂载，支持热更新；
    - 临时：`docker compose run --rm -p 5173:5173 dev npm run dev -- --host 0.0.0.0`
@@ -1212,26 +1296,29 @@ def _agent_readme_section(p):
     if p.dev_tools_enabled:
         run = "docker compose run --rm dev"
         intro = (
-            "本项目的 Python / Node 运行环境**只在容器内**（dev 镜像已内置 "
-            "ruff / pytest）。宿主机无需安装 Python，也不要用宿主机的 "
-            "`python` / `pip` / `pytest` / `npm` 代替容器内环境——版本与依赖"
-            "都可能与镜像不一致。"
+            "本项目的运行环境**只在容器内**（dev 镜像按 target_codec 预装语言"
+            "环境，Python 环境已内置 ruff / pytest）。宿主机无需安装 Python，"
+            "也不要用宿主机的 `python` / `pip` / `pytest` / `npm` 代替容器内"
+            "环境——版本与依赖都可能不一致。"
         )
         rows = [
             ("查看 Python 版本", f"`{run} python -V`"),
             ("执行 Python 脚本", f"`{run} python path/to/script.py`"),
             ("交互式 shell", "`make shell`"),
-            ("运行全部测试", "`make test`"),
-            ("运行单个测试文件", f"`{run} pytest -q tests/test_x.py`"),
-            ("静态检查 / 编译检查", "`make lint` / `make compile`"),
             ("启动应用 / 查看日志", "`make up` / `make logs`"),
         ]
+        if p.python_enabled:
+            rows[2:2] = [
+                ("运行全部测试", "`make test`"),
+                ("运行单个测试文件", f"`{run} pytest -q tests/test_x.py`"),
+                ("静态检查 / 编译检查", "`make lint` / `make compile`"),
+            ]
     else:
         run = "docker compose run --rm app"
         intro = (
-            "本次**未构建 dev 镜像**，镜像内没有 ruff / pytest；但 Python 运行环境"
-            "仍然只在容器内。宿主机无需安装 Python，也不要用宿主机的 "
-            "`python` / `pip` 代替容器内环境。"
+            "本次**未构建 dev 镜像**（没有 ruff / pytest），但运行环境仍然只在"
+            "容器内。宿主机无需安装 Python，也不要用宿主机的 `python` / `pip` "
+            "代替容器内环境。"
         )
         rows = [
             ("查看 Python 版本", f"`{run} python -V`"),
@@ -1239,9 +1326,12 @@ def _agent_readme_section(p):
             ("交互式 shell", f"`{run} bash`"),
             ("启动应用 / 查看日志", "`make up` / `make logs`"),
         ]
+        if not p.python_enabled:
+            rows = [row for row in rows if "python" not in row[1].lower()
+                    and "Python" not in row[0]]
     if p.enable_node and p.dev_tools_enabled:
         rows.append(("安装前端离线依赖", "`make npm-install`"))
-        rows.append(("运行 npm / node", f"`{run} npm ...` / `{run} node ...`"))
+        rows.append(("运行 npm / pnpm / node", f"`{run} npm ...` / `{run} pnpm ...`"))
     table = "\n".join(f"| {purpose} | {cmd} |" for purpose, cmd in rows)
     return f"""
 ## 给 AI Agent 的使用约定（重要）
@@ -1330,7 +1420,11 @@ def render_src_readme(p):
     if p.enable_nginx:
         services.append("nginx:stable (宿主机 8080 → 容器 80)")
     if p.enable_postgres:
-        services.append("postgres:16 (数据卷 pgdata)")
+        services.append("postgres:16 (compose 服务名 db, 数据目录 ./volumes/pgdata)")
+    if p.enable_mysql:
+        services.append("mysql:8.4 (compose 服务名 db, 数据目录 ./volumes/mysqldata)")
+    if p.enable_mongo:
+        services.append("mongo:9 (compose 服务名 db, 数据目录 ./volumes/mongodata)")
     services_summary = "、".join(services) if services else "无"
 
     if p.dev_image_only:
@@ -1364,7 +1458,7 @@ def render_src_readme(p):
     else:
         oracle_summary = "未启用"
     if p.enable_node:
-        node_summary = f"Node.js {p.node_version} + npm"
+        node_summary = f"Node.js {p.node_version} + npm + pnpm + npx"
         if p.npm_package_list:
             node_summary += f"（全局预装：{', '.join(p.npm_package_list)}）"
     else:
@@ -1415,7 +1509,9 @@ def render_all(p, staging):
         "docker-compose.yml.tpl": render_compose(p),
         "Makefile": render_makefile(p),
         "requirements.txt": render_requirements(p),
-        "main.py": render_main_py(),
+        # 容器默认启动脚本（镜像 ENTRYPOINT；install.sh 安装到项目根，
+        # compose 只读挂载覆盖镜像内副本，用户可随时改写）
+        "docker-run.sh": render_docker_run_sh(p),
         "README.md": render_src_readme(p),
         # 离线补装：wheel 打进现有镜像生成 addon 镜像
         "Dockerfile.addon": render_dockerfile_addon(p),
@@ -1429,10 +1525,16 @@ def render_all(p, staging):
         # 仅缺失时安装）。部署脚本的 SYNC_REMOTE_* 变量模板是 scripts/.env.example
         ".env.example": render_env_example(p),
     }
+    # 占位入口按 target_codec 分发（install.sh 在 src 缺失时复制到源码目录）
+    if p.python_enabled:
+        files["main.py"] = render_main_py()
+    if p.go_enabled:
+        files["main.go"] = render_main_go()
     for name, content in files.items():
         (staging / name).write_text(content, encoding="utf-8")
     # 保留可执行位（tar 会随包保留；artifact zip 解压可能丢失，文档引导 bash 调用）
     (staging / "build.sh").chmod(0o755)
+    (staging / "docker-run.sh").chmod(0o755)
     # 部署辅助脚本（静态复制，不渲染）：随 src 产物分发到包内 scripts/ 目录，
     # install.sh 安装到项目根 scripts/（clean-images.sh 由 make clean 调用）
     scripts_dir = staging / "scripts"

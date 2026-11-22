@@ -70,11 +70,10 @@ def build_markdown(p, results):
     out.append(f"| 时间戳 (UTC+8) | `{p.ts}` |")
     out.append(f"| 镜像 TAG | `{p.tag}` ({p.image_tag}) |")
     out.append(f"| 目标平台 | `{p.docker_platform}` |")
-    out.append(f"| Python 版本 | `{p.python_version}` |")
+    out.append(f"| 预装语言环境 (target_codec) | `{p.target_codec}` |")
     out.append(f"| glibc (wheel 标签) | `{p.glibc_version}` → `{p.pip_platform_tag}` |")
     out.append(f"| pip 镜像源 | `{p.pip_mirror}` ({p.mirror_url}) |")
     out.append(f"| wheels 数量 | {wheels_count} |")
-    out.append(f"| 预装 lucide 图标库 (pip) | {_yes_no(p.enable_lucide)} |")
     out.append(f"| 预装 Playwright (pip + chromium) | {_yes_no(p.enable_playwright)} |")
     if p.oracle_full:
         oracle_mode = (
@@ -90,9 +89,11 @@ def build_markdown(p, results):
         oracle_mode = "未启用（none）"
     out.append(f"| Oracle Instant Client 19 | {oracle_mode} |")
     if p.enable_node:
-        node_mode = f"Node.js {p.node_version} + npm"
+        node_mode = f"Node.js {p.node_version} + npm + pnpm + npx"
         if p.framework_npm:
             node_mode += f"（含 {' '.join(p.framework_npm_packages)} 全局预装）"
+        if p.npm_package_list:
+            node_mode += f"（含 {', '.join(p.npm_package_list)} 全局预装）"
     else:
         node_mode = "未启用"
     out.append(f"| Node.js / npm | {node_mode} |")
@@ -124,14 +125,7 @@ def build_markdown(p, results):
     out.append(f"| 应用端口 (host:container) | {('`' + p.app_port + '`') if p.has_app_port else '(未指定)'} |")
     out.append(f"| env_file | {', '.join(p.env_file_list) if p.env_file_list else '(无)'} |")
     out.append(f"| SELinux 重打标签 (:z) | {_yes_no(p.selinux_relabel)} |")
-    if p.timezone_volumes:
-        out.append(
-            "| 宿主机时区挂载 | `/etc/localtime` + `/etc/timezone`（只读） |"
-        )
-    else:
-        out.append("| 宿主机时区挂载 | 未启用 |")
-    tz_summary = f"`TZ={p.tz_env}`（UTC+8，镜像内）" if p.tz_env else "未启用"
-    out.append(f"| 镜像内时区 (TZ) | {tz_summary} |")
+    out.append("| 时区（内置启用） | `TZ=Asia/Shanghai`（镜像内）+ `/etc/localtime` / `/etc/timezone` 只读挂载 |")
     out.append("")
 
     out.append("### pip 包清单（含预装组件）")
@@ -139,9 +133,7 @@ def build_markdown(p, results):
     if p.preinstall_pip_packages:
         for x in p.preinstall_pip_packages:
             note = ""
-            if x == "lucide" and p.enable_lucide:
-                note = "（预装：SVG 图标库）"
-            elif x == "playwright" and p.enable_playwright:
+            if x == "playwright" and p.enable_playwright:
                 note = "（预装：浏览器自动化，chromium 已内置 /opt/ms-playwright）"
             elif x.startswith("oracledb") and p.oracle_enabled:
                 note = "（预装：配合 Instant Client 19 连 Oracle 11g）"
@@ -170,10 +162,11 @@ def build_markdown(p, results):
 
     out.append("### 外挂服务")
     out.append("")
-    out.append("| 服务 | 启用 | app 依赖 (depends_on) |")
-    out.append("| --- | --- | --- |")
-    out.append(f"| nginx | {_yes_no(p.enable_nginx)} | {_yes_no(p.app_depends_on_nginx)} |")
-    out.append(f"| postgres | {_yes_no(p.enable_postgres)} | {_yes_no(p.app_depends_on_postgres)} |")
+    if p.extra_services != "none":
+        depends_note = "app 自动 depends_on DB 服务（等待健康检查通过）" if p.has_db_service else "app 无 DB 依赖"
+        out.append(f"| enable_extra_services | `{p.extra_services}`（{depends_note}） |")
+    else:
+        out.append("| enable_extra_services | `none` |")
     out.append("")
 
     out.append("### 生成的镜像")
@@ -251,18 +244,19 @@ def build_markdown(p, results):
     out.append("```")
     out.append("")
     out.append("   install.sh 会把 `Makefile` / `build.sh` / `Dockerfile`"
-               "（由 Dockerfile.addon 改名）/ `README.md` / `devcontainer.json` /"
-               " `.dockerignore` / `.gitignore` 安装到项目根目录（同名文件已存在"
-               "时终止安装），把部署辅助脚本 `push-bundle.sh` / `apply-bundle.sh` /"
-               " `rollback-bundle.sh` / `clean-images.sh` 安装到项目根 `scripts/`"
-               "（同名冲突时终止安装），根目录 `.env.example`"
+               "（由 Dockerfile.addon 改名）/ `docker-run.sh` / `README.md` /"
+               " `devcontainer.json` / `.dockerignore` / `.gitignore` 安装到项目根"
+               "目录（同名文件已存在时终止安装），把部署辅助脚本 `push-bundle.sh` /"
+               " `apply-bundle.sh` / `rollback-bundle.sh` / `clean-images.sh` 安装到"
+               " 项目根 `scripts/`（同名冲突时终止安装），根目录 `.env.example`"
                "（docker-compose.yml 运行时变量模板）仅在缺失时安装；同时把 src"
                " 解压到 `<项目根>/docs/devcontainer`（原始副本，用于重置），把"
-               " `docker-compose.yml` 复制到项目根目录，并在缺少 `main.py` 时"
-               "放置占位入口。")
+               " `docker-compose.yml` 复制到项目根目录，并按预装语言环境在缺少"
+               " 占位入口时放置 `main.py` / `main.go`。")
     out.append("")
     out.append(f"3. 离线自检（回到**项目根目录**执行，确认镜像已导入、架构匹配；"
-               f"prod 命令为 `{p.prod_command}`):")
+               "启动命令由镜像 ENTRYPOINT 的 docker-run.sh 承载，默认 cd /app 后"
+               f"运行 {'python main.py' if p.python_enabled else 'go run main.go'}）:")
     out.append("")
     out.append("```bash")
     out.append("cd /path/to/your-project")
@@ -272,11 +266,11 @@ def build_markdown(p, results):
     if p.dev_tools_enabled:
         out.append("4. 开发调试（均在**项目根目录**执行）:")
     else:
-        out.append("4. 运行服务（本次未构建 dev 镜像，无 make shell/lint/test 目标）:")
+        out.append("4. 运行服务（本次未构建 dev 镜像，无 make shell 目标）:")
     out.append("")
     out.append("```bash")
-    if p.dev_tools_enabled:
-        out.append("make shell      # 交互式 bash")
+    out.append("make shell      # 交互式 bash")
+    if p.python_enabled:
         out.append("make lint       # ruff check .")
         out.append("make compile    # python -m compileall -q .")
         out.append("make test       # pytest -q")
@@ -296,9 +290,18 @@ def build_markdown(p, results):
                       if p.enable_nginx else "（宿主机端口映射）。"))
         out.append("")
     if p.enable_postgres:
-        out.append("postgres 已启用: 连接串 "
-                   "`postgres://postgres:postgres@postgres:5432/postgres`，"
-                   "数据持久化在 `pgdata` 卷。")
+        out.append("postgres 已启用（compose 服务名 `db`）: 连接串 "
+                   "`postgres://postgres:postgres@db:5432/postgres`，"
+                   "数据持久化在项目根 `./volumes/pgdata` 目录（bind mount）。")
+        out.append("")
+    if p.enable_mysql:
+        out.append("mysql 已启用（compose 服务名 `db`）: 连接 `mysql -h db -uroot -pmysql`"
+                   "（root 密码 `mysql`，预置数据库 `app`），数据持久化在项目根 "
+                   "`./volumes/mysqldata` 目录（bind mount）。")
+        out.append("")
+    if p.enable_mongo:
+        out.append("mongo 已启用（compose 服务名 `db`）: 连接串 `mongodb://db:27017`，"
+                   "数据持久化在项目根 `./volumes/mongodata` 目录（bind mount）。")
         out.append("")
     if p.enable_nginx:
         out.append("nginx 已启用: 宿主机 `http://<host>:8080` → 容器 80 端口。")
@@ -343,7 +346,7 @@ def build_markdown(p, results):
     if p.enable_node:
         out.append("### 前端离线开发（Node.js / npm）")
         out.append("")
-        out.append(f"镜像内置 Node.js {p.node_version} + npm；Npm Download Action 的"
+        out.append(f"镜像内置 Node.js {p.node_version} + npm + pnpm；Npm Download Action 的"
                    " `npm_packages` 产物（顶层 `packages/`）由 compose 只读挂载到"
                    " `/opt/npm-packages`：")
         out.append("")
@@ -352,7 +355,7 @@ def build_markdown(p, results):
         out.append(f"ls {p.npm_packages_dir}/*.tgz")
         out.append("# 2. 离线安装依赖到 /app")
         out.append("make npm-install")
-        out.append("# 3. 启动前端开发服务器：把 prod_command 设为 npm run dev -- --host 0.0.0.0、")
+        out.append("# 3. 启动前端开发服务器：把项目根 docker-run.sh 的默认命令改为 npm run dev -- --host 0.0.0.0、")
         out.append("#    app_port 设为 5173:5173（vite）/ 8080:8080（webpack）后 make up；临时调试可用：")
         out.append("#    docker compose run --rm -p 5173:5173 dev npm run dev -- --host 0.0.0.0")
         out.append("```")

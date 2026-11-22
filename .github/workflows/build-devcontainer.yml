@@ -11,18 +11,20 @@ on:
         options:
           - 'linux-amd64'
           - 'linux-arm64'
-      python_version:
-        description: 'Target Python version'
+      target_codec:
+        description: 'Preinstalled language environments (python3.13 / golang1.26 / node24 with npm+pnpm+npx)'
         type: choice
         required: true
-        default: '3.13'
+        default: 'python3.13'
         options:
-          - '3.10'
-          - '3.11'
-          - '3.12'
-          - '3.13'
+          - 'python3.13'
+          - 'python3.13 + node24(npm+pnpm+npx)'
+          - 'golang1.26'
+          - 'golang1.26 + node24(npm+pnpm+npx)'
+          - 'python3.13 + golang1.26'
+          - 'python3.13 + golang1.26 + node24(npm+pnpm+npx)'
       pip_packages:
-        description: 'Pip packages, separated by $ (e.g. numpy$pandas$requests). Leave empty for no extra packages.'
+        description: 'Pip packages, separated by $ (e.g. numpy$pandas$requests). Leave empty for no extra packages. Requires a python3.13 target_codec.'
         type: string
         required: false
         default: ''
@@ -36,18 +38,13 @@ on:
         type: string
         required: false
         default: ''
-      enable_lucide:
-        description: 'Preinstall lucide (SVG icon library for Django/Jinja templates, pip package)'
-        type: boolean
-        required: true
-        default: false
       enable_playwright:
-        description: 'Preinstall Playwright (pip) + chromium browser (headful & headless share the same browser; CLI globally available, browsers at /opt/ms-playwright)'
+        description: 'Preinstall Playwright (pip) + chromium browser (headful & headless share the same browser; CLI globally available, browsers at /opt/ms-playwright). Requires a python3.13 target_codec.'
         type: boolean
         required: true
         default: false
       enable_oracle_instantclient:
-        description: 'Oracle Instant Client 19 mode: none = install nothing; runtime_deps_only = runtime deps (libaio1/libnsl2) + env vars only, the client itself is bind-mounted from the host at /opt/oracle/instantclient19 by docker-compose; full = install the client + runtime deps into the image (downloaded at build time from the official Oracle URL)'
+        description: 'Oracle Instant Client 19 mode: none = install nothing; runtime_deps_only = runtime deps (libaio1/libnsl2) + env vars only, the client itself is bind-mounted from the host at /opt/oracle/instantclient19 by docker-compose; full = install the client + runtime deps into the image (downloaded at build time from the official Oracle URL). Requires a python3.13 target_codec.'
         type: choice
         required: true
         default: 'none'
@@ -60,23 +57,18 @@ on:
         type: string
         required: false
         default: ''
-      enable_node:
-        description: 'Install Node.js + npm into the image for offline frontend development (vite/webpack/vue/react)'
-        type: boolean
-        required: true
-        default: false
       npm_packages:
-        description: 'npm packages installed globally at build time, separated by $ (e.g. vite$webpack$webpack-cli$vue$react). Requires enable_node.'
+        description: 'npm packages installed globally at build time, separated by $ (e.g. vite$webpack$webpack-cli$vue$react). Requires a node24 target_codec.'
         type: string
         required: false
         default: ''
       npm_packages_dir:
-        description: 'Host folder holding the Npm Download artifact (its packages/ content: *.tgz + package.json). It is mounted read-only at /opt/npm-packages so `make npm-install` / `bash build.sh` can install frontend dependencies offline. Relative to the project root or absolute (default deps/packages). Requires enable_node.'
+        description: 'Host folder holding the Npm Download artifact (its packages/ content: *.tgz + package.json). It is mounted read-only at /opt/npm-packages so `make npm-install` / `bash build.sh` can install frontend dependencies offline. Relative to the project root or absolute (default deps/packages). Requires a node24 target_codec.'
         type: string
         required: true
         default: 'deps/packages'
       css_framework_install:
-        description: 'Preinstall a CSS framework: none = install nothing; bootstrap_pack_in_artifact = download bootstrap-<version>.tgz at build time into the artifact (install.sh extracts it to <project root>/src/vendor/bootstrap-<version>, reference its dist/ css/js directly); bootstrap_install_via_npm = npm global install of bootstrap inside the image at build time (auto-installs Node.js 24 + npm even if enable_node is unchecked); tailwind_pack_in_artifact = download tailwindcss-browser-<version>.tgz (official @tailwindcss/browser runtime, reference dist/index.global.js via <script src>, no Node build needed) into the artifact; tailwind_install_via_npm = npm global install of tailwindcss + @tailwindcss/cli inside the image at build time. Version always pulls the latest.'
+        description: 'Preinstall a CSS framework (latest version): bootstrap / tailwind, each via pack_in_artifact (offline tgz shipped in the bundle, extracted to <project root>/src/vendor/) or install_via_npm (npm global install in the image, requires a node24 target_codec). See repo docs for details.'
         type: choice
         required: true
         default: 'none'
@@ -86,21 +78,20 @@ on:
           - 'bootstrap_install_via_npm'
           - 'tailwind_pack_in_artifact'
           - 'tailwind_install_via_npm'
-      sidecars:
-        description: 'Sidecar services to enable: nginx (8080:80) and/or postgres (postgres:16), separated by comma/space. Empty = none.'
-        type: string
-        required: false
-        default: ''
-      app_depends_on:
-        description: 'Sidecar services the app waits for: nginx and/or postgres, separated by comma/space. Requires the matching sidecar.'
-        type: string
-        required: false
-        default: ''
-      prod_command:
-        description: 'Command run by the prod service'
-        type: string
+      enable_extra_services:
+        description: 'Extra services: nginx (8080:80) and/or one database (postgres16 / mysql8.4 / mongo9). With a DB the app service automatically depends_on it (waits for the health check).'
+        type: choice
         required: true
-        default: 'python main.py'
+        default: 'none'
+        options:
+          - 'none'
+          - 'nginx'
+          - 'postgres16'
+          - 'mysql8.4'
+          - 'mongo9'
+          - 'nginx + postgres16'
+          - 'nginx + mysql8.4'
+          - 'nginx + mongo9'
       image_mode:
         description: 'prod+dev = build prod + dev images; prod-only = prod only; dev-only = single dev image used for deployment too'
         type: choice
@@ -143,16 +134,6 @@ on:
         type: boolean
         required: true
         default: false
-      mount_host_timezone:
-        description: 'Map host timezone config into containers: bind-mount /etc/localtime and /etc/timezone read-only into the app/dev services (container time follows the host). Checked by default.'
-        type: boolean
-        required: true
-        default: true
-      enable_tz_shanghai:
-        description: 'Set TZ=Asia/Shanghai (UTC+8) inside the image (installs tzdata at build time; ignored by containers when mount_host_timezone overrides the clock). Checked by default.'
-        type: boolean
-        required: true
-        default: true
 
 permissions:
   contents: read
@@ -178,9 +159,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: devcontainer-pip-${{ inputs.platform }}-py${{ inputs.python_version }}-${{ inputs.pip_packages }}
+          key: devcontainer-pip-${{ inputs.platform }}-py3.13-${{ inputs.pip_packages }}
           restore-keys: |
-            devcontainer-pip-${{ inputs.platform }}-py${{ inputs.python_version }}-
+            devcontainer-pip-${{ inputs.platform }}-py3.13-
 
       # 无需 QEMU：runner 架构已与目标平台一致（amd64 → x86_64 Runner，
       # arm64 → ubuntu-24.04-arm），docker build 全程原生执行
@@ -191,28 +172,25 @@ jobs:
         id: build
         env:
           PLATFORM: ${{ inputs.platform }}
-          PYTHON_VERSION: ${{ inputs.python_version }}
-          # glibc / pip 源 / Node 版本 / npm 源固定，不再暴露为 workflow 输入
+          TARGET_CODEC: ${{ inputs.target_codec }}
+          # glibc / pip 源 / Node 版本 / Go 版本 / npm 源固定，不再暴露为 workflow 输入
           GLIBC_VERSION: '2.28'
           PIP_MIRROR: 'pypi.org'
+          NODE_VERSION: '24'
+          GO_VERSION: '1.26'
           PIP_PACKAGES: ${{ inputs.pip_packages }}
           APT_PACKAGES: ${{ inputs.apt_packages }}
           CUSTOM_INSTALL_CMD: ${{ inputs.custom_install_cmd }}
-          ENABLE_LUCIDE: ${{ inputs.enable_lucide }}
           ENABLE_PLAYWRIGHT: ${{ inputs.enable_playwright }}
           ENABLE_ORACLE_INSTANTCLIENT: ${{ inputs.enable_oracle_instantclient }}
           PRESET_ENVS: ${{ inputs.preset_envs }}
-          ENABLE_NODE: ${{ inputs.enable_node }}
-          NODE_VERSION: '24'
           NPM_PACKAGES: ${{ inputs.npm_packages }}
           NPM_REGISTRY: 'Official (npmjs.org)'
           NPM_PACKAGES_DIR: ${{ inputs.npm_packages_dir }}
           CSS_FRAMEWORK_INSTALL: ${{ inputs.css_framework_install }}
-          ENABLE_NGINX: ${{ contains(inputs.sidecars, 'nginx') }}
-          ENABLE_POSTGRES: ${{ contains(inputs.sidecars, 'postgres') }}
-          APP_DEPENDS_ON_NGINX: ${{ contains(inputs.app_depends_on, 'nginx') }}
-          APP_DEPENDS_ON_POSTGRES: ${{ contains(inputs.app_depends_on, 'postgres') }}
-          PROD_COMMAND: ${{ inputs.prod_command }}
+          # 原始输入透传（供 devcontainer.json 快照记录；enable_nginx 等
+          # 为解析自该原始值的派生布尔，不含原始值）
+          ENABLE_EXTRA_SERVICES: ${{ inputs.enable_extra_services }}
           BUILD_DEV_IMAGE: ${{ inputs.image_mode == 'prod+dev' }}
           DEV_IMAGE_ONLY: ${{ inputs.image_mode == 'dev-only' }}
           IMAGE_PREFIX: ${{ inputs.image_prefix }}
@@ -221,16 +199,13 @@ jobs:
           APP_PORT: ${{ inputs.app_port }}
           ENV_FILE: ${{ inputs.env_file }}
           SELINUX_RELABEL: ${{ inputs.selinux_relabel }}
-          MOUNT_HOST_TIMEZONE: ${{ inputs.mount_host_timezone }}
-          ENABLE_TZ_SHANGHAI: ${{ inputs.enable_tz_shanghai }}
-          # 原始输入透传（供 devcontainer.json 快照记录；上方 ENABLE_NGINX 等
-          # 为 contains/等值 派生布尔，不含原始值）
-          SIDECARS: ${{ inputs.sidecars }}
-          APP_DEPENDS_ON: ${{ inputs.app_depends_on }}
           IMAGE_MODE: ${{ inputs.image_mode }}
         run: python scripts/devcontainer-builder/main.py
 
       - name: Verify artifacts
+        env:
+          TARGET_CODEC: ${{ inputs.target_codec }}
+          ENABLE_EXTRA_SERVICES: ${{ inputs.enable_extra_services }}
         run: |
           set -euo pipefail
           echo "--- ${{ steps.build.outputs.src_name }} (top entries) ---"
@@ -246,17 +221,33 @@ jobs:
             echo "::error::src 包不应包含渲染后的 docker-compose.yaml（只保留 docker-compose.yml.tpl）"
             exit 1
           fi
-          # app 服务必须显式写入 entrypoint/command：清空镜像 ENTRYPOINT/CMD，
-          # 用户直接改 docker-compose.yml 即可调整启动方式（无需重建镜像）
+          # 启动方式由镜像 ENTRYPOINT（docker-run.sh）承载：SRC Bundle 内含
+          # docker-run.sh，install.sh 安装到项目根后由 compose 只读挂载覆盖
+          # 镜像内副本，改根目录脚本即可调整启动方式（无需重建镜像）
           tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/docker-compose.yml.tpl > /tmp/compose.start.tpl
-          grep -q '^    entrypoint: \[\]$' /tmp/compose.start.tpl \
-            || { echo "::error::compose 模板缺少显式 entrypoint: []（清空镜像 ENTRYPOINT）"; exit 1; }
-          grep -q '^    command: \[' /tmp/compose.start.tpl \
-            || { echo "::error::compose 模板缺少显式 command"; exit 1; }
-          grep -q 'my-start.sh' /tmp/compose.start.tpl \
-            || { echo "::error::compose 模板缺少自定义启动脚本示例"; exit 1; }
-          grep -q 'devcontainer-src/main.py$' /tmp/src_tgz.list \
-            || { echo "::error::src 包缺少占位 main.py"; exit 1; }
+          grep -q 'docker-run.sh:/usr/local/bin/docker-run.sh:ro' /tmp/compose.start.tpl \
+            || { echo "::error::compose 模板缺少 docker-run.sh 挂载"; exit 1; }
+          grep -q '^    command: \[\]$' /tmp/compose.start.tpl \
+            || { echo "::error::compose 模板 app 服务缺少 command: []（清空 CMD，启动命令由 docker-run.sh 承载）"; exit 1; }
+          tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/Dockerfile > /tmp/Dockerfile.check
+          grep -q 'ENTRYPOINT \["/usr/local/bin/docker-run.sh"\]' /tmp/Dockerfile.check \
+            || { echo "::error::Dockerfile 缺少 docker-run.sh ENTRYPOINT"; exit 1; }
+          grep -q 'devcontainer-src/docker-run.sh$' /tmp/src_tgz.list \
+            || { echo "::error::src 包缺少 docker-run.sh"; exit 1; }
+          tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/docker-run.sh > /tmp/docker-run.sh
+          bash -n /tmp/docker-run.sh \
+            || { echo "::error::docker-run.sh 语法错误"; exit 1; }
+          grep -q 'cd /app' /tmp/docker-run.sh \
+            || { echo "::error::docker-run.sh 缺少 cd /app"; exit 1; }
+          # 占位入口按 target_codec 生成：python3.13 → main.py，golang1.26 → main.go
+          if [ "$TARGET_CODEC" != "${TARGET_CODEC/python3.13/}" ]; then
+            grep -q 'devcontainer-src/main.py$' /tmp/src_tgz.list \
+              || { echo "::error::src 包缺少占位 main.py"; exit 1; }
+          fi
+          if [ "$TARGET_CODEC" != "${TARGET_CODEC/golang1.26/}" ]; then
+            grep -q 'devcontainer-src/main.go$' /tmp/src_tgz.list \
+              || { echo "::error::src 包缺少占位 main.go"; exit 1; }
+          fi
           # 项目根目录操作文件（install.sh 复制/改名到 src root）与忽略文件
           grep -q 'devcontainer-src/Makefile$' /tmp/src_tgz.list \
             || { echo "::error::src 包缺少 Makefile"; exit 1; }
@@ -363,6 +354,9 @@ jobs:
             # README.md 按原名安装（不再改名 README-devcontainer.md）
             grep -q 'README.md:README.md' "${{ steps.build.outputs.install_sh }}" \
               || { echo "::error::install.sh 未按原名安装 README.md"; exit 1; }
+            # docker-run.sh 安装到项目根（compose 只读挂载覆盖镜像内 ENTRYPOINT 脚本）
+            grep -q 'docker-run.sh:docker-run.sh' "${{ steps.build.outputs.install_sh }}" \
+              || { echo "::error::install.sh 未把 docker-run.sh 安装到项目根目录"; exit 1; }
             if grep -q 'README-devcontainer' "${{ steps.build.outputs.install_sh }}"; then
               echo "::error::install.sh 仍在引用 README-devcontainer.md（已改为按原名 README.md 安装）"
               exit 1
@@ -416,21 +410,17 @@ jobs:
           # workflow inputs 默认值（与 build-devcontainer.yml 的 inputs 保持同步）
           DEFAULTS = {
               "platform": ("linux-amd64", "choice"),
-              "python_version": ("3.13", "choice"),
+              "target_codec": ("python3.13", "choice"),
               "pip_packages": ("", "string"),
               "apt_packages": ("", "string"),
               "custom_install_cmd": ("", "string"),
-              "enable_lucide": ("false", "boolean"),
               "enable_playwright": ("false", "boolean"),
               "enable_oracle_instantclient": ("none", "choice"),
               "preset_envs": ("", "string"),
-              "enable_node": ("false", "boolean"),
               "npm_packages": ("", "string"),
               "npm_packages_dir": ("deps/packages", "string"),
               "css_framework_install": ("none", "choice"),
-              "sidecars": ("", "string"),
-              "app_depends_on": ("", "string"),
-              "prod_command": ("python main.py", "string"),
+              "enable_extra_services": ("none", "choice"),
               "image_mode": ("prod-only", "choice"),
               "image_prefix": ("mydevc1", "string"),
               "image_tag": ("latest", "choice"),
@@ -438,8 +428,6 @@ jobs:
               "app_port": ("3000:3000", "string"),
               "env_file": ("", "string"),
               "selinux_relabel": ("false", "boolean"),
-              "mount_host_timezone": ("true", "boolean"),
-              "enable_tz_shanghai": ("true", "boolean"),
           }
           text = Path(sys.argv[1]).read_text(encoding="utf-8")
           # 纯 JSON：JSONC 注释会导致 json.loads 解析失败
@@ -544,14 +532,15 @@ jobs:
           fi
           sha256sum "${{ steps.build.outputs.images_tgz }}"
 
-      # Oracle / 前端（Node/npm）/ 前端框架 参数联动校验：确保生成物真的按参数接线
+      # Oracle / 前端（Node/pnpm）/ 前端框架 参数联动校验：确保生成物真的按参数接线
       - name: Verify oracle / npm / frontend framework wiring
         env:
           ORACLE_MODE: ${{ inputs.enable_oracle_instantclient }}
-          NODE_ENABLED: ${{ inputs.enable_node || inputs.css_framework_install == 'bootstrap_install_via_npm' || inputs.css_framework_install == 'tailwind_install_via_npm' }}
+          NODE_ENABLED: ${{ contains(inputs.target_codec, 'node24') }}
+          TARGET_CODEC: ${{ inputs.target_codec }}
           CSS_FRAMEWORK_INSTALL: ${{ inputs.css_framework_install }}
           FRAMEWORK_TGZ: ${{ steps.build.outputs.framework_tgz }}
-          DEV_ENABLED: ${{ inputs.build_dev_image || inputs.dev_image_only }}
+          DEV_ENABLED: ${{ inputs.image_mode == 'prod+dev' || inputs.image_mode == 'dev-only' }}
           SRC_TGZ: ${{ steps.build.outputs.src_tgz }}
           INSTALL_SH: ${{ steps.build.outputs.install_sh }}
           README_HTML: ${{ steps.build.outputs.readme_html }}

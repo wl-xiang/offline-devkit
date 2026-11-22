@@ -10,4 +10,6 @@ RUN apt-get update \
 {{DEV_PIP_BLOCK}}
 WORKDIR /app
 
+# CMD ["bash"] 供 make shell / dev 服务使用：镜像 ENTRYPOINT（docker-run.sh）
+# 带参数调用时会透传 exec，因此 `docker compose run --rm dev <命令>` 行为不变
 CMD ["bash"]

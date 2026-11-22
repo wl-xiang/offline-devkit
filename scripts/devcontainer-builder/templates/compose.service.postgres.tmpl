@@ -1,4 +1,4 @@
-  postgres:
+  db:
     image: postgres:16
     restart: unless-stopped
     pull_policy: never
@@ -11,6 +11,6 @@
       retries: 5
       start_period: 10s
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ./volumes/pgdata:/var/lib/postgresql/data
     networks:
       - app-net

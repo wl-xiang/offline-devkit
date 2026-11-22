@@ -3,7 +3,7 @@
 本工作流解决「外网开发 → 内网运行」的链路割裂问题：在外网 GitHub Actions 上
 按参数构建通用的离线开发/运行 Docker 镜像并打包，内网机器只需有 Docker，
 通过 Volume 挂载源码 + docker compose 即可开发与运行，**内网本机无需安装任何
-Python 环境**。
+Python / Go / Node 环境**。
 
 ## 运行模型
 
@@ -14,15 +14,16 @@ Python 环境**。
 模板渲染 (Dockerfile/compose.tpl/Makefile)
 pip download → wheels/
 docker build (prod → dev / 仅 dev)         zip 放入项目根目录 dist/ 解压
-docker pull (nginx/postgres, 按需)         docker load 镜像归档 tgz
+docker pull (外挂服务镜像, 按需)           docker load 镜像归档 tgz
 打包镜像归档 tgz + src tgz + install.sh    bash install.sh ../ (dist/ 内执行)
   + readme.html → 1 个 Artifact zip       → 项目根: Makefile/Dockerfile/build.sh/
+                                           docker-run.sh/
 ────────── 传输（1 个 Artifact zip）─────→   README.md/.dockerignore/
 上传唯一 Artifact + 写 Summary               .gitignore/docker-compose.yml/deps/
                                            → docs/devcontainer/ (原始副本, 重置用)
 cd <项目根>（所有命令都在根目录执行）
 make check / shell / lint / compile / test
-make up (python main.py)
+make up (docker-run.sh 预置入口)
 ```
 
 ## 使用前提
@@ -34,7 +35,7 @@ make up (python main.py)
 - 内网机器 CPU 架构需与构建时选择的平台一致（amd64 / arm64），否则容器启动报
   `exec format error`。
 - 应用代码放在独立的项目根目录（如 `~/apps/myapp1`）。`install.sh` 会把
-  `Makefile`、`Dockerfile`、`build.sh`、`README.md`、
+  `Makefile`、`Dockerfile`、`build.sh`、`docker-run.sh`、`README.md`、
   `.dockerignore`、`.gitignore`、`docker-compose.yml` 安装到该根目录
   （**所有 make / build.sh 命令都在根目录执行**），原始副本与模板安装到
   `docs/devcontainer/`（仅用于把改坏的根目录文件复制回去重置），bundle 产物
@@ -68,33 +69,28 @@ make up (python main.py)
 | 参数 | 类型 | 取值 / 格式 | 默认值 | 说明 |
 |------|------|------------|--------|------|
 | `platform` | choice | `linux-amd64` / `linux-arm64` | `linux-amd64` | 目标平台（需与内网机器 CPU 架构一致） |
-| `python_version` | choice | `3.10` / `3.11` / `3.12` / `3.13` | `3.13` | 容器内 Python 版本 |
-| `pip_packages` | string | 用 `$` 分隔，如 `numpy$pandas$requests` | 空 | 附加 pip 包（空 = 无附加依赖） |
+| `target_codec` | choice | `python3.13` / `python3.13 + node24(npm+pnpm+npx)` / `golang1.26` / `golang1.26 + node24(npm+pnpm+npx)` / `python3.13 + golang1.26` / `python3.13 + golang1.26 + node24(npm+pnpm+npx)` | `python3.13` | 预装语言环境：Python 固定 3.13、Go 固定 1.26、Node 固定 24，`node24` = npm + 全局 pnpm + npx；纯 golang 变体无 Python/pip（基础镜像 `golang:1.26-slim-bookworm`），python+go 组合在 `python:3.13-slim-bookworm` 基础上复制 Go 工具链 |
+| `pip_packages` | string | 用 `$` 分隔，如 `numpy$pandas$requests` | 空 | 附加 pip 包（空 = 无附加依赖；需要 target_codec 预装 Python） |
 | `apt_packages` | string | 空格分隔，如 `git vim curl` | 空 | 镜像内安装的 APT 工具 |
 | `custom_install_cmd` | string | shell 命令 | 空 | 个性化安装命令，在镜像内 `RUN` 执行 |
-| `enable_lucide` | boolean | — | `false` | 预装 lucide（SVG 图标库，Django/Jinja 模板渲染 lucide.dev 图标，pip 纯 Python 包） |
-| `enable_oracle_instantclient` | choice | `none` / `runtime_deps_only` / `full` | `none` | Oracle Instant Client 19 安装模式：`none` 不安装；`runtime_deps_only` 只装运行依赖（`libaio1`/`libnsl2`）+ `oracledb==2.5.1` + 环境变量，客户端本体由 compose 从宿主机只读挂载到 `/opt/oracle/instantclient19`（多容器共用）；`full` 完整安装，构建期从 Oracle 官方直链下载 Basic 包解压进镜像（客户端随镜像分发，无需挂载） |
+| `enable_playwright` | boolean | — | `false` | 预装 Playwright（pip 包 + chromium 浏览器，有头/无头共用同一浏览器；浏览器固定在 `/opt/ms-playwright`，CLI 全局安装，容器内任意用户可用）。需要 target_codec 预装 Python |
+| `enable_oracle_instantclient` | choice | `none` / `runtime_deps_only` / `full` | `none` | Oracle Instant Client 19 安装模式：`none` 不安装；`runtime_deps_only` 只装运行依赖（`libaio1`/`libnsl2`）+ `oracledb==2.5.1` + 环境变量，客户端本体由 compose 从宿主机只读挂载到 `/opt/oracle/instantclient19`（多容器共用）；`full` 完整安装，构建期从 Oracle 官方直链下载 Basic 包解压进镜像（客户端随镜像分发，无需挂载）。需要 target_codec 预装 Python |
 | `preset_envs` | string | 用单个 `》` 分隔，如 `DB_HOST=10.0.0.1》DB_PORT=1521` | 空 | 预设环境变量，注入 app 与 dev 服务（同名值覆盖 Oracle 默认变量；值按字面量处理，`$` 无需转义） |
-| `enable_node` | boolean | — | `false` | 镜像内置 Node.js 24 + npm，用于前端离线开发（vite / webpack / vue / react） |
-| `npm_packages` | string | 用 `$` 分隔，如 `vite$webpack$webpack-cli$vue$react` | 空 | 构建期全局安装的 npm 包（需要 `enable_node=true`；构建机联网安装，内网容器可直接使用） |
-| `npm_packages_dir` | string | 相对/绝对路径 | `deps/packages` | **Npm Download 产物所在目录**：把该工作流产出的 `packages/` 内容（`*.tgz` + `package.json`）放这里，compose 会把它只读挂载到容器 `/opt/npm-packages`，供 `make npm-install` 或 `bash build.sh` 一键离线安装前端依赖。相对项目根或绝对路径（需 `enable_node=true`） |
-| `css_framework_install` | choice | `none` / `bootstrap_pack_in_artifact` / `bootstrap_install_via_npm` / `tailwind_pack_in_artifact` / `tailwind_install_via_npm` | `none` | 预装前端框架及安装方式（版本固定拉最新版）：`none` 不安装；`bootstrap_pack_in_artifact` 构建期下载 `bootstrap-<version>.tgz` 随 Artifact 分发，install.sh 自动解压到 `<项目根>/src/vendor/bootstrap-<version>/`，模板直接引用其 `dist/` 下的 css/js；`bootstrap_install_via_npm` 构建期在镜像内 npm 全局安装 bootstrap（未勾选 `enable_node` 时自动补装 Node.js 24 + npm 层）；`tailwind_pack_in_artifact` 下载 `tailwindcss-browser-<version>.tgz`（Tailwind 官方浏览器端运行时 `@tailwindcss/browser`，模板 `<script src>` 引入即用，无需 Node 构建）；`tailwind_install_via_npm` 镜像内全局安装 `tailwindcss` + `@tailwindcss/cli` 离线构建 CLI |
-| `sidecars` | string | 逗号/空格分隔，如 `nginx postgres` | 空 | 启用的外挂服务：`nginx`（8080:80）、`postgres`（postgres:16，数据卷 pgdata） |
-| `app_depends_on` | string | 逗号/空格分隔，如 `nginx postgres` | 空 | app 服务 `depends_on` 的外挂服务（须在 `sidecars` 中同时启用） |
-| `prod_command` | string | 命令行 | `python main.py` | prod 服务启动命令（同时写入镜像 CMD 与 compose 的 app 服务 `command`，安装后可直接改 compose 免重建） |
-| `image_mode` | choice | `prod+dev` / `prod-only` / `dev-only` | `prod+dev` | `prod+dev`：同时构建 prod 与 dev 镜像；`prod-only`：只构建 prod；`dev-only`：只构建 dev 镜像并用于部署（镜像归档只含该镜像） |
+| `npm_packages` | string | 用 `$` 分隔，如 `vite$webpack$webpack-cli$vue$react` | 空 | 构建期全局安装的 npm 包（需要 target_codec 含 node24；构建机联网安装，内网容器可直接使用） |
+| `npm_packages_dir` | string | 相对/绝对路径 | `deps/packages` | **Npm Download 产物所在目录**：把该工作流产出的 `packages/` 内容（`*.tgz` + `package.json`）放这里，compose 会把它只读挂载到容器 `/opt/npm-packages`，供 `make npm-install` 或 `bash build.sh` 一键离线安装前端依赖。相对项目根或绝对路径（需 target_codec 含 node24） |
+| `css_framework_install` | choice | `none` / `bootstrap_pack_in_artifact` / `bootstrap_install_via_npm` / `tailwind_pack_in_artifact` / `tailwind_install_via_npm` | `none` | 预装前端框架（版本固定拉最新版）：`bootstrap` / `tailwind` 各有 `*_pack_in_artifact`（构建期下载离线 tgz 随 Artifact 分发，install.sh 解压到 `<项目根>/src/vendor/`）与 `*_install_via_npm`（镜像内 npm 全局安装）两种方式，详见「前端框架预装」；`*_install_via_npm` 需要 target_codec 含 node24 |
+| `enable_extra_services` | choice | `none` / `nginx` / `postgres16` / `mysql8.4` / `mongo9` / `nginx + postgres16` / `nginx + mysql8.4` / `nginx + mongo9` | `none` | 外挂服务：`nginx`（8080:80）与/或一个数据库（postgres16 / mysql8.4 / mongo9 任选其一）；含 DB 时 app 服务自动 `depends_on` 该 DB 并等待健康检查通过（nginx 不产生 depends_on） |
+| `image_mode` | choice | `prod+dev` / `prod-only` / `dev-only` | `prod-only` | `prod+dev`：同时构建 prod 与 dev 镜像；`prod-only`：只构建 prod；`dev-only`：只构建 dev 镜像并用于部署（镜像归档只含该镜像） |
 | `image_prefix` | string | 小写字母/数字/`._-` | `mydevc1` | 镜像名前缀：prod 镜像为 `<prefix>:<tag>`，dev 镜像为 `<prefix>-dev:<tag>`；仅 dev 镜像模式只有 `<prefix>-dev:<tag>`。Artifact 名也使用该前缀（`<prefix>_devcontainer_<架构>_<时间戳>`，架构为 `amd64` / `arm64`） |
 | `image_tag` | choice | `latest` / `timestamp` | `latest` | 镜像 TAG：`latest`（每次构建覆盖同名镜像）或 `timestamp`（构建时间戳，UTC+8，如 `20260101-120000`） |
 | `app_source_dir` | string | 相对/绝对路径 | `.` | 挂载进容器 `/app` 的目录：`.` = 整个项目根目录；相对路径 = 项目根目录下的子目录（如 monorepo 中的应用子目录，可避免 ruff/pytest 扫到无关源码）；也支持绝对路径。项目根目录由 `install.sh` 安装时传入（不支持 `~`） |
 | `app_port` | string | `host:container` 或单个端口号 | `3000:3000` | 应用端口映射：写成 `3000:3000` 表示宿主机 3000 → 容器 3000；只写 `3000` 等价于 `3000:3000`；空 = 不映射。启用 nginx 时 app 仅容器网络暴露容器端口，由 nginx 反代 |
 | `env_file` | string | 逗号/空格分隔 | 空 | **注入 app 服务的环境变量文件**（等价 compose `env_file`）：文件中的变量会进入 app 容器，常用于放置数据库密码、密钥等不适合写进 `preset_envs` 的配置。相对项目根或绝对路径（如 `.env`） |
 | `selinux_relabel` | boolean | — | `false` | 给 `/app` 挂载追加 `:z` 重打标签（SELinux Enforcing 主机需要） |
-| `mount_host_timezone` | boolean | — | `true` | app/dev 服务只读挂载宿主机 `/etc/localtime` 与 `/etc/timezone`（容器时间跟随宿主机；同时勾选 `enable_tz_shanghai` 时挂载优先） |
-| `enable_tz_shanghai` | boolean | — | `true` | 镜像内指定 `TZ=Asia/Shanghai`（UTC+8），构建期自动补装 `tzdata` |
 
 > **固定值（不再作为输入暴露）**：`glibc_version=2.28`（manylinux 标签）、
-> `pip_mirror=Official (pypi.org)`、Node.js `24`、
-> `npm_registry=Official (npmjs.org)`。
+> `pip_mirror=Official (pypi.org)`、`npm_registry=Official (npmjs.org)`；
+> 语言版本由 `target_codec` 决定——Python `3.13`、Go `1.26`、Node.js `24`。
 
 > **提示**：`pip_packages` 输入框无法换行，使用 `$` 分隔多个包，与
 > `pip_download.yml` 的约定一致。
@@ -103,15 +99,14 @@ make up (python main.py)
 
 以下情况会在构建开始前直接失败并给出清晰错误：
 
-- `app_depends_on` 含 `nginx` 但 `sidecars` 未启用 nginx
-- `app_depends_on` 含 `postgres` 但 `sidecars` 未启用 postgres
-- `platform` / `python_version` / `image_tag` / `enable_oracle_instantclient` 不在取值范围内
+- `platform` / `target_codec` / `enable_extra_services` / `image_tag` / `enable_oracle_instantclient` / `css_framework_install` 不在取值范围内
+- `pip_packages` / `enable_playwright` / `enable_oracle_instantclient` 需要 target_codec 预装 Python（python3.13 系列）
+- `npm_packages` / `css_framework_install=*_install_via_npm` 需要 target_codec 含 node24
 - `image_prefix` 含非法字符（仅允许小写字母/数字/`.`/`_`/`-`）
-- `prod_command` 无法解析为命令
 - `app_port` 不是 1-65535 的端口号，或不是合法的 `host:container` 映射
 - `app_source_dir` / `env_file` 使用 `~`（不会展开，请写绝对路径或相对路径）
 - `preset_envs` 不是 `KEY=VALUE` 形式、变量名非法或重复
-- `npm_packages` 非空但 `enable_node=false`；npm 包名非法（仅 `name` / `@scope/name`，可带 `@版本`）
+- npm 包名非法（仅 `name` / `@scope/name`，可带 `@版本`）
 - `npm_packages_dir` 含空白、`:`、`~` 等非法字符（仅允许字母/数字/`.`/`_`/`-`/`/`）
 
 ## 产物说明
@@ -150,9 +145,10 @@ GitHub 前端输入的原始参数值，顶层分四个 section：
 
 ### devcontainer-docker-images_<架构>_<yyyymmdd-HHMMSS>.tgz
 
-该文件是 `docker save` 输出经 gzip 压缩得到的镜像归档（prod、dev、nginx、postgres，
-按本次参数），可直接 `docker load -i` 导入，无需再解一层 tar。`image_mode=dev-only`
-时归档中只有一个 dev 镜像（外加按需启用的 nginx/postgres）。Summary 中同时给出
+该文件是 `docker save` 输出经 gzip 压缩得到的镜像归档（prod、dev、nginx、
+postgres/mysql/mongo，按本次参数），可直接 `docker load -i` 导入，无需再解一层
+tar。`image_mode=dev-only` 时归档中只有一个 dev 镜像（外加按需启用的
+nginx/postgres/mysql/mongo）。Summary 中同时给出
 SHA256，便于校验传输完整性。
 
 ### devcontainer-src_<架构>_<yyyymmdd-HHMMSS>.tgz
@@ -166,8 +162,13 @@ devcontainer-src/
 │                                # （联网重建版；install.sh 会把 Dockerfile.addon 改名
 │                                #  为 Dockerfile 安装到项目根目录，供离线补装用）
 ├── docker-compose.yml.tpl       # compose 模板（install.sh 原样复制到项目根为 docker-compose.yml）
-├── Makefile                     # check/up/down/shell/lint/compile/test 等（复制到项目根）
-├── main.py                      # 占位入口（install.sh 复制到 <项目根>/src/）
+├── Makefile                     # check/up/down/shell/dev/lint/compile/test 等（复制到项目根；
+│                                #  lint/compile/test 仅预装 Python 时生成）
+├── docker-run.sh                # 容器默认启动脚本（镜像 ENTRYPOINT；install.sh 复制到项目根，
+│                                #  compose 只读挂载覆盖镜像内副本，改脚本即改启动方式）
+├── main.py                      # 占位入口（预装 Python 时随包分发；install.sh 复制到
+│                                #  <项目根>/src/，缺 main.py 时放置）
+├── main.go                      # 占位入口（预装 Golang 时随包分发，go run main.go）
 ├── requirements.txt             # pip 包清单
 ├── Dockerfile.addon             # 离线补装：基于现有镜像把 deps/wheels/ 打进 addon 镜像
 │                                # （复制到项目根目录时改名为 Dockerfile）
@@ -183,17 +184,19 @@ devcontainer-src/
 │   ├── rollback-bundle.sh       # 部署服务器回滚到最近 backup（make rollback）
 │   ├── clean-images.sh          # 清除项目根 compose 声明的镜像（make clean）
 │   └── .env.example             # push-bundle.sh 的 SYNC_REMOTE_* 变量模板
-├── nginx/conf.d/                # 仅 sidecars 含 nginx 且指定 app_port 时生成反代配置
+├── nginx/conf.d/                # 仅 enable_extra_services 含 nginx 且指定 app_port 时生成反代配置
 └── README.md                    # 快速上手说明（复制到项目根，按原名安装）
 ```
 
 src 包内**只有 `docker-compose.yml.tpl` 模板，不包含渲染后的
 `docker-compose.yaml`**；模板中的 `${SRC_ROOT:-./src/}` 与 `${SRC_ROOT_NAME:-app}`
 两个环境变量由 docker compose 在运行时以 `:-` 默认值语法解析（默认
-`./src/`、项目名后缀 `app`）。启用 Node 时模板还会内置
+`./src/`、项目名后缀 `app`）。compose 还把项目根的 `docker-run.sh` 只读挂载到
+容器 `/usr/local/bin/docker-run.sh`（覆盖镜像内 ENTRYPOINT 副本）；target_codec
+含 node24 时模板还会内置
 `${NPM_PACKAGES_DIR:-deps/packages}` 只读挂载；Oracle 为 `runtime_deps_only`
 模式时另有 `${ORACLE_CLIENT_DIR:-/opt/oracle/instantclient19}` 只读挂载。
-两者都可在运行时用环境变量覆盖（`full` 模式客户端已打进镜像，不生成挂载）。
+后两者都可在运行时用环境变量覆盖（`full` 模式客户端已打进镜像，不生成挂载）。
 
 `deps/wheels/` 不随源码包分发 wheel：所有 wheel 已在镜像构建阶段安装（云端构建经
 BuildKit bind mount 参与，不落入任何镜像层），运行容器内没有 wheels；
@@ -222,7 +225,7 @@ bash install.sh --load-only --load-target prod
 prod+dev 镜像模式下可选择只导入需要的镜像：`dev` = 仅 dev 镜像（不导入 prod）；
 `prod` = 仅 prod 镜像（不导入 dev）；`app` = 应用服务使用的镜像（= prod，仅
 dev 镜像模式下为 dev 镜像）；`all`（默认）= 导入归档内全部镜像。sidecar 镜像
-（nginx / postgres，如已打包）在任何 target 下都会一并导入。
+（nginx / postgres / mysql / mongo，如已打包）在任何 target 下都会一并导入。
 
 脚本会（先做全部前置检查、再写盘，任一检查失败都不会留下半套安装）：
 
@@ -233,8 +236,9 @@ dev 镜像模式下为 dev 镜像）；`all`（默认）= 导入归档内全部�
    `.tpl` 后缀的 `docker-compose.yml`（不做任何渲染；目标文件已存在则报错，
    避免覆盖你自己的 compose 配置）；
 3. 把 `Makefile`、`build.sh`、`Dockerfile.addon`（改名 `Dockerfile`）、
-   `README.md`（按原名安装）以及 `devcontainer.json`（workflow 输入参数快照，
-   与 README.md 一样安装到项目根）复制到项目根目录，并把部署辅助脚本
+   `docker-run.sh` / `README.md`（按原名安装）以及 `devcontainer.json`
+   （workflow 输入参数快照，与 README.md 一样安装到项目根）复制到项目根目录，
+   并把部署辅助脚本
    `push-bundle.sh` / `apply-bundle.sh` / `rollback-bundle.sh` / `clean-images.sh`
    与其变量模板 `scripts/.env.example` 安装到项目根 `scripts/` 目录——所有
    make / build.sh 命令此后都在项目根目录执行；目标文件已存在时报错终止，
@@ -253,8 +257,9 @@ dev 镜像模式下为 dev 镜像）；`all`（默认）= 导入归档内全部�
    Download Action 产物的 `packages/` 内容放进 `deps/packages/` 后，
    `bash build.sh` 可一键离线加载前端依赖；
 6. 创建应用源码目录 `<项目根>/src/`（compose 默认把 `./src/` 挂载为容器内
-   `/app`）；该目录没有 `main.py` 且启动命令为默认的 `python main.py` 时，
-   复制占位 `main.py` 到 `<项目根>/src/main.py`（不覆盖已有文件）；
+   `/app`）；按预装语言环境放置占位入口：预装 Python 时缺 `main.py` 则复制占位
+   `main.py`，预装 Golang 时缺 `main.go` 则复制占位 `main.go`（均不覆盖已有
+   文件）；
 7. 检测 compose 命令：有 `docker compose` 插件时不改 Makefile；只有
    `docker-compose` 时把 Makefile 的 `COMPOSE` 改为 `docker-compose`；
    两者都没有时保持默认，并在结束时给出红色警告。
@@ -270,7 +275,8 @@ dev 镜像模式下为 dev 镜像）；`all`（默认）= 导入归档内全部�
 
 安装到项目根 `scripts/` 目录的 `scripts/clean-images.sh` 从项目根
 `docker-compose.yml`（按脚本目录上一级解析）的 services
-声明中读取镜像清单（app / dev / nginx / postgres 等服务的 `image:`），确认后
+声明中读取镜像清单（app / dev / nginx / postgres / mysql / mongo 等服务的
+`image:`），确认后
 逐个执行 `docker rmi -f`；本机不存在的镜像自动跳过，`-y` 跳过确认。
 推荐用 `make clean` 调用（支持 `ARGS` 透传），也可直接执行脚本：
 
@@ -391,8 +397,9 @@ make up && make logs
 | `make test` | pytest -q |
 | `make package-src` | 重新打包 `docs/devcontainer` 为 tgz（输出到 `dist/`，可配 install.sh 再次安装） |
 
-> `shell/dev/lint/compile/test` 依赖 dev 镜像（`image_mode=prod+dev` 或
-> `dev-only` 时才有），通过 compose 的 `dev` profile 激活，不影响
+> `shell` / `dev` 依赖 dev 镜像（`image_mode=prod+dev` 或 `dev-only` 时生成）；
+> `lint` / `compile` / `test` 目标仅在 target_codec 预装 Python 时生成。上述目标
+> 通过 compose 的 `dev` profile 激活，不影响
 > `make up` 的运行行为。
 >
 > 容器默认以当前用户身份运行：Makefile 自动导出 `HOST_UID`/`HOST_GID`
@@ -402,8 +409,8 @@ make up && make logs
 ## 给 AI Agent 的使用约定
 
 安装到项目根的 `README.md`（bundle 内 src 包的 `README.md`，按原名安装）包含
-面向 AI 编码 Agent 的约定，核心是：**Python / Node 运行环境只在容器内，
-宿主机无需安装，也不要用宿主机的 `python` / `pip` / `pytest` / `npm`**。
+面向 AI 编码 Agent 的约定，核心是：**Python / Go / Node 运行环境只在容器内，
+宿主机无需安装，也不要用宿主机的 `python` / `pip` / `pytest` / `npm` / `go`**。
 所有命令都在项目根目录执行：
 
 | 目的 | 推荐命令（prod+dev / dev-only） |
@@ -414,7 +421,7 @@ make up && make logs
 | 运行测试 | `make test`（单个文件：`docker compose run --rm dev pytest -q tests/test_x.py`） |
 | 静态检查 / 编译检查 | `make lint` / `make compile` |
 | 启动应用 / 查看日志 | `make up` / `make logs` |
-| 前端离线依赖 | `make npm-install`（`enable_node=true` 时） |
+| 前端离线依赖 | `make npm-install`（target_codec 含 node24 时） |
 
 - 容器把项目根目录挂载为 `/app`，容器内修改会直接写回宿主机。
 - 首次使用先 `make check`；离线机器不要执行 `make build` / `docker compose build`。
@@ -425,16 +432,29 @@ make up && make logs
 
 ## 外挂服务
 
-- **nginx**（`sidecars` 含 `nginx`）：`nginx:stable`，宿主机 `http://<host>:8080` →
+- **nginx**（`enable_extra_services` 含 `nginx`）：`nginx:stable`，宿主机 `http://<host>:8080` →
   容器 80 端口。指定 `app_port` 时会生成 `nginx/conf.d/default.conf` 并挂载，
   自动反代到 `app:<容器端口>`（`app_port` 冒号后的端口）；未指定 `app_port`
   时只启动默认 nginx，需要自行提供配置文件。
-- **postgres**（`sidecars` 含 `postgres`）：`postgres:16`，带 `pg_isready` 健康检查，
-  仅容器网络内可达，连接串
-  `postgres://postgres:postgres@postgres:5432/postgres`，数据持久化在 `pgdata`
-  卷（`make down` 不删除数据卷）。
-- `app_depends_on` 生成 compose 的 `depends_on`：nginx 用 `service_started`，
-  postgres 用 `service_healthy`（等待健康检查通过，避免启动期连接被拒）。
+- **postgres**（`enable_extra_services` 含 `postgres16`）：`postgres:16`，compose
+  服务名固定为 `db`，带 `pg_isready` 健康检查，仅容器网络内可达，连接串
+  `postgres://postgres:postgres@db:5432/postgres`，数据持久化在项目根
+  `./volumes/pgdata` 目录（bind mount，`make down` 不删除数据）。
+- **mysql**（`enable_extra_services` 含 `mysql8.4`）：`mysql:8.4`，compose
+  服务名固定为 `db`，root 密码 `mysql` 并预置 `app` 库，带 `mysqladmin ping`
+  健康检查，仅容器网络内可达，连接串 `mysql://root:mysql@db:3306/app`，
+  数据持久化在项目根 `./volumes/mysqldata` 目录（bind mount）。
+- **mongo**（`enable_extra_services` 含 `mongo9`）：`mongo:9`，compose 服务名
+  固定为 `db`，带 `mongosh ping` 健康检查，仅容器网络内可达，连接串
+  `mongodb://db:27017`，数据持久化在项目根 `./volumes/mongodata` 目录
+  （bind mount）。
+- 内置依赖逻辑：`enable_extra_services` 含 DB 服务（postgres16 / mysql8.4 /
+  mongo9 任一）时，app 服务自动 `depends_on` 服务名 `db` 并等待健康检查通过
+  （`condition: service_healthy`），避免启动期连接被拒；nginx 不产生
+  `depends_on`。
+- 所有 DB 数据目录统一映射到项目根 `volumes/` 下（`./volumes/pgdata` /
+  `./volumes/mysqldata` / `./volumes/mongodata`），首次 `make up` 时由
+  Docker 自动创建，数据随项目根目录走（备份/迁移直接拷贝该目录）。
 - 所有服务均设置 `restart: unless-stopped` 与 `pull_policy: never`，离线环境
   不会尝试拉取镜像。
 
@@ -493,7 +513,8 @@ make up && make logs
 
 ## 前端离线开发（Node.js / npm）
 
-勾选 `enable_node` 后，镜像内置 Node.js 24 + npm（从官方
+`target_codec` 含 node24 时（如 `python3.13 + node24(npm+pnpm+npx)`），镜像内置
+Node.js 24 + npm + 全局 pnpm + npx（node24 = npm + pnpm + npx，从官方
 `node:24-slim-bookworm` 镜像复制，运行期无需联网），用于
 vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download** 工作流
 （仓库 `.github/workflows/npm_download.yml`）的集成方式：
@@ -513,7 +534,7 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
    # 等价于容器内：npm install --offline /opt/npm-packages/*.tgz
    ```
 4. 开发调试（二选一）：
-   - 推荐：构建参数 `prod_command` 设为 `npm run dev -- --host 0.0.0.0`，
+   - 推荐：把项目根 `docker-run.sh` 的默认命令改为 `npm run dev -- --host 0.0.0.0`，
      `app_port` 设为前端端口映射（vite `5173:5173` / webpack `8080:8080`），
      `make up` 即带宿主机端口映射；源码经 `/app` 挂载，支持热更新；
    - 临时：在项目根执行
@@ -542,8 +563,8 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
   `/app/vendor/bootstrap-<version>/`），模板中直接引用其 `dist/` 下的 css/js
   静态资源即可。vendor 目录已存在时安装终止（避免覆盖）。
 - **`bootstrap_install_via_npm`**：构建期在镜像内
-  `npm install -g bootstrap@latest`。未勾选 `enable_node` 时会自动补装
-  Node.js 24 + npm 镜像层（等效勾选）。容器内静态资源位于
+  `npm install -g bootstrap@latest`（需要 target_codec 含 node24，缺失时构建前
+  校验报错）。容器内静态资源位于
   `/usr/local/lib/node_modules/bootstrap/dist/`，用 `npm ls -g bootstrap`
   查看版本。
 
@@ -563,7 +584,7 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
 
 - **`tailwind_install_via_npm`**：构建期在镜像内
   `npm install -g tailwindcss@latest @tailwindcss/cli@latest`（两者按同一版本号
-  发布，未勾选 `enable_node` 时同样自动补装 Node.js 层）。容器内
+  发布；需要 target_codec 含 node24）。容器内
   `tailwindcss --version` 查看版本，离线构建示例：
 
   ```bash
@@ -578,8 +599,8 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
 - **`none`（默认）**：不安装任何前端框架。
 - `*_pack_in_artifact` 模式 vendor 目录已存在时安装终止（避免覆盖）；升级版本
   重新构建即可（自动拉取最新版），替换 vendor 目录。
-- `*_install_via_npm` 模式会在未勾选 `enable_node` 时自动补装 Node.js 24 + npm
-  镜像层（等效勾选）。
+- `*_install_via_npm` 模式需要 target_codec 含 node24（不再自动补装 Node.js 24
+  + npm 镜像层，缺失时构建前校验报错）。
 
 ## 设计说明
 
@@ -600,14 +621,15 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
   运行 compose 前设置环境变量覆盖（如 `SRC_ROOT=/data/other`）。
 - 项目根目录的 `docker-compose.yml` 是用户可改的副本，`.tpl` 保持原样；
   `docker-compose.yml` 已存在时 install.sh 报错退出，不会覆盖。
-- 应用源码目录 `src/` 没有 `main.py` 且启动命令为默认值时，install.sh 复制
-  占位 `main.py` 到 `src/`，保证 `make up` 开箱即用（否则 `python main.py`
-  立即退出，配合 `restart: unless-stopped` 会无限重启）。
+- 应用源码目录 `src/` 缺少入口文件时，install.sh 按 target_codec 放置占位
+  入口（预装 Python 放占位 `main.py`、预装 Golang 放占位 `main.go`，均不覆盖
+  已有文件），保证 `make up` 开箱即用（否则预置入口立即退出，配合
+  `restart: unless-stopped` 会无限重启）。
 
 ### 根目录操作文件与原始副本（docs/devcontainer）
 
 - install.sh 把 `Makefile` / `build.sh` / `Dockerfile.addon`（改名
-  `Dockerfile`）/ `README.md`（按原名安装）从
+  `Dockerfile`）/ `docker-run.sh` / `README.md`（按原名安装）从
   `docs/devcontainer/` 复制到**项目根目录**：所有 make / build.sh 命令都在
   项目根目录执行，无需 cd 进子目录。这些脚本的全部路径按**执行时的工作目录
   （pwd）解析**，因此 docs/devcontainer 下的原始副本与根目录文件内容完全
@@ -652,7 +674,8 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
 
 ### glibc 语义
 
-- 基础镜像固定为 `python:<version>-slim-bookworm`（glibc 2.36），保证任何
+- 基础镜像按 target_codec 固定为 `python:3.13-slim-bookworm` 或
+  `golang:1.26-slim-bookworm`（slim-bookworm，glibc 2.36），保证任何
   manylinux ≤ 2.34 标签的 wheel 都可运行。
 - `glibc_version` 固定为 `2.28`（不再作为输入）：仅控制 **pip download 阶段
   选用的 manylinux 标签**，下载时会请求该 glibc 及其以下的所有 manylinux 标签
@@ -675,17 +698,18 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
   `PYTHONDONTWRITEBYTECODE=1`）；Node.js 只复制 node/npm 并删除 npm 自带文档；
   Oracle `full` 模式的 `wget`/`unzip` 只用于构建期下载，安装、解压与
   `apt-get purge --auto-remove` 在同一层完成，不残留在运行时镜像中。
-- 启动方式显式写入 compose：`docker-compose.yml` 的 app 服务固定写入
-  `entrypoint: []`（清空镜像 ENTRYPOINT）与 `command`（默认构建参数
-  `prod_command`），直接改这两行即可调整启动命令，无需重建镜像。要用自定义
-  启动脚本时，按 compose 文件内注释在 app 的 `volumes` 下追加脚本挂载并把
-  `entrypoint` 改为 `["/bin/bash", "/opt/my-start.sh"]`、`command` 清空为
-  `[]`（否则镜像 CMD 会被追加为脚本参数）。镜像本身仍用 `CMD` 承载默认命令，
-  `docker compose run --rm app <命令>` 不受影响；`make shell` 通过 dev 镜像的
+- 启动方式由镜像 ENTRYPOINT（docker-run.sh）承载：镜像构建时 COPY
+  `docker-run.sh` 并设为 `ENTRYPOINT ["/usr/local/bin/docker-run.sh"]`，脚本
+  默认 `cd /app` 后运行预置入口（预装 Python 时 `python main.py`、纯 golang
+  时 `go run main.go`），带参数调用时透传执行；compose 的 app 服务写
+  `command: []`（不向 ENTRYPOINT 追加参数），并把项目根的 `docker-run.sh`
+  只读挂载到镜像内同一路径覆盖副本。直接改项目根的 docker-run.sh 即可自定义
+  启动方式，无需重建镜像；`docker compose run --rm app <命令>` 不受影响
+  （docker-run.sh 会透传 exec 该命令），`make shell` 通过 dev 镜像的
   `CMD ["bash"]` 进入交互终端，互不干扰。
 - `image_mode=dev-only` 时不再生成两个镜像：Dockerfile 只有单阶段 `dev`，
-  compose 的 app 服务直接引用该 dev 镜像，启动命令同样由 compose 的
-  `command` 显式承载（镜像 CMD 为 bash），`make up` 与
+  compose 的 app 服务直接引用该 dev 镜像，启动方式同样由镜像 ENTRYPOINT
+  （docker-run.sh）承载（镜像 `CMD ["bash"]` 供 `make shell` 使用），`make up` 与
   `make shell/lint/test` 共用同一个镜像；镜像归档中也只保存这一个镜像。
 - `wheels/` 仅在云端构建时经 BuildKit bind mount 参与安装，不复制进任何镜像层
   （构建上下文中的 `wheels/` 不会进入发布包，运行容器内也没有 wheels）；
@@ -723,7 +747,7 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
 导入过程需要约 2 倍镜像体积的临时空间（`docker info` 查看 Docker Root Dir 所在分区）。
 
 **Q: 业务项目里会被放进哪些 devcontainer 文件？**
-项目根目录：`Makefile`、`Dockerfile`、`build.sh`、`README.md`、
+项目根目录：`Makefile`、`Dockerfile`、`build.sh`、`docker-run.sh`、`README.md`、
 `devcontainer.json`（workflow 输入参数快照，与 README.md 一样安装到项目根）、
 `.dockerignore`、`.gitignore`（后两者已存在时只追加条目）、`docker-compose.yml`
 （install.sh 从模板复制而来）、`.env.example`（docker-compose.yml 运行时变量
@@ -732,23 +756,24 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
 `scripts/.env.example`；同名冲突时安装报错退出，不会覆盖）、
 `deps/wheels/requirements.gitkeep.txt`（离线安装头，缺失时才创建）、
 `deps/packages/packages.gitkeep.json`（占位；Npm Download 产物放这里），以及
-应用根目录没有 `main.py` 时复制的占位 `main.py`。`docs/devcontainer/` 一个目录
+按 target_codec 放置的占位入口（预装 Python 放占位 `main.py`、预装 Golang 放
+占位 `main.go`）。`docs/devcontainer/` 一个目录
 存放原始副本与模板。其余业务文件一律不动（README.md 按原名安装，如项目已有
 自己的 README.md / devcontainer.json 会报错终止——请先移走或合并）。
 
 **Q: 如何重新安装 / 更新到新构建的版本？**
 删除旧的 `<应用根>/docs/devcontainer`、`<应用根>/docker-compose.yml`，以及
-上次安装到根目录的 `Makefile` / `Dockerfile` / `build.sh` /
+上次安装到根目录的 `Makefile` / `Dockerfile` / `build.sh` / `docker-run.sh` /
 `README.md`（注意保留你手工修改过的配置），再用新的
 `install.sh` + src tgz 重新安装（dist/ 内 `bash install.sh ../`）。
 `install.sh` 遇到已存在的安装目录、compose 文件或根目录同名文件会直接报错，
 避免新旧版本混装或覆盖你的配置。
 
 **Q: `make up` 后容器一直重启（Restarting）？**
-`python: can't open file '/app/main.py'` 类错误说明启动命令指向的入口不存在：
+`python: can't open file '/app/main.py'` 类错误说明预置入口指向的入口文件不存在：
 确认项目根目录（或 `app_source_dir` 指定的子目录）下有对应入口文件，或修改
-项目根目录 `docker-compose.yml` 中 app 服务的 `entrypoint` / `command`
-（启动方式已显式写入，无需重建镜像）。注意镜像 TAG 必须与本次导入
+项目根目录 `docker-run.sh` 的默认命令（启动方式由镜像 ENTRYPOINT 承载，改根
+目录脚本即可，无需重建镜像）。注意镜像 TAG 必须与本次导入
 的镜像归档一致（先 `make check` 自检）。
 
 **Q: 挂载目录里出现 root 属主文件 / 宿主机无法修改？**
@@ -776,7 +801,7 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
 
 **Q: 某个 pip 包下载失败（No matching distribution）？**
 多为该包无目标平台的 wheel（只有 sdist）。改用 `custom_install_cmd` 预编译，
-或换用 `platform`/`python_version` 组合。
+或换用 `platform` 组合。
 
 **Q: 离线运行时报 `ModuleNotFoundError`，缺的包怎么补？**
 两步：联网机器用 `scripts/pip/pip_download.py` 下载该包 wheel 拷到
@@ -792,7 +817,7 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
 瘦身措施：slim-bookworm 基础镜像、apt 同层清理、pip `--no-compile`、Node 文档
 清理、Oracle `full` 模式构建工具同层 purge。进一步压缩可选：
 `image_mode=prod-only`（少一个 dev 镜像）、`image_mode=dev-only`（只保留一个镜像）、
-Oracle 用 `runtime_deps_only`（客户端不进镜像）、不启用 Node/Oracle 等可选组件；
+Oracle 用 `runtime_deps_only`（客户端不进镜像）、不启用 node24/Oracle 等可选组件；
 dev 镜像与 prod 镜像共享层，归档中公共层只存一份。Summary 中记录了每次产物大小
 作为基线。
 
@@ -804,11 +829,12 @@ Client 19 解压到 `/opt/oracle/instantclient19`（或设置 `ORACLE_CLIENT_DIR
 改选 `full` 模式，客户端会直接打进镜像。验证命令见「Oracle Instant Client」一节。
 
 **Q: 前端项目怎么离线 `npm install` / 启动 vite / webpack？**
-构建时勾选 `enable_node`，把 Npm Download 产物 `packages/` 内容放到项目根
+构建时让 `target_codec` 含 node24（如 `python3.13 + node24(npm+pnpm+npx)`），
+把 Npm Download 产物 `packages/` 内容放到项目根
 `deps/packages/`（或 `npm_packages_dir` 指定的目录），在项目根执行
 `bash build.sh`（一键离线加载）或 `make npm-install`
 （等价于 `npm install --offline /opt/npm-packages/*.tgz`），再 `make shell` 后
-`npm run dev -- --host 0.0.0.0`。镜像内已内置 Node.js/npm，无需联网。
+`npm run dev -- --host 0.0.0.0`。镜像内已内置 Node.js/npm/pnpm，无需联网。
 
 **Q: 内网 Docker / Compose 版本较老？**
 建议 Docker >= 20.10（23+ 更稳妥，兼容 containerd image store 导出的归档）、

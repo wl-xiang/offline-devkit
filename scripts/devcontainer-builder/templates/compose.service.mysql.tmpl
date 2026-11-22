@@ -1,0 +1,17 @@
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    pull_policy: never
+    environment:
+      MYSQL_ROOT_PASSWORD: mysql
+      MYSQL_DATABASE: app
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-pmysql"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    volumes:
+      - ./volumes/mysqldata:/var/lib/mysql
+    networks:
+      - app-net

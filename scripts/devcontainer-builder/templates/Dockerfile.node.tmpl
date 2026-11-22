@@ -16,8 +16,9 @@ RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
               /usr/local/lib/node_modules/npm/man \
     && node -v && npm -v
 
-# 容器默认以宿主机 UID 运行（非 root，HOME 可能不可写）：把 npm 缓存目录
-# 指到 /tmp，保证 make npm-install / npm run dev 正常使用
+# 容器默认以宿主机 UID 运行（非 root，HOME 可能不可写）：把 npm / pnpm 的
+# 缓存与数据目录指到 /tmp，保证 make npm-install / npm run dev 正常使用
 ENV NPM_CONFIG_CACHE=/tmp/npm-cache \
     NPM_CONFIG_UPDATE_NOTIFIER=false \
-    NPM_CONFIG_FUND=false
+    NPM_CONFIG_FUND=false \
+    PNPM_HOME=/tmp/pnpm
