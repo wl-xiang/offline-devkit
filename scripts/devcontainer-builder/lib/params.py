@@ -39,7 +39,8 @@ GO_VERSION = "1.26"
 NODE_VERSION = "24"
 
 # 外挂服务（enable_extra_services，单个下拉参数）：nginx 与/或一个 DB 服务。
-# DB 服务启用时 app 服务自动 depends_on（等待健康检查通过），无需用户配置。
+# DB 服务启用时 app 服务自动 depends_on（等待健康检查通过），无需用户配置；
+# DB 在 compose 中的服务名固定为 `db`。
 EXTRA_SERVICES_CHOICES = (
     "none",
     "nginx",

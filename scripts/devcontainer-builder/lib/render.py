@@ -652,17 +652,11 @@ def _env_file_path(path):
 
 def _depends_on_block(p):
     """app 的启动依赖（内置逻辑）：enable_extra_services 含 DB 服务时自动
-    depends_on 该 DB 并等待健康检查通过，避免首次连接被拒。"""
+    depends_on 该 DB 并等待健康检查通过，避免首次连接被拒。
+    DB 在 compose 中的服务名固定为 `db`。"""
     if not p.has_db_service:
         return ""
-    lines = ["    depends_on:\n"]
-    if p.enable_postgres:
-        lines.append("      postgres:\n        condition: service_healthy\n")
-    if p.enable_mysql:
-        lines.append("      mysql:\n        condition: service_healthy\n")
-    if p.enable_mongo:
-        lines.append("      mongo:\n        condition: service_healthy\n")
-    return "".join(lines)
+    return "    depends_on:\n      db:\n        condition: service_healthy\n"
 
 
 def _nginx_service(p):
@@ -1431,11 +1425,11 @@ def render_src_readme(p):
     if p.enable_nginx:
         services.append("nginx:stable (宿主机 8080 → 容器 80)")
     if p.enable_postgres:
-        services.append("postgres:16 (数据卷 pgdata)")
+        services.append("postgres:16 (compose 服务名 db, 数据卷 pgdata)")
     if p.enable_mysql:
-        services.append("mysql:8.4 (数据卷 mysqldata)")
+        services.append("mysql:8.4 (compose 服务名 db, 数据卷 mysqldata)")
     if p.enable_mongo:
-        services.append("mongo:9 (数据卷 mongodata)")
+        services.append("mongo:9 (compose 服务名 db, 数据卷 mongodata)")
     services_summary = "、".join(services) if services else "无"
 
     if p.dev_image_only:

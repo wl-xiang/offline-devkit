@@ -32,9 +32,9 @@ scripts/devcontainer-builder/
     ├── Dockerfile.node.tmpl       # Node.js/npm 块（从官方 node 镜像复制，target_codec 含 node24 时插入）
     ├── compose.base.tmpl          # compose 模板骨架（app 服务 + 占位块；输出为 .tpl）
     ├── compose.service.nginx.tmpl # nginx 服务子模板
-    ├── compose.service.postgres.tmpl # postgres 服务子模板（含健康检查）
-    ├── compose.service.mysql.tmpl    # mysql 服务子模板（含 mysqladmin ping 健康检查）
-    ├── compose.service.mongo.tmpl    # mongo 服务子模板（含 mongosh ping 健康检查）
+    ├── compose.service.postgres.tmpl # postgres 服务子模板（服务名固定 db，含健康检查）
+    ├── compose.service.mysql.tmpl    # mysql 服务子模板（服务名固定 db，含 mysqladmin ping 健康检查）
+    ├── compose.service.mongo.tmpl    # mongo 服务子模板（服务名固定 db，含 mongosh ping 健康检查）
     ├── nginx.conf.tmpl            # nginx 反代配置（enable_extra_services 含 nginx 且指定 app_port 时）
     ├── Makefile.tmpl              # make 目标（安装到项目根，路径按 pwd 解析）
     ├── requirements.txt.tmpl      # pip 包清单（含预装组件）

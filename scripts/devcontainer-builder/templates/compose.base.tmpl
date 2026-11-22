@@ -12,7 +12,8 @@
 # pull_policy=never + make up --no-build 不会触发任何联网。
 # 启动方式：镜像 ENTRYPOINT 为 docker-run.sh（默认 cd /app 后运行预置入口），
 # 项目根的 docker-run.sh 已只读挂载覆盖镜像内副本，改根目录脚本即可调整启动
-# 方式，无需重建镜像；enable_extra_services 含 DB 服务时 app 自动 depends_on。
+# 方式，无需重建镜像；enable_extra_services 含 DB 服务时 app 自动 depends_on
+# 服务名 `db`（postgres16/mysql8.4/mongo9 在 compose 中的服务名统一固定为 db）。
 name: {{IMAGE_PREFIX}}-${SRC_ROOT_NAME:-app}
 services:
   app:

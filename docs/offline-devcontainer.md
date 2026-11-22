@@ -436,18 +436,19 @@ make up && make logs
   容器 80 端口。指定 `app_port` 时会生成 `nginx/conf.d/default.conf` 并挂载，
   自动反代到 `app:<容器端口>`（`app_port` 冒号后的端口）；未指定 `app_port`
   时只启动默认 nginx，需要自行提供配置文件。
-- **postgres**（`enable_extra_services` 含 `postgres16`）：`postgres:16`，带 `pg_isready` 健康检查，
-  仅容器网络内可达，连接串
-  `postgres://postgres:postgres@postgres:5432/postgres`，数据持久化在 `pgdata`
+- **postgres**（`enable_extra_services` 含 `postgres16`）：`postgres:16`，compose
+  服务名固定为 `db`，带 `pg_isready` 健康检查，仅容器网络内可达，连接串
+  `postgres://postgres:postgres@db:5432/postgres`，数据持久化在 `pgdata`
   卷（`make down` 不删除数据卷）。
-- **mysql**（`enable_extra_services` 含 `mysql8.4`）：`mysql:8.4`，root 密码 `mysql`
-  并预置 `app` 库，带 `mysqladmin ping` 健康检查，仅容器网络内可达，连接串
-  `mysql://root:mysql@mysql:3306/app`，数据持久化在 `mysqldata` 卷。
-- **mongo**（`enable_extra_services` 含 `mongo9`）：`mongo:9`，带 `mongosh ping`
-  健康检查，仅容器网络内可达，连接串 `mongodb://mongo:27017`，数据持久化在
-  `mongodata` 卷。
+- **mysql**（`enable_extra_services` 含 `mysql8.4`）：`mysql:8.4`，compose
+  服务名固定为 `db`，root 密码 `mysql` 并预置 `app` 库，带 `mysqladmin ping`
+  健康检查，仅容器网络内可达，连接串 `mysql://root:mysql@db:3306/app`，
+  数据持久化在 `mysqldata` 卷。
+- **mongo**（`enable_extra_services` 含 `mongo9`）：`mongo:9`，compose 服务名
+  固定为 `db`，带 `mongosh ping` 健康检查，仅容器网络内可达，连接串
+  `mongodb://db:27017`，数据持久化在 `mongodata` 卷。
 - 内置依赖逻辑：`enable_extra_services` 含 DB 服务（postgres16 / mysql8.4 /
-  mongo9 任一）时，app 服务自动 `depends_on` 该 DB 并等待健康检查通过
+  mongo9 任一）时，app 服务自动 `depends_on` 服务名 `db` 并等待健康检查通过
   （`condition: service_healthy`），避免启动期连接被拒；nginx 不产生
   `depends_on`。
 - 所有服务均设置 `restart: unless-stopped` 与 `pull_policy: never`，离线环境

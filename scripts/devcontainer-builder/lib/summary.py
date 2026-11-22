@@ -290,16 +290,16 @@ def build_markdown(p, results):
                       if p.enable_nginx else "（宿主机端口映射）。"))
         out.append("")
     if p.enable_postgres:
-        out.append("postgres 已启用: 连接串 "
-                   "`postgres://postgres:postgres@postgres:5432/postgres`，"
+        out.append("postgres 已启用（compose 服务名 `db`）: 连接串 "
+                   "`postgres://postgres:postgres@db:5432/postgres`，"
                    "数据持久化在 `pgdata` 卷。")
         out.append("")
     if p.enable_mysql:
-        out.append("mysql 已启用: 连接 `mysql -h mysql -uroot -pmysql`（root 密码 "
-                   "`mysql`，预置数据库 `app`），数据持久化在 `mysqldata` 卷。")
+        out.append("mysql 已启用（compose 服务名 `db`）: 连接 `mysql -h db -uroot -pmysql`"
+                   "（root 密码 `mysql`，预置数据库 `app`），数据持久化在 `mysqldata` 卷。")
         out.append("")
     if p.enable_mongo:
-        out.append("mongo 已启用: 连接串 `mongodb://mongo:27017`，"
+        out.append("mongo 已启用（compose 服务名 `db`）: 连接串 `mongodb://db:27017`，"
                    "数据持久化在 `mongodata` 卷。")
         out.append("")
     if p.enable_nginx:
