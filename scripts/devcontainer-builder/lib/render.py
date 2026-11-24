@@ -10,11 +10,12 @@ import shutil
 from pathlib import Path
 
 from .params import (
+    DB_SERVICE_IMAGES,
     DOCKER_RUN_CONTAINER_PATH,
-    EXTRA_SERVICES_IMAGES,
     FRAMEWORK_NAMES,
     FRAMEWORK_VENDOR_DIR,
     GO_VERSION,
+    NGINX_IMAGE,
     NPM_PACKAGES_CONTAINER_DIR,
     Params,
     PYTHON_VERSION,
@@ -27,7 +28,8 @@ BUILDER_DIR = TEMPLATES_DIR.parent
 # 到项目根 scripts/ 目录
 # （push-bundle.sh 在本地项目根执行，apply-bundle.sh / rollback-bundle.sh 在
 #   部署服务器项目根执行，clean-images.sh 清除项目根 compose 声明的镜像，
-#   .env.example 是 push-bundle.sh 读取的环境变量模板）
+#   .env.example 是 push-bundle.sh 读取的环境变量模板；
+#   manifest.txt 由 render.py 按本次参数渲染后写入包内 scripts/，见 render_all）
 SCRIPTS_FILES = (
     ".env.example",
     "push-bundle.sh",
@@ -37,14 +39,14 @@ SCRIPTS_FILES = (
 )
 
 # compose 中的 dev 服务（profile=dev，仅 make shell/lint/compile/test 时激活）
-# build.dockerfile 指向 docs/devcontainer/Dockerfile（联网重建版 Dockerfile 位于
-# 该目录，context 为项目根目录）
+# build.dockerfile 指向项目根 Dockerfile（联网重建版，由 install.sh 安装到项目根；
+# 离线补装用 Dockerfile.addon 也在项目根，由 build.sh 引用）
 _DEV_SERVICE_TMPL = """\
   dev:
     image: {{DEV_IMAGE}}
     build:
       context: .
-      dockerfile: docs/devcontainer/Dockerfile
+      dockerfile: Dockerfile
       target: dev
     working_dir: /app
     pull_policy: never
@@ -241,7 +243,13 @@ def _base_mapping(p):
         "DOCKER_PLATFORM": p.docker_platform,
         "PYTHON_VERSION": p.python_version,
         "TARGET_CODEC": p.target_codec,
-        "ENABLE_EXTRA_SERVICES": p.extra_services,
+        "SOURCE_LAYOUT": p.source_layout,
+        "ENABLE_DB": p.db_service,
+        "NGINX_MODE": p.nginx_mode,
+        # 应用源码目录名：single=app（唯一），api_web=api（后端）；web 为前端目录
+        "APP_DIR": p.app_dir,
+        "WEB_DIR": p.src_dirs[-1],
+        "VENDOR_BASE_DIR": p.src_dirs[-1],
         "GO_VERSION": p.go_version,
         "GLIBC_VERSION": p.glibc_version,
         "MANYLINUX_LABEL": p.manylinux_label,
@@ -336,12 +344,44 @@ def _go_block(p):
 
 def _sidecar_images(p):
     """本次构建打包进镜像归档的外挂服务镜像（install.sh --load-target 过滤时
-    无论 dev/prod/app 都会一并导入）。"""
+    无论 dev/prod/app 都会一并导入）：独立 nginx 服务 + DB 服务。"""
     images = []
-    for service in ("nginx", "postgres16", "mysql8.4", "mongo9"):
-        if service in p.extra_services:
-            images.append(EXTRA_SERVICES_IMAGES[service])
+    if p.nginx_service_mode:
+        images.append(NGINX_IMAGE)
+    for service in ("postgres16", "mysql8.4", "mongo9"):
+        if service in p.db_service:
+            images.append(DB_SERVICE_IMAGES[service])
     return " ".join(images)
+
+
+# scripts/manifest.txt 的根目录操作文件条目（install.sh 安装清单的全集；
+# 目录条目在前，文件条目在后，顺序即 push 打包顺序）
+MANIFEST_ROOT_FILES = (
+    "Dockerfile",
+    "Dockerfile.addon",
+    "requirements.txt",
+    "docker-compose.yml",
+    "docker-run.sh",
+    "Makefile",
+    ".env.example",
+    "devcontainer.json",
+    ".dockerignore",
+    ".gitignore",
+)
+
+
+def manifest_entries(p):
+    """scripts/manifest.txt 的默认条目（按本次 source_layout / nginx_mode 渲染）。
+
+    同步/备份/回滚只操作清单中的条目；条目内部按项目根 .gitignore 过滤
+    （如 scripts/.env、node_modules/ 不会进 bundle）。
+    """
+    entries = [d + "/" for d in p.src_dirs]
+    entries += ["docs/", "scripts/"]
+    if p.enable_nginx:
+        entries.append("nginx/")
+    entries += list(MANIFEST_ROOT_FILES)
+    return entries
 
 
 def _framework_npm_block(p):
@@ -409,12 +449,16 @@ def _oracle_compose_hint(p):
 
 
 def _extra_volumes(p):
-    """app/dev 服务额外的只读挂载（Oracle 客户端、npm 离线包、宿主机时区）。"""
+    """app/dev 服务额外的只读挂载（Oracle 客户端、npm 离线包、宿主机时区、
+    api_web + nginx_binary 模式的 web 静态产物目录）。"""
     lines = []
     if p.oracle_client_mount:
         lines.append(f"      - {p.oracle_client_mount}\n")
     if p.npm_packages_mount:
         lines.append(f"      - {p.npm_packages_mount}\n")
+    if p.nginx_binary_mode and p.is_api_web:
+        # web 静态产物挂进容器 /usr/share/nginx/html（容器内 nginx 托管）
+        lines.append(f"      - ./{p.src_dirs[-1]}/dist:/usr/share/nginx/html:ro\n")
     for volume in p.timezone_volumes:
         lines.append(f"      - {volume}\n")
     return "".join(lines)
@@ -567,14 +611,19 @@ def _dev_pip_block(p, local_wheels):
 
 
 def render_dockerfile(p, local_wheels=True):
-    # 发布包内的重建版 Dockerfile 由 compose 在项目根目录构建（context=项目根），
-    # requirements.txt 位于 docs/devcontainer/，COPY 路径相应调整
-    req_path = ("requirements.txt" if local_wheels
-                else "docs/devcontainer/requirements.txt")
+    # 联网重建版 Dockerfile 由 install.sh 安装到项目根（compose build 的
+    # dockerfile 指向项目根 Dockerfile，context=项目根），requirements.txt
+    # 同样安装到项目根，COPY 路径为根目录相对路径
+    req_path = "requirements.txt"
     base = {
         **_base_mapping(p),
-        # tzdata 内置补装（slim 镜像不带，内置 TZ=Asia/Shanghai 环境变量才生效）
-        "APT_BLOCK": _apt_block(p.apt_package_list + ["tzdata"]),
+        # tzdata 内置补装（slim 镜像不带，内置 TZ=Asia/Shanghai 环境变量才生效）；
+        # nginx_binary 模式经 APT 把 nginx 安装进镜像（docker-run.sh 启动时拉起）
+        "APT_BLOCK": _apt_block(
+            p.apt_package_list
+            + (["nginx"] if p.nginx_binary_mode else [])
+            + ["tzdata"]
+        ),
         "CUSTOM_INSTALL_BLOCK": _custom_install_block(p.custom_install_cmd),
         "INSTALL_BLOCK": _install_block(p, local_wheels, req_path),
         "DEV_PIP_BLOCK": _dev_pip_block(p, local_wheels),
@@ -622,36 +671,46 @@ def _app_start_block(p):
 
 
 def _app_options_block(p):
-    """app 服务的端口发布、env_file 与预设环境变量。"""
+    """app 服务的端口发布、env_file 与预设环境变量。
+
+    端口发布规则：
+    - nginx_service 模式：app 只对容器网络 expose 容器端口（由 nginx 反代，
+      宿主机经 nginx 8080 访问）；
+    - nginx_binary 模式：对外端口复用 app_port 的宿主机端口，发布到容器 80
+      （容器内 nginx 监听 80，反代到应用容器端口）；
+    - 未启用 nginx：常规 host:container 端口映射。
+    """
     lines = []
     if p.has_app_port:
         host_port, container_port = p.app_port_parts
-        if p.enable_nginx:
-            # 已由 nginx 反代，app 只对容器网络暴露容器端口，避免与宿主机端口冲突
+        if p.nginx_service_mode:
             lines.append("    expose:\n")
             lines.append(f"      - \"{container_port}\"\n")
+        elif p.nginx_binary_mode:
+            lines.append("    ports:\n")
+            lines.append(f"      - \"{host_port}:80\"\n")
         else:
             lines.append("    ports:\n")
             lines.append(f"      - \"{host_port}:{container_port}\"\n")
     if p.env_file_list:
         lines.append("    env_file:\n")
         # env 文件相对应用根目录（docker-compose.yml 由 install.sh 复制到项目根，
-        # ${SRC_ROOT:-./src/} 默认为项目根下的 src/ 目录）；绝对路径原样保留
+        # ${SRC_ROOT:-./app/} 默认为项目根下的 app/ 目录）；绝对路径原样保留
         lines.extend(
-            f"      - {json.dumps(_env_file_path(x))}\n" for x in p.env_file_list
+            f"      - {json.dumps(_env_file_path(p, x))}\n" for x in p.env_file_list
         )
     lines.append(_env_block(p))
     return "".join(lines)
 
 
-def _env_file_path(path):
+def _env_file_path(p, path):
     if path.startswith("/"):
         return path
-    return "${SRC_ROOT:-./src/}/" + path
+    return "${SRC_ROOT:-./" + p.app_dir + "/}/" + path
 
 
 def _depends_on_block(p):
-    """app 的启动依赖（内置逻辑）：enable_extra_services 含 DB 服务时自动
+    """app 的启动依赖（内置逻辑）：enable_db 含 DB 服务时自动
     depends_on 该 DB 并等待健康检查通过，避免首次连接被拒。
     DB 在 compose 中的服务名固定为 `db`。"""
     if not p.has_db_service:
@@ -660,15 +719,17 @@ def _depends_on_block(p):
 
 
 def _nginx_service(p):
-    mount = ""
-    if p.has_app_port:
-        # docker-compose.yml 位于项目根目录（install.sh 复制），反代配置相对其
-        # 所在的 docs/devcontainer 目录
-        mount = ("    volumes:\n"
-                 "      - ./docs/devcontainer/nginx/conf.d:/etc/nginx/conf.d:ro\n")
+    """独立 nginx 服务（nginx_service 模式）：挂载项目根 nginx/ 配置模板，
+    api_web 布局另挂载 web 静态产物目录（web/dist → /usr/share/nginx/html）。"""
+    mounts = [
+        "    volumes:\n",
+        "      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro\n",
+    ]
+    if p.is_api_web:
+        mounts.append(f"      - ./{p.src_dirs[-1]}/dist:/usr/share/nginx/html:ro\n")
     return _sub(
         _load("compose.service.nginx.tmpl"),
-        {**_base_mapping(p), "NGINX_CONF_MOUNT": mount},
+        {**_base_mapping(p), "NGINX_CONF_MOUNT": "".join(mounts)},
     ).rstrip("\n")
 
 
@@ -682,7 +743,7 @@ def render_compose(p):
         })
 
     services = []
-    if p.enable_nginx:
+    if p.nginx_service_mode:
         services.append(_nginx_service(p))
     if p.enable_postgres:
         services.append(_load("compose.service.postgres.tmpl").rstrip("\n"))
@@ -712,9 +773,55 @@ def render_compose(p):
     )
 
 
+def _nginx_proxy_location(p):
+    """nginx 反代 location 块：upstream 按模式选择（binary=容器内
+    127.0.0.1:<应用端口>；service=compose 服务名 app:<应用端口>）。"""
+    upstream = (f"127.0.0.1:{p.app_container_port}" if p.nginx_binary_mode
+                else f"app:{p.app_container_port}")
+    return f"""\
+    location / {{
+        proxy_pass http://{upstream};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+    }}
+"""
+
+
 def render_nginx_conf(p):
-    """nginx 反代到 app:<容器端口>；仅在启用 nginx 且指定 app_port 时生成。"""
-    return _sub(_load("nginx.conf.tmpl"), {"APP_PORT": p.app_container_port})
+    """项目根 nginx/default.conf 配置模板（nginx_mode 启用时生成）。
+
+    - single 布局：全部请求反代到应用；
+    - api_web 布局：/api/ 反代到后端，/ 由静态产物目录托管
+      （service 模式挂载进 nginx 容器 /usr/share/nginx/html，
+        binary 模式挂载进 app 容器同名路径）。
+    用户可直接修改该文件（manifest 已包含 nginx/，修改会随 bundle 同步）。
+    """
+    lines = []
+    if p.is_api_web:
+        if p.has_app_port:
+            lines.append(_nginx_proxy_location(p).replace("location / {",
+                                                          "location /api/ {", 1))
+        lines.append("""\
+    # 前端静态产物（web/dist 打包结果；目录不存在时先在前端项目内执行构建）
+    location / {
+        root /usr/share/nginx/html;
+        index index.html;
+        try_files $uri $uri/ /index.html;
+    }
+""")
+    elif p.has_app_port:
+        lines.append(_nginx_proxy_location(p))
+    else:
+        lines.append("    # 未指定 app_port：请自行补充反代/静态规则\n")
+    return _sub(_load("nginx.conf.tmpl"), {
+        "NGINX_MODE": p.nginx_mode,
+        "SOURCE_LAYOUT": p.source_layout,
+        "NGINX_LOCATIONS": "".join(lines),
+    })
 
 
 def render_makefile(p):
@@ -798,15 +905,38 @@ def render_main_py():
 
 def render_main_go():
     """占位入口（target_codec 预装 Golang 时随包分发）：install.sh 在应用源码
-    目录 <项目根>/src 无 main.go 时复制过去。"""
+    目录（<项目根>/app 或 api_web 布局的 api/）无 main.go 时复制过去。"""
     return _load("main.go.tmpl")
+
+
+def render_manifest(p):
+    """scripts/manifest.txt：push/apply/rollback 的目标清单（按本次参数渲染）。"""
+    return _sub(_load("manifest.txt.tmpl"), {
+        **_base_mapping(p),
+        "NGINX_COMMENT": " / nginx 配置" if p.enable_nginx else "",
+        "MANIFEST_ENTRIES": "\n".join(manifest_entries(p)),
+    })
+
+
+def render_web_index_html(p):
+    """web/index.html 占位静态页（api_web 布局；nginx 托管 web/dist 产物）。"""
+    return _sub(_load("index.html.tmpl"), {
+        "WEB_DIR": p.src_dirs[-1],
+        "NGINX_ENABLED": "1" if p.enable_nginx else "0",
+    })
+
+
+def render_web_package_json(p):
+    """web/package.json 前端工程占位（api_web 布局且预装 Node 时）。"""
+    return _load("package.json.tmpl")
 
 
 def render_docker_run_sh(p):
     """容器默认启动脚本（镜像 ENTRYPOINT）：cd /app 后运行预置入口。
 
     - 预装 Python → python main.py（python3.13 + golang1.26 组合同为 python 优先）；
-    - 纯 Golang → go run main.go。
+    - 纯 Golang → go run main.go；
+    - nginx_binary 模式：默认启动时先拉起容器内 nginx（APT 安装，反代/静态托管）。
     带参数调用时透传执行（`docker compose run --rm app <命令>` 仍可用）。
     SRC Bundle 随包分发，install.sh 安装到项目根，compose 只读挂载覆盖镜像内
     副本，改根目录脚本即可调整启动方式，无需重建镜像。
@@ -815,7 +945,23 @@ def render_docker_run_sh(p):
     return _sub(_load("docker-run.sh.tmpl"), {
         "DOCKER_RUN_DEFAULT_COMMAND": default_cmd,
         "TARGET_CODEC": p.target_codec,
+        "NGINX_START_BLOCK": _nginx_start_block(p),
     })
+
+
+def _nginx_start_block(p):
+    """docker-run.sh 中拉起容器内 nginx 的块（仅 nginx_binary 模式）。"""
+    if not p.nginx_binary_mode:
+        return ""
+    return (
+        "# nginx（binary 模式，APT 安装进镜像）：默认启动时拉起，反代/静态托管\n"
+        "# 容器内监听 80（compose 已把 app_port 的宿主机端口发布到容器 80）。\n"
+        "# 守护进程方式运行，应用进程仍是容器主进程；不要 nginx 时删掉本段即可\n"
+        "if command -v nginx >/dev/null 2>&1; then\n"
+        "    nginx\n"
+        "fi\n"
+        "\n"
+    )
 
 
 def _oracle_notice_block(p):
@@ -866,7 +1012,7 @@ def _framework_notice_block(p):
     """install.sh 中的前端框架提示（css_framework_install 非 none 时）。"""
     if not p.framework_enabled:
         return ""
-    vendor = (f"$SRC_DIR/{FRAMEWORK_VENDOR_DIR}/"
+    vendor = (f"$INSTALL_PATH/{p.src_dirs[-1]}/{FRAMEWORK_VENDOR_DIR}/"
               f"{p.framework_vendor_label}-<version>")
     container = (f"/app/{FRAMEWORK_VENDOR_DIR}/"
                  f"{p.framework_vendor_label}-<version>")
@@ -1095,7 +1241,7 @@ def _framework_readme_section(p):
     if not p.framework_pack:
         return ""
     label = p.framework_vendor_label
-    vendor = f"src/{FRAMEWORK_VENDOR_DIR}/{label}"
+    vendor = f"{p.src_dirs[-1]}/{FRAMEWORK_VENDOR_DIR}/{label}"
     tgz = f"{label}-<version>.tgz"
     if p.framework_name == "bootstrap":
         return f"""
@@ -1134,7 +1280,7 @@ def _framework_html_section(p):
     if not p.framework_pack:
         return ""
     label = p.framework_vendor_label
-    vendor = f"src/{FRAMEWORK_VENDOR_DIR}/{label}"
+    vendor = f"{p.src_dirs[-1]}/{FRAMEWORK_VENDOR_DIR}/{label}"
     step_no = "08" if p.oracle_enabled else "07"
     if p.framework_name == "bootstrap":
         check_cmd = f"ls {vendor}-*/dist/css/bootstrap.min.css"
@@ -1466,7 +1612,7 @@ def render_src_readme(p):
     if p.framework_pack:
         framework_summary = (
             f"{FRAMEWORK_NAMES[p.framework_name]}（pack in artifact，install.sh "
-            f"安装到 `src/{FRAMEWORK_VENDOR_DIR}/{p.framework_vendor_label}-<version>`，"
+            f"安装到 `{p.src_dirs[-1]}/{FRAMEWORK_VENDOR_DIR}/{p.framework_vendor_label}-<version>`，"
             f"版本 latest）"
         )
     elif p.framework_npm:
@@ -1505,15 +1651,17 @@ def render_all(p, staging):
         "Dockerfile": render_dockerfile(p),
         # .tpl 后缀：不会被 docker compose 自动发现/被 -f 误用，
         # 由 install.sh 原样复制到项目根目录为 docker-compose.yml
-        # （模板内 ${SRC_ROOT:-./src/} / ${SRC_ROOT_NAME:-app} 由 compose 运行时解析）
+        # （模板内 ${SRC_ROOT:-./app/} / ${SRC_ROOT_NAME:-app} 由 compose 运行时解析）
         "docker-compose.yml.tpl": render_compose(p),
         "Makefile": render_makefile(p),
         "requirements.txt": render_requirements(p),
         # 容器默认启动脚本（镜像 ENTRYPOINT；install.sh 安装到项目根，
         # compose 只读挂载覆盖镜像内副本，用户可随时改写）
         "docker-run.sh": render_docker_run_sh(p),
+        # 快速上手说明（install.sh 安装为 docs/DEVCONTAINER.md，根目录不放 README）
         "README.md": render_src_readme(p),
-        # 离线补装：wheel 打进现有镜像生成 addon 镜像
+        # 联网重建版 Dockerfile（install.sh 安装到项目根；compose build 使用）
+        # 离线补装：wheel 打进现有镜像生成 addon 镜像（build.sh 引用）
         "Dockerfile.addon": render_dockerfile_addon(p),
         "build.sh": render_build_sh(p),
         # .gitignore 随 install.sh 安装/合并到项目根目录（src root）。
@@ -1525,11 +1673,17 @@ def render_all(p, staging):
         # 仅缺失时安装）。部署脚本的 SYNC_REMOTE_* 变量模板是 scripts/.env.example
         ".env.example": render_env_example(p),
     }
-    # 占位入口按 target_codec 分发（install.sh 在 src 缺失时复制到源码目录）
+    # 占位入口按 target_codec 分发（install.sh 在应用源码目录缺失时复制过去）
     if p.python_enabled:
         files["main.py"] = render_main_py()
     if p.go_enabled:
         files["main.go"] = render_main_go()
+    # 前端目录占位（api_web 布局）：web/index.html 静态页样例，
+    # web/package.json（预装 Node 时）为前端工程样例
+    if p.is_api_web:
+        files["index.html"] = render_web_index_html(p)
+        if p.enable_node:
+            files["package.json"] = render_web_package_json(p)
     for name, content in files.items():
         (staging / name).write_text(content, encoding="utf-8")
     # 保留可执行位（tar 会随包保留；artifact zip 解压可能丢失，文档引导 bash 调用）
@@ -1541,10 +1695,14 @@ def render_all(p, staging):
     scripts_dir.mkdir(exist_ok=True)
     for name in SCRIPTS_FILES:
         shutil.copy2(BUILDER_DIR / "scripts" / name, scripts_dir / name)
-    if p.enable_nginx and p.has_app_port:
-        conf_dir = staging / "nginx" / "conf.d"
-        conf_dir.mkdir(parents=True, exist_ok=True)
-        (conf_dir / "default.conf").write_text(
+    # manifest.txt：同步/备份/回滚目标清单（按 source_layout / nginx_mode 渲染），
+    # install.sh 安装到项目根 scripts/manifest.txt
+    (scripts_dir / "manifest.txt").write_text(render_manifest(p), encoding="utf-8")
+    # nginx 配置模板（nginx_mode 启用时）：install.sh 安装到项目根 nginx/default.conf
+    if p.enable_nginx:
+        nginx_dir = staging / "nginx"
+        nginx_dir.mkdir(exist_ok=True)
+        (nginx_dir / "default.conf").write_text(
             render_nginx_conf(p), encoding="utf-8"
         )
     return files

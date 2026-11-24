@@ -1,7 +1,7 @@
 # 由 scripts/devcontainer-builder 生成（时间戳: {{TS}}），请勿手工编辑。
 # install.sh 会把本文件安装（或按行合并）到项目根目录：
 # 忽略离线产物与本地补装缓存，避免误提交大文件。
-dist/
+/downloads/
 tarballs/
 .addon-build/
 __pycache__/
@@ -24,8 +24,8 @@ deps/packages/*
 *.tgz
 *.tar.gz
 *.zip
-# push-bundle.sh 本地产物目录（bundle_*.tgz 与 bundle.meta、backup_src_*.tgz）
-bundles/
+# bundle 目录（bundle_*.tgz 与 bundle.meta、bundles/backups/ 备份）
+/bundles/
 
 # volumes/：DB（postgres/mysql/mongo）数据目录（compose bind mount），不入库
 volumes/

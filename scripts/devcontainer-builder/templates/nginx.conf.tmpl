@@ -1,17 +1,11 @@
-# 由 scripts/devcontainer-builder 生成：把 80 端口反代到 app:{{APP_PORT}}
+# 由 scripts/devcontainer-builder 生成（nginx_mode={{NGINX_MODE}}，布局
+# {{SOURCE_LAYOUT}}），安装到项目根 nginx/default.conf，可按需修改。
+# nginx_service 模式：由独立 nginx 服务挂载（compose 把宿主机 8080 发布到
+# 容器 80）；nginx_binary 模式：由 app 容器内的 nginx 加载（容器 80 端口，
+# app_port 的宿主机端口已发布到容器 80）。
 server {
     listen 80;
     server_name _;
 
     client_max_body_size 20m;
-
-    location / {
-        proxy_pass http://app:{{APP_PORT}};
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 60s;
-    }
-}
+{{NGINX_LOCATIONS}}}
