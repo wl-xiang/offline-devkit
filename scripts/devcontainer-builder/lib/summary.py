@@ -123,6 +123,13 @@ def build_markdown(p, results):
         image_mode = "仅 prod 镜像"
     out.append(f"| 镜像模式 | {image_mode} |")
     out.append(f"| 应用端口 (host:container) | {('`' + p.app_port + '`') if p.has_app_port else '(未指定)'} |")
+    if p.nginx_service_mode:
+        nginx_mode = "独立 nginx 服务（宿主机 8080 → 容器 80，反代/托管 web 静态产物）"
+    elif p.nginx_binary_mode:
+        nginx_mode = "nginx 装进镜像（APT，docker-run.sh 启动时拉起，外部端口复用 app_port）"
+    else:
+        nginx_mode = "未启用"
+    out.append(f"| nginx 托管 (nginx_mode) | {nginx_mode} |")
     out.append(f"| env_file | {', '.join(p.env_file_list) if p.env_file_list else '(无)'} |")
     out.append(f"| SELinux 重打标签 (:z) | {_yes_no(p.selinux_relabel)} |")
     out.append("| 时区（内置启用） | `TZ=Asia/Shanghai`（镜像内）+ `/etc/localtime` / `/etc/timezone` 只读挂载 |")
@@ -160,13 +167,13 @@ def build_markdown(p, results):
         out.append("- (无)")
     out.append("")
 
-    out.append("### 外挂服务")
+    out.append("### 外挂 DB 服务")
     out.append("")
-    if p.extra_services != "none":
+    if p.db_service != "none":
         depends_note = "app 自动 depends_on DB 服务（等待健康检查通过）" if p.has_db_service else "app 无 DB 依赖"
-        out.append(f"| enable_extra_services | `{p.extra_services}`（{depends_note}） |")
+        out.append(f"| enable_db | `{p.db_service}`（{depends_note}） |")
     else:
-        out.append("| enable_extra_services | `none` |")
+        out.append("| enable_db | `none` |")
     out.append("")
 
     out.append("### 生成的镜像")
@@ -229,30 +236,34 @@ def build_markdown(p, results):
                " devcontainer.json 等文件），"
                "传输到与目标平台一致的内网机器，并用上表 SHA256 校验完整性。")
     out.append("")
-    out.append("2. **把 artifact zip 包放到你的项目根目录 `dist/` 文件夹下**"
-               "（没有就新建一个），然后在 `dist/` 里解压、就地安装："
-               "place artifact zipball in project root `./dist/` dir, then"
-               " unzip and run `./install.sh ../`")
+    out.append("2. 在服务器上新建空的项目根目录，在其中创建 `downloads/` 文件夹，"
+               "**把 artifact zip 放到 `downloads/` 并就地解压**，然后在"
+               " `downloads/` 里执行安装："
+               "create an empty project root dir, put the artifact zipball in"
+               " `./downloads/`, unzip it there, then run `bash install.sh ../`")
     out.append("")
     out.append("```bash")
-    out.append("mkdir -p /path/to/your-project/dist   # 项目根目录下的 dist/")
-    out.append(f"# 把 {bundle_name}.zip 移入 dist/ 后：")
-    out.append(f"cd /path/to/your-project/dist && unzip {bundle_name}.zip")
+    out.append("mkdir -p /path/to/your-project/downloads   # 项目根目录下的 downloads/")
+    out.append(f"# 把 {bundle_name}.zip 移入 downloads/ 后：")
+    out.append(f"cd /path/to/your-project/downloads && unzip {bundle_name}.zip")
     out.append("bash install.sh --load ../              # --load 安装开始前自动 docker load 镜像归档")
     out.append("bash install.sh --load-only             # 只导入镜像归档，不做安装")
     out.append("bash install.sh ../                     # 参数 ../ 即项目根目录（或改用上一行的 --load 一步到位）")
     out.append("```")
     out.append("")
+    app_dir_note = "api/ + web/ 两个源码目录" if p.is_api_web else "app/ 源码目录"
     out.append("   install.sh 会把 `Makefile` / `build.sh` / `Dockerfile`"
-               "（由 Dockerfile.addon 改名）/ `docker-run.sh` / `README.md` /"
-               " `devcontainer.json` / `.dockerignore` / `.gitignore` 安装到项目根"
-               "目录（同名文件已存在时终止安装），把部署辅助脚本 `push-bundle.sh` /"
-               " `apply-bundle.sh` / `rollback-bundle.sh` / `clean-images.sh` 安装到"
+               "（联网重建版）/ `Dockerfile.addon`（离线补装，build.sh 引用）/"
+               " `requirements.txt` / `docker-run.sh` / `devcontainer.json` /"
+               " `.dockerignore` / `.gitignore` 安装到项目根"
+               "目录（同名文件已存在时终止安装），把部署辅助脚本 `manifest.txt` /"
+               " `push-bundle.sh` / `apply-bundle.sh` / `rollback-bundle.sh` /"
+               " `clean-images.sh` 安装到"
                " 项目根 `scripts/`（同名冲突时终止安装），根目录 `.env.example`"
-               "（docker-compose.yml 运行时变量模板）仅在缺失时安装；同时把 src"
-               " 解压到 `<项目根>/docs/devcontainer`（原始副本，用于重置），把"
-               " `docker-compose.yml` 复制到项目根目录，并按预装语言环境在缺少"
-               " 占位入口时放置 `main.py` / `main.go`。")
+               "（docker-compose.yml 运行时变量模板）仅在缺失时安装；"
+               f"准备 {app_dir_note}并放置占位入口，把快速上手说明安装为"
+               " `docs/DEVCONTAINER.md`"
+               + ("，创建 `nginx/` 配置模板目录" if p.enable_nginx else "") + "。")
     out.append("")
     out.append(f"3. 离线自检（回到**项目根目录**执行，确认镜像已导入、架构匹配；"
                "启动命令由镜像 ENTRYPOINT 的 docker-run.sh 承载，默认 cd /app 后"
@@ -279,9 +290,9 @@ def build_markdown(p, results):
     out.append("make down")
     out.append("```")
     out.append("")
-    out.append("> 后续 make / build.sh 命令都在项目根目录执行；`docs/devcontainer/`"
-               " 下是原始副本，改坏根目录文件时从那里复制回去重置，不要在该目录"
-               "下直接运行任何脚本。")
+    out.append("> 后续 make / build.sh 命令都在项目根目录执行；完整说明见"
+               " `docs/DEVCONTAINER.md`，push/apply/rollback 的同步范围由"
+               " `scripts/manifest.txt` 清单决定。")
     out.append("")
     if p.has_app_port:
         host_port, container_port = p.app_port_parts
@@ -303,13 +314,18 @@ def build_markdown(p, results):
         out.append("mongo 已启用（compose 服务名 `db`）: 连接串 `mongodb://db:27017`，"
                    "数据持久化在项目根 `./volumes/mongodata` 目录（bind mount）。")
         out.append("")
-    if p.enable_nginx:
-        out.append("nginx 已启用: 宿主机 `http://<host>:8080` → 容器 80 端口。")
-        if p.has_app_port:
-            out.append(f"已生成 `nginx/conf.d/default.conf`，反代到 `app:{p.app_container_port}`。")
-        else:
-            out.append("未指定 app_port，nginx 未生成反代配置，需自行挂载 "
-                       "`nginx/conf.d/default.conf`。")
+    if p.nginx_service_mode:
+        out.append("nginx 已启用（独立服务）: 宿主机 `http://<host>:8080` → 容器 80 端口；"
+                   "配置模板在项目根 `nginx/default.conf`（挂载进 nginx 容器）。")
+        if p.is_api_web:
+            out.append("`web/dist` 静态产物挂载到 nginx 容器 `/usr/share/nginx/html`；"
+                       "`/api/` 反代到 app 容器端口。")
+        out.append("")
+    elif p.nginx_binary_mode:
+        out.append("nginx 已启用（装进镜像）: 镜像内已 APT 安装 nginx，"
+                   "`make up` 时由 docker-run.sh 拉起；宿主机访问 app_port 映射的"
+                   "宿主机端口（容器内 nginx 监听 80）。配置模板在项目根 "
+                   "`nginx/default.conf`。")
         out.append("")
     if p.oracle_full:
         out.append("### Oracle Instant Client（已完整安装进镜像）")

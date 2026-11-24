@@ -17,4 +17,4 @@ if [ "$#" -gt 0 ]; then
     exec "$@"
 fi
 
-exec {{DOCKER_RUN_DEFAULT_COMMAND}}
+{{NGINX_START_BLOCK}}exec {{DOCKER_RUN_DEFAULT_COMMAND}}

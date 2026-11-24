@@ -38,26 +38,45 @@ PYTHON_VERSION = "3.13"
 GO_VERSION = "1.26"
 NODE_VERSION = "24"
 
-# 外挂服务（enable_extra_services，单个下拉参数）：nginx 与/或一个 DB 服务。
+# 外挂 DB 服务（enable_db，单个下拉参数；nginx 不在此列，由 nginx_mode 决定）。
 # DB 服务启用时 app 服务自动 depends_on（等待健康检查通过），无需用户配置；
 # DB 在 compose 中的服务名固定为 `db`。
-EXTRA_SERVICES_CHOICES = (
+DB_SERVICE_CHOICES = (
     "none",
-    "nginx",
     "postgres16",
     "mysql8.4",
     "mongo9",
-    "nginx + postgres16",
-    "nginx + mysql8.4",
-    "nginx + mongo9",
 )
 
-# 外挂服务选项 → 镜像引用
-EXTRA_SERVICES_IMAGES = {
-    "nginx": "nginx:stable",
+# 外挂 DB 服务选项 → 镜像引用
+DB_SERVICE_IMAGES = {
     "postgres16": "postgres:16",
     "mysql8.4": "mysql:8.4",
     "mongo9": "mongo:9",
+}
+
+# nginx 托管模式（nginx_mode，单个下拉参数）：
+#   none          = 不启用 nginx（默认）
+#   nginx_binary  = nginx 经 APT 安装进镜像内，容器启动时由 docker-run.sh 拉起，
+#                   对外端口复用 app_port（容器内 nginx 监听 80 反代到应用端口）
+#   nginx_service = 独立 nginx compose 服务（nginx:stable，宿主机 8080 → 容器 80）
+# 两种启用模式下根目录都会生成 nginx/ 配置模板目录；web 静态产物（api_web
+# 布局的 web/dist/）统一托管到 nginx。
+NGINX_MODE_CHOICES = ("none", "nginx_binary", "nginx_service")
+
+NGINX_IMAGE = "nginx:stable"
+
+# 源码布局（source_layout，单个下拉参数）：
+#   single = 单体服务：应用源码只在 app/ 目录（compose 默认挂载 ./app/ → /app）
+#   api_web = 前后端分离：后端源码在 api/（app 服务挂载 ./api/ → /app），
+#             前端源码在 web/（打包出静态产物 web/dist/ 托管到 nginx）
+SOURCE_LAYOUT_CHOICES = ("single", "api_web")
+
+# 各布局的应用源码目录（项目根下的相对路径）：app 服务挂载其中第一个，
+# web/ 为前端目录（仅 api_web）
+SOURCE_LAYOUT_DIRS = {
+    "single": ("app",),
+    "api_web": ("api", "web"),
 }
 
 # glibc → manylinux 标签（pip 实际使用 manylinux_<glibc>_<arch> 形式，
@@ -249,7 +268,9 @@ class Params:
     npm_custom_registry_url: str
     npm_packages_dir: str
     css_framework_install: str
-    extra_services: str
+    source_layout: str
+    nginx_mode: str
+    db_service: str
     build_dev_image: bool
     dev_image_only: bool
     image_prefix: str
@@ -294,25 +315,50 @@ class Params:
         return "node24" in self.target_codec
 
     @property
+    def is_api_web(self):
+        """前后端分离布局（api/ + web/ 目录）。"""
+        return self.source_layout == "api_web"
+
+    @property
+    def app_dir(self):
+        """app 服务挂载的源码目录（项目根下相对路径）：single=app，api_web=api。"""
+        return SOURCE_LAYOUT_DIRS[self.source_layout][0]
+
+    @property
+    def src_dirs(self):
+        """本布局的应用源码目录元组：single=(app,)，api_web=(api, web)。"""
+        return SOURCE_LAYOUT_DIRS[self.source_layout]
+
+    @property
     def enable_nginx(self):
-        """enable_extra_services 启用 nginx（8080:80 反代）。"""
-        return "nginx" in self.extra_services
+        """nginx_mode 启用（binary 或 service）：根目录生成 nginx/ 配置模板。"""
+        return self.nginx_mode != "none"
+
+    @property
+    def nginx_binary_mode(self):
+        """nginx 安装进镜像内（APT），容器启动时由 docker-run.sh 拉起。"""
+        return self.nginx_mode == "nginx_binary"
+
+    @property
+    def nginx_service_mode(self):
+        """独立 nginx compose 服务（nginx:stable，宿主机 8080 → 容器 80）。"""
+        return self.nginx_mode == "nginx_service"
 
     @property
     def enable_postgres(self):
-        return "postgres16" in self.extra_services
+        return "postgres16" in self.db_service
 
     @property
     def enable_mysql(self):
-        return "mysql8.4" in self.extra_services
+        return "mysql8.4" in self.db_service
 
     @property
     def enable_mongo(self):
-        return "mongo9" in self.extra_services
+        return "mongo9" in self.db_service
 
     @property
     def has_db_service(self):
-        """enable_extra_services 是否含 DB 服务（app 自动 depends_on 的依据）。"""
+        """enable_db 是否含 DB 服务（app 自动 depends_on 的依据）。"""
         return self.enable_postgres or self.enable_mysql or self.enable_mongo
 
     @property
@@ -407,9 +453,11 @@ class Params:
             images = [self.prod_image]
             if self.build_dev_image:
                 images.append(self.dev_image)
-        for service in ("nginx", "postgres16", "mysql8.4", "mongo9"):
-            if service in self.extra_services:
-                images.append(EXTRA_SERVICES_IMAGES[service])
+        if self.nginx_service_mode:
+            images.append(NGINX_IMAGE)
+        for service in ("postgres16", "mysql8.4", "mongo9"):
+            if service in self.db_service:
+                images.append(DB_SERVICE_IMAGES[service])
         return images
 
     @property
@@ -552,16 +600,17 @@ class Params:
 
     @property
     def mount_path(self):
-        """容器 /app 的挂载源。${SRC_ROOT:-./src/} 由 docker compose 在运行时解析
-        （默认 ./src/ = docker-compose.yml 所在项目根目录下的 src 子目录）；
-        app_source_dir 为相对 SRC_ROOT 的子目录（或绝对路径）。
+        """容器 /app 的挂载源。${SRC_ROOT:-./app/}（api_web 布局为
+        ${SRC_ROOT:-./api/}）由 docker compose 在运行时解析（默认 = 项目根下
+        的应用源码目录）；app_source_dir 为相对 SRC_ROOT 的子目录（或绝对路径）。
         SELinux Enforcing 主机可追加 :z 重打标签。"""
+        default_root = "./" + self.app_dir + "/"
         if self.app_source_dir == ".":
-            src = "${SRC_ROOT:-./src/}"
+            src = "${SRC_ROOT:-" + default_root + "}"
         elif self.app_source_dir.startswith("/"):
             src = self.app_source_dir.rstrip("/") or "/"
         else:
-            src = "${SRC_ROOT:-./src/}/" + self.app_source_dir.strip("/")
+            src = "${SRC_ROOT:-" + default_root + "}/" + self.app_source_dir.strip("/")
         return f"{src}:/app{':z' if self.selinux_relabel else ''}"
 
     @property
@@ -602,7 +651,9 @@ def load():
         npm_custom_registry_url=_env("NPM_CUSTOM_REGISTRY_URL", ""),
         npm_packages_dir=_env("NPM_PACKAGES_DIR", "deps/packages"),
         css_framework_install=_env("CSS_FRAMEWORK_INSTALL", "none").strip().lower(),
-        extra_services=_env("ENABLE_EXTRA_SERVICES", "none"),
+        source_layout=_env("SOURCE_LAYOUT", "single").strip().lower(),
+        nginx_mode=_env("NGINX_MODE", "none").strip().lower(),
+        db_service=_env("ENABLE_DB", "none"),
         build_dev_image=_env_bool("BUILD_DEV_IMAGE", True),
         dev_image_only=_env_bool("DEV_IMAGE_ONLY", False),
         image_prefix=_env("IMAGE_PREFIX", "mydevc1"),
@@ -628,10 +679,20 @@ def validate(p):
             f"不支持的 target_codec: {p.target_codec!r}，"
             f"可选: {', '.join(TARGET_CODEC_CHOICES)}"
         )
-    if p.extra_services not in EXTRA_SERVICES_CHOICES:
+    if p.db_service not in DB_SERVICE_CHOICES:
         raise ParamError(
-            f"不支持的 enable_extra_services: {p.extra_services!r}，"
-            f"可选: {', '.join(EXTRA_SERVICES_CHOICES)}"
+            f"不支持的 enable_db: {p.db_service!r}，"
+            f"可选: {', '.join(DB_SERVICE_CHOICES)}"
+        )
+    if p.source_layout not in SOURCE_LAYOUT_CHOICES:
+        raise ParamError(
+            f"不支持的 source_layout: {p.source_layout!r}，"
+            f"可选: {', '.join(SOURCE_LAYOUT_CHOICES)}"
+        )
+    if p.nginx_mode not in NGINX_MODE_CHOICES:
+        raise ParamError(
+            f"不支持的 nginx_mode: {p.nginx_mode!r}，"
+            f"可选: {', '.join(NGINX_MODE_CHOICES)}"
         )
     if p.glibc_version not in GLIBC_MANYLINUX:
         raise ParamError(
@@ -778,12 +839,13 @@ def validate(p):
 #
 # 与 .github/workflows/build-devcontainer.yml 的 workflow_dispatch inputs
 # 一一对应：(输入名, 环境变量, 类型, workflow 默认值)。新增/修改 workflow
-# 输入时必须同步本表（含默认值），否则快照过滤会失真。enable_extra_services
-# 在 build 步骤以原始值透传（enable_nginx 等派生布尔不含原始值，不在此列）。
+# 输入时必须同步本表（含默认值），否则快照过滤会失真。enable_db 在 build
+# 步骤以原始值透传（enable_postgres 等派生布尔不含原始值，不在此列）。
 # ---------------------------------------------------------------------------
 WORKFLOW_INPUTS = (
     ("platform", "PLATFORM", "choice", "linux-amd64"),
     ("target_codec", "TARGET_CODEC", "choice", "python3.13"),
+    ("source_layout", "SOURCE_LAYOUT", "choice", "single"),
     ("pip_packages", "PIP_PACKAGES", "string", ""),
     ("apt_packages", "APT_PACKAGES", "string", ""),
     ("custom_install_cmd", "CUSTOM_INSTALL_CMD", "string", ""),
@@ -793,7 +855,8 @@ WORKFLOW_INPUTS = (
     ("npm_packages", "NPM_PACKAGES", "string", ""),
     ("npm_packages_dir", "NPM_PACKAGES_DIR", "string", "deps/packages"),
     ("css_framework_install", "CSS_FRAMEWORK_INSTALL", "choice", "none"),
-    ("enable_extra_services", "ENABLE_EXTRA_SERVICES", "choice", "none"),
+    ("nginx_mode", "NGINX_MODE", "choice", "none"),
+    ("enable_db", "ENABLE_DB", "choice", "none"),
     ("image_mode", "IMAGE_MODE", "choice", "prod-only"),
     ("image_prefix", "IMAGE_PREFIX", "string", "mydevc1"),
     ("image_tag", "IMAGE_TAG", "choice", "latest"),

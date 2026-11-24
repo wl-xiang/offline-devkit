@@ -258,7 +258,7 @@
     <div class="badges">
       <span class="badge">bundle {{TS}}</span>
       <span class="badge">镜像 TAG {{TAG}}</span>
-      <span class="badge">4 个文件</span>
+      <span class="badge">离线安装</span>
       <span class="badge">无需联网</span>
     </div>
   </header>
@@ -273,10 +273,11 @@
           <tr><td>1</td><td><code>devcontainer-docker-images_{{ARCH}}_{{TS}}.tgz</code></td><td>镜像归档（docker load 用）</td></tr>
           <tr><td>2</td><td><code>devcontainer-src_{{ARCH}}_{{TS}}.tgz</code></td><td>源码 / 模板包</td></tr>
           <tr><td>3</td><td><code>install.sh</code></td><td>安装脚本</td></tr>
-          <tr><td>4</td><td><code>readme.html</code></td><td>本说明</td></tr>
+          <tr><td>4</td><td><code>devcontainer.json</code></td><td>workflow 输入参数快照</td></tr>
+          <tr><td>5</td><td><code>readme.html</code></td><td>本说明</td></tr>
         </table>
       </div>
-      <p class="muted">解压后 4 个文件应位于同一目录（推荐项目根目录的 <code>dist/</code>）。</p>
+      <p class="muted">解压后全部文件应位于同一目录（推荐项目根目录的 <code>downloads/</code>）。</p>
     </section>
 
     <section class="card">
@@ -286,13 +287,13 @@
         <div class="step-head">
           <span class="step-badge">1</span>
           <div>
-            <h3>在项目根目录创建 dist/</h3>
-            <p>后续所有解压与安装命令都在该目录中执行。</p>
+            <h3>在项目根目录创建 downloads/</h3>
+            <p>在服务器上新建空的项目根目录，进入后创建 downloads/，后续所有解压与安装命令都在该目录中执行。</p>
           </div>
         </div>
         <div class="codeblock">
           <div class="codebar"><span class="code-label">项目根目录</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
-          <pre><code>mkdir -p dist</code></pre>
+          <pre><code>mkdir -p downloads</code></pre>
         </div>
       </div>
 
@@ -300,13 +301,13 @@
         <div class="step-head">
           <span class="step-badge">2</span>
           <div>
-            <h3>把安装包移入 dist/</h3>
-            <p>如果 zip 已经在 <code>dist/</code> 中，可跳过此步。</p>
+            <h3>把安装包移入 downloads/</h3>
+            <p>如果 zip 已经在 <code>downloads/</code> 中，可跳过此步。</p>
           </div>
         </div>
         <div class="codeblock">
           <div class="codebar"><span class="code-label">项目根目录</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
-          <pre><code>mv {{BUNDLE_NAME}}.zip dist/</code></pre>
+          <pre><code>mv {{BUNDLE_NAME}}.zip downloads/</code></pre>
         </div>
       </div>
 
@@ -314,13 +315,13 @@
         <div class="step-head">
           <span class="step-badge">3</span>
           <div>
-            <h3>进入 dist/</h3>
+            <h3>进入 downloads/</h3>
             <p>安装脚本需要和两个 tgz 位于同一目录。</p>
           </div>
         </div>
         <div class="codeblock">
           <div class="codebar"><span class="code-label">项目根目录</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
-          <pre><code>cd dist</code></pre>
+          <pre><code>cd downloads</code></pre>
         </div>
       </div>
 
@@ -329,11 +330,11 @@
           <span class="step-badge">4</span>
           <div>
             <h3>解压安装包</h3>
-            <p>解压出的 4 个文件与 zip 同级。</p>
+            <p>解压出的文件与 zip 同级。</p>
           </div>
         </div>
         <div class="codeblock">
-          <div class="codebar"><span class="code-label">dist/</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
+          <div class="codebar"><span class="code-label">downloads/</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
           <pre><code>unzip {{BUNDLE_NAME}}.zip</code></pre>
         </div>
       </div>
@@ -351,14 +352,14 @@
           </div>
         </div>
         <div class="codeblock">
-          <div class="codebar"><span class="code-label">dist/ · 推荐</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
+          <div class="codebar"><span class="code-label">downloads/ · 推荐</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
           <pre><code>bash install.sh --load ../</code></pre>
         </div>
         <div class="codeblock">
-          <div class="codebar"><span class="code-label">dist/ · 等价一键默认</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
+          <div class="codebar"><span class="code-label">downloads/ · 等价一键默认</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
           <pre><code>bash install.sh -d</code></pre>
         </div>
-        <p class="muted"><code>-d</code> / <code>--default</code> 固定项目根为 <code>../</code>（自动导入镜像），应用源码放入 <code>../src/</code>。prod+dev 镜像模式下可用 <code>--load-target &lt;dev|prod|app|all&gt;</code> 只导入指定镜像（<code>dev</code>=仅 dev 镜像、<code>prod</code>/<code>app</code>=仅 prod 镜像、<code>all</code>=全部，默认；sidecar 镜像 nginx/postgres/mysql/mongo 在任何 target 下都会导入）。</p>
+        <p class="muted"><code>-d</code> / <code>--default</code> 固定项目根为 <code>../</code>（自动导入镜像），应用源码放入 <code>../{{APP_DIR}}/</code>（api_web 布局为 <code>../api/</code> + <code>../web/</code>）。prod+dev 镜像模式下可用 <code>--load-target &lt;dev|prod|app|all&gt;</code> 只导入指定镜像（<code>dev</code>=仅 dev 镜像、<code>prod</code>/<code>app</code>=仅 prod 镜像、<code>all</code>=全部，默认；sidecar 镜像 nginx/postgres/mysql/mongo 在任何 target 下都会导入）。</p>
       </div>
 
       <div class="step">
@@ -370,15 +371,15 @@
           </div>
         </div>
         <div class="codeblock">
-          <div class="codebar"><span class="code-label">dist/ · 安装</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
+          <div class="codebar"><span class="code-label">downloads/ · 安装</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
           <pre><code>bash install.sh ../</code></pre>
         </div>
         <div class="codeblock">
-          <div class="codebar"><span class="code-label">dist/ · 仅导入镜像</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
+          <div class="codebar"><span class="code-label">downloads/ · 仅导入镜像</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
           <pre><code>bash install.sh --load-only</code></pre>
         </div>
         <div class="codeblock">
-          <div class="codebar"><span class="code-label">dist/ · 导入镜像</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
+          <div class="codebar"><span class="code-label">downloads/ · 导入镜像</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
           <pre><code>docker load -i devcontainer-docker-images_{{ARCH}}_{{TS}}.tgz</code></pre>
         </div>
       </div>
@@ -392,16 +393,17 @@
           </div>
         </div>
         <div class="codeblock">
-          <div class="codebar"><span class="code-label">dist/ · 帮助</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
+          <div class="codebar"><span class="code-label">downloads/ · 帮助</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
           <pre><code>bash install.sh -h</code></pre>
         </div>
       </div>
 
       <div class="tip">
         <strong>安装前须知：</strong>项目根目录若已存在 <code>Makefile</code>、<code>build.sh</code>、
-        <code>Dockerfile</code>、<code>README.md</code>、<code>devcontainer.json</code>、
-        <code>scripts/push-bundle.sh</code>、<code>scripts/apply-bundle.sh</code>、
-        <code>scripts/rollback-bundle.sh</code>、<code>scripts/clean-images.sh</code> 或
+        <code>Dockerfile</code>、<code>Dockerfile.addon</code>、<code>devcontainer.json</code>、
+        <code>scripts/manifest.txt</code>、<code>scripts/push-bundle.sh</code>、
+        <code>scripts/apply-bundle.sh</code>、<code>scripts/rollback-bundle.sh</code>、
+        <code>scripts/clean-images.sh</code>、<code>docs/DEVCONTAINER.md</code> 或
         <code>docker-compose.yml</code>，安装会终止且不会覆盖；
         请先移动或重命名这些文件。根目录 <code>.env.example</code> 仅在缺失时安装，
         已存在则保留原文件。
@@ -420,7 +422,7 @@
           </div>
         </div>
         <div class="codeblock">
-          <div class="codebar"><span class="code-label">dist/</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
+          <div class="codebar"><span class="code-label">downloads/</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
           <pre><code>cd ..</code></pre>
         </div>
       </div>
@@ -471,12 +473,13 @@
     <section class="card">
       <h2><span class="step-dot">05</span>install.sh 做了什么</h2>
       <ul class="checks">
-        <li>解压 src 包到 <code>&lt;项目根&gt;/docs/devcontainer</code>（原始文件副本，仅用于把改坏的根目录文件复制回去重置）。</li>
-        <li>把 <code>Makefile</code> / <code>build.sh</code> / <code>Dockerfile</code> / <code>docker-run.sh</code> / <code>README.md</code> / <code>devcontainer.json</code> / <code>.dockerignore</code> / <code>.gitignore</code> 安装到项目根目录，已存在同名文件时终止安装；把 <code>push-bundle.sh</code> / <code>apply-bundle.sh</code> / <code>rollback-bundle.sh</code> / <code>clean-images.sh</code> / <code>.env.example</code>（部署辅助脚本）安装到 <code>scripts/</code>（同名冲突时终止）；根目录 <code>.env.example</code>（docker-compose.yml 运行时变量模板）仅在缺失时安装。</li>
-        <li>复制 compose 模板到项目根目录为 <code>docker-compose.yml</code>；并把 <code>devcontainer.json</code>（workflow 输入参数快照）与 <code>README.md</code> 一样安装到项目根目录。<code>docker-run.sh</code>（容器默认启动脚本）由 compose 只读挂载覆盖镜像内副本，改根目录脚本即可调整启动方式，无需重建镜像。</li>
+        <li>把 src 包解压到临时目录安装（完成后清理，项目内不留原始副本）。</li>
+        <li>把 <code>Makefile</code> / <code>build.sh</code> / <code>Dockerfile</code>（联网重建版）/ <code>Dockerfile.addon</code>（离线补装版）/ <code>requirements.txt</code> / <code>docker-run.sh</code> / <code>devcontainer.json</code> / <code>.dockerignore</code> / <code>.gitignore</code> 安装到项目根目录，已存在同名文件时终止安装；把 <code>manifest.txt</code>（同步清单）/ <code>push-bundle.sh</code> / <code>apply-bundle.sh</code> / <code>rollback-bundle.sh</code> / <code>clean-images.sh</code> / <code>.env.example</code>（部署辅助脚本）安装到 <code>scripts/</code>（同名冲突时终止）；根目录 <code>.env.example</code>（docker-compose.yml 运行时变量模板）仅在缺失时安装。</li>
+        <li>复制 compose 模板到项目根目录为 <code>docker-compose.yml</code>；把 <code>devcontainer.json</code>（workflow 输入参数快照）安装到项目根目录；快速上手说明安装为 <code>docs/DEVCONTAINER.md</code>（根目录不放 README.md）。<code>docker-run.sh</code>（容器默认启动脚本）由 compose 只读挂载覆盖镜像内副本，改根目录脚本即可调整启动方式，无需重建镜像。</li>
+        <li>准备应用源码目录（single 布局为 <code>app/</code>，api_web 布局为 <code>api/</code> + <code>web/</code>），按预装语言环境放置占位入口；nginx_mode 启用时创建 <code>nginx/</code> 配置模板目录。</li>
         <li>创建 <code>deps/wheels/requirements.gitkeep.txt</code> 离线安装头（把 wheel 放进 <code>deps/wheels/</code> 后即可离线补装 Python 包）与 <code>deps/packages/packages.gitkeep.json</code> 占位文件（放入 Npm Download Action 产物内容后，<code>bash build.sh</code> 可一键离线加载前端依赖）。</li>
       </ul>
-      <p class="muted">详细说明见项目根目录的 <code>README.md</code>（与 <code>docs/devcontainer/README.md</code> 内容一致）。</p>
+      <p class="muted">详细说明见项目根目录的 <code>docs/DEVCONTAINER.md</code>；push / apply / rollback 的同步范围由 <code>scripts/manifest.txt</code> 决定，备份保存在 <code>bundles/backups/</code>。</p>
     </section>
 {{AGENT_HTML_SECTION}}{{ORACLE_SECTION}}{{FRAMEWORK_SECTION}}{{NPM_SECTION}}
   </main>

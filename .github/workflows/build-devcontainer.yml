@@ -23,6 +23,14 @@ on:
           - 'golang1.26 + node24(npm+pnpm+npx)'
           - 'python3.13 + golang1.26'
           - 'python3.13 + golang1.26 + node24(npm+pnpm+npx)'
+      source_layout:
+        description: 'Source layout: single = monolith app in app/; api_web = split backend (api/) + frontend (web/, static build hosted by nginx)'
+        type: choice
+        required: true
+        default: 'single'
+        options:
+          - 'single'
+          - 'api_web'
       pip_packages:
         description: 'Pip packages, separated by $ (e.g. numpy$pandas$requests). Leave empty for no extra packages. Requires a python3.13 target_codec.'
         type: string
@@ -78,20 +86,25 @@ on:
           - 'bootstrap_install_via_npm'
           - 'tailwind_pack_in_artifact'
           - 'tailwind_install_via_npm'
-      enable_extra_services:
-        description: 'Extra services: nginx (8080:80) and/or one database (postgres16 / mysql8.4 / mongo9). With a DB the app service automatically depends_on it (waits for the health check).'
+      nginx_mode:
+        description: 'Nginx hosting: none = no nginx; nginx_binary = installed into the image via APT (started by docker-run.sh, external port reuses app_port); nginx_service = standalone nginx compose service (host 8080 -> container 80). Web static build (web/dist) is hosted by nginx when enabled'
         type: choice
         required: true
         default: 'none'
         options:
           - 'none'
-          - 'nginx'
+          - 'nginx_binary'
+          - 'nginx_service'
+      enable_db:
+        description: 'Extra database service: none = no database; with a DB the app service automatically depends_on it (waits for the health check). nginx is configured separately via nginx_mode'
+        type: choice
+        required: true
+        default: 'none'
+        options:
+          - 'none'
           - 'postgres16'
           - 'mysql8.4'
           - 'mongo9'
-          - 'nginx + postgres16'
-          - 'nginx + mysql8.4'
-          - 'nginx + mongo9'
       image_mode:
         description: 'prod+dev = build prod + dev images; prod-only = prod only; dev-only = single dev image used for deployment too'
         type: choice
@@ -188,9 +201,11 @@ jobs:
           NPM_REGISTRY: 'Official (npmjs.org)'
           NPM_PACKAGES_DIR: ${{ inputs.npm_packages_dir }}
           CSS_FRAMEWORK_INSTALL: ${{ inputs.css_framework_install }}
-          # 原始输入透传（供 devcontainer.json 快照记录；enable_nginx 等
+          SOURCE_LAYOUT: ${{ inputs.source_layout }}
+          NGINX_MODE: ${{ inputs.nginx_mode }}
+          # 原始输入透传（供 devcontainer.json 快照记录；enable_postgres 等
           # 为解析自该原始值的派生布尔，不含原始值）
-          ENABLE_EXTRA_SERVICES: ${{ inputs.enable_extra_services }}
+          ENABLE_DB: ${{ inputs.enable_db }}
           BUILD_DEV_IMAGE: ${{ inputs.image_mode == 'prod+dev' }}
           DEV_IMAGE_ONLY: ${{ inputs.image_mode == 'dev-only' }}
           IMAGE_PREFIX: ${{ inputs.image_prefix }}
@@ -205,7 +220,8 @@ jobs:
       - name: Verify artifacts
         env:
           TARGET_CODEC: ${{ inputs.target_codec }}
-          ENABLE_EXTRA_SERVICES: ${{ inputs.enable_extra_services }}
+          SOURCE_LAYOUT: ${{ inputs.source_layout }}
+          NGINX_MODE: ${{ inputs.nginx_mode }}
         run: |
           set -euo pipefail
           echo "--- ${{ steps.build.outputs.src_name }} (top entries) ---"
@@ -230,6 +246,37 @@ jobs:
           grep -q '^    command: \[\]$' /tmp/compose.start.tpl \
             || { echo "::error::compose 模板 app 服务缺少 command: []（清空 CMD，启动命令由 docker-run.sh 承载）"; exit 1; }
           tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/Dockerfile > /tmp/Dockerfile.check
+          # 源码布局接线：app 服务挂载默认值按 source_layout 决定（single=app/，
+          # api_web=api/，web/ 为前端目录）；api_web 时 compose 必须出现 web 相关路径
+          if [ "$SOURCE_LAYOUT" = "api_web" ]; then
+            grep -q 'SRC_ROOT:-./api/' /tmp/compose.start.tpl \
+              || { echo "::error::api_web 布局 compose 挂载默认值应为 \${SRC_ROOT:-./api/}"; exit 1; }
+            grep -q 'web' /tmp/compose.start.tpl \
+              || { echo "::error::api_web 布局 compose 模板缺少 web 目录接线"; exit 1; }
+          else
+            grep -q 'SRC_ROOT:-./app/' /tmp/compose.start.tpl \
+              || { echo "::error::single 布局 compose 挂载默认值应为 \${SRC_ROOT:-./app/}"; exit 1; }
+          fi
+          # nginx 接线：service 模式 compose 必须有独立 nginx 服务并挂载
+          # nginx/default.conf；binary 模式 Dockerfile 必须安装 nginx；
+          # 两种模式 src 包都带 nginx/default.conf 配置模板
+          if [ "$NGINX_MODE" != "none" ]; then
+            grep -q 'devcontainer-src/nginx/default.conf$' /tmp/src_tgz.list \
+              || { echo "::error::src 包缺少 nginx/default.conf（nginx_mode=$NGINX_MODE）"; exit 1; }
+          fi
+          if [ "$NGINX_MODE" = "nginx_service" ]; then
+            grep -q './nginx/default.conf:/etc/nginx/conf.d/default.conf:ro' /tmp/compose.start.tpl \
+              || { echo "::error::nginx_service 模式 compose 缺少 nginx/default.conf 挂载"; exit 1; }
+          fi
+          if [ "$NGINX_MODE" = "nginx_binary" ]; then
+            grep -q 'nginx' /tmp/Dockerfile.check \
+              || { echo "::error::nginx_binary 模式 Dockerfile 未安装 nginx"; exit 1; }
+          fi
+          # api_web 布局：web 目录占位（index.html 固有；package.json 预装 Node 时）
+          if [ "$SOURCE_LAYOUT" = "api_web" ]; then
+            grep -q 'devcontainer-src/index.html$' /tmp/src_tgz.list \
+              || { echo "::error::api_web 布局 src 包缺少 web 占位 index.html"; exit 1; }
+          fi
           grep -q 'ENTRYPOINT \["/usr/local/bin/docker-run.sh"\]' /tmp/Dockerfile.check \
             || { echo "::error::Dockerfile 缺少 docker-run.sh ENTRYPOINT"; exit 1; }
           grep -q 'devcontainer-src/docker-run.sh$' /tmp/src_tgz.list \
@@ -248,7 +295,7 @@ jobs:
             grep -q 'devcontainer-src/main.go$' /tmp/src_tgz.list \
               || { echo "::error::src 包缺少占位 main.go"; exit 1; }
           fi
-          # 项目根目录操作文件（install.sh 复制/改名到 src root）与忽略文件
+          # 项目根目录操作文件（install.sh 复制到 src root）与忽略文件
           grep -q 'devcontainer-src/Makefile$' /tmp/src_tgz.list \
             || { echo "::error::src 包缺少 Makefile"; exit 1; }
           grep -q 'devcontainer-src/README.md$' /tmp/src_tgz.list \
@@ -261,8 +308,23 @@ jobs:
             || { echo "::error::src 包缺少 .dockerignore"; exit 1; }
           grep -q 'devcontainer-src/.gitignore$' /tmp/src_tgz.list \
             || { echo "::error::src 包缺少 .gitignore"; exit 1; }
+          # manifest 清单（push/apply/rollback 的目标条目）随包分发
+          grep -q 'devcontainer-src/scripts/manifest.txt$' /tmp/src_tgz.list \
+            || { echo "::error::src 包缺少 scripts/manifest.txt"; exit 1; }
+          tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/scripts/manifest.txt > /tmp/manifest.txt
+          if [ "$SOURCE_LAYOUT" = "api_web" ]; then
+            grep -q 'api/$' /tmp/manifest.txt \
+              || { echo "::error::api_web 布局 manifest 缺少 api/ 条目"; exit 1; }
+            grep -q 'web/$' /tmp/manifest.txt \
+              || { echo "::error::api_web 布局 manifest 缺少 web/ 条目"; exit 1; }
+          else
+            grep -q 'app/$' /tmp/manifest.txt \
+              || { echo "::error::single 布局 manifest 缺少 app/ 条目"; exit 1; }
+          fi
+          grep -q 'scripts/$' /tmp/manifest.txt \
+            || { echo "::error::manifest 缺少 scripts/ 条目"; exit 1; }
           # 部署辅助脚本与环境变量模板（包内 scripts/，install.sh 安装到项目根 scripts/）
-          for f in scripts/push-bundle.sh scripts/apply-bundle.sh scripts/rollback-bundle.sh scripts/clean-images.sh scripts/.env.example; do
+          for f in scripts/manifest.txt scripts/push-bundle.sh scripts/apply-bundle.sh scripts/rollback-bundle.sh scripts/clean-images.sh scripts/.env.example; do
             grep -q "devcontainer-src/$f$" /tmp/src_tgz.list \
               || { echo "::error::src 包缺少 $f"; exit 1; }
           done
@@ -278,6 +340,12 @@ jobs:
           # clean-images.sh：支持 --no-name（清除名称与 Tag 均为 <none> 的悬空镜像）
           grep -q -- '--no-name' /tmp/clean-images.sh \
             || { echo "::error::clean-images.sh 缺少 --no-name 选项"; exit 1; }
+          # push-bundle.sh：manifest 驱动（读取 scripts/manifest.txt），语法检查
+          tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/scripts/push-bundle.sh > /tmp/push-bundle.py
+          python3 -m py_compile /tmp/push-bundle.py \
+            || { echo "::error::push-bundle.sh 语法错误"; exit 1; }
+          grep -q 'scripts/manifest.txt' /tmp/push-bundle.py \
+            || { echo "::error::push-bundle.sh 未读取 scripts/manifest.txt 清单"; exit 1; }
           # apply-bundle.sh：语法检查（应用 bundle；无参取最新，位置参数指定 bundle 路径）
           tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/scripts/apply-bundle.sh > /tmp/apply-bundle.sh
           sh -n /tmp/apply-bundle.sh
@@ -285,13 +353,17 @@ jobs:
             || { echo "::error::apply-bundle.sh 缺少 -y/--yes 选项"; exit 1; }
           grep -q 'find_newest_bundle' /tmp/apply-bundle.sh \
             || { echo "::error::apply-bundle.sh 缺少最新 bundle 选择逻辑"; exit 1; }
+          grep -q 'scripts/manifest.txt' /tmp/apply-bundle.sh \
+            || { echo "::error::apply-bundle.sh 未读取 scripts/manifest.txt 清单"; exit 1; }
+          grep -q 'bundles/backups' /tmp/apply-bundle.sh \
+            || { echo "::error::apply-bundle.sh 备份未写入 bundles/backups/"; exit 1; }
           # rollback-bundle.sh：语法检查（回滚到最新 backup；-y 跳过确认）
           tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/scripts/rollback-bundle.sh > /tmp/rollback-bundle.sh
           sh -n /tmp/rollback-bundle.sh
           grep -q -- '-y|--yes' /tmp/rollback-bundle.sh \
             || { echo "::error::rollback-bundle.sh 缺少 -y/--yes 选项"; exit 1; }
-          grep -q 'backup_src_' /tmp/rollback-bundle.sh \
-            || { echo "::error::rollback-bundle.sh 未读取 backup_src_*.tgz 备份"; exit 1; }
+          grep -q 'bundles/backups' /tmp/rollback-bundle.sh \
+            || { echo "::error::rollback-bundle.sh 未从 bundles/backups/ 读取备份"; exit 1; }
           # Makefile：push/apply/rollback/clean 调用 scripts/ 下的 .sh 脚本，
           # ps/exec 支持参数透传
           tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/Makefile > /tmp/Makefile.check
@@ -341,25 +413,47 @@ jobs:
               || { echo "::error::install.sh 缺少 -d/--default 选项"; exit 1; }
             grep -q 'INSTALL_PATH="../"' "${{ steps.build.outputs.install_sh }}" \
               || { echo "::error::install.sh 的 -d/--default 未使用默认项目根 ../"; exit 1; }
-            grep -q 'SRC_DIR="$INSTALL_PATH/src"' "${{ steps.build.outputs.install_sh }}" \
-              || { echo "::error::install.sh 未把应用源码放入 <项目根>/src"; exit 1; }
+            # 应用源码目录按 source_layout 安装（single=app；api_web=api + web）
+            if [ "$SOURCE_LAYOUT" = "api_web" ]; then
+              grep -q 'APP_DIR_SRC="$INSTALL_PATH/api"' "${{ steps.build.outputs.install_sh }}" \
+                || { echo "::error::install.sh 未把后端源码放入 <项目根>/api"; exit 1; }
+              grep -q 'WEB_DIR_SRC="$INSTALL_PATH/web"' "${{ steps.build.outputs.install_sh }}" \
+                || { echo "::error::install.sh 未把前端源码放入 <项目根>/web"; exit 1; }
+              grep -q 'SOURCE_LAYOUT" = "api_web"' "${{ steps.build.outputs.install_sh }}" \
+                || { echo "::error::install.sh 缺少 api_web 布局分支"; exit 1; }
+            else
+              grep -q 'APP_DIR_SRC="$INSTALL_PATH/app"' "${{ steps.build.outputs.install_sh }}" \
+                || { echo "::error::install.sh 未把应用源码放入 <项目根>/app"; exit 1; }
+            fi
             # 部署辅助脚本安装到项目根 scripts/；根目录 .env.example 为
             # docker-compose.yml 运行时变量模板
-            for f in scripts/push-bundle.sh scripts/apply-bundle.sh scripts/rollback-bundle.sh scripts/clean-images.sh scripts/.env.example; do
+            for f in scripts/manifest.txt scripts/push-bundle.sh scripts/apply-bundle.sh scripts/rollback-bundle.sh scripts/clean-images.sh scripts/.env.example; do
               grep -q "$f" "${{ steps.build.outputs.install_sh }}" \
                 || { echo "::error::install.sh 未安装 $f 到项目根 scripts/"; exit 1; }
             done
             grep -q 'INSTALL_PATH/.env.example' "${{ steps.build.outputs.install_sh }}" \
               || { echo "::error::install.sh 未安装根目录 .env.example"; exit 1; }
-            # README.md 按原名安装（不再改名 README-devcontainer.md）
-            grep -q 'README.md:README.md' "${{ steps.build.outputs.install_sh }}" \
-              || { echo "::error::install.sh 未按原名安装 README.md"; exit 1; }
+            # README.md 安装为 docs/DEVCONTAINER.md（根目录不放 README.md）
+            grep -q 'DEVCONTAINER.md' "${{ steps.build.outputs.install_sh }}" \
+              || { echo "::error::install.sh 未把 README.md 安装为 docs/DEVCONTAINER.md"; exit 1; }
+            if grep -q 'docs/devcontainer' "${{ steps.build.outputs.install_sh }}"; then
+              echo "::error::install.sh 仍引用 docs/devcontainer（原始副本/重置机制已移除）"
+              exit 1
+            fi
+            # 根目录 Dockerfile（联网重建版）与 Dockerfile.addon（离线补装）并存安装
+            grep -q 'Dockerfile:Dockerfile' "${{ steps.build.outputs.install_sh }}" \
+              || { echo "::error::install.sh 未安装联网重建版 Dockerfile"; exit 1; }
+            grep -q 'Dockerfile.addon:Dockerfile.addon' "${{ steps.build.outputs.install_sh }}" \
+              || { echo "::error::install.sh 未安装 Dockerfile.addon"; exit 1; }
+            grep -q 'requirements.txt:requirements.txt' "${{ steps.build.outputs.install_sh }}" \
+              || { echo "::error::install.sh 未安装 requirements.txt（联网重建版 COPY 依赖）"; exit 1; }
             # docker-run.sh 安装到项目根（compose 只读挂载覆盖镜像内 ENTRYPOINT 脚本）
             grep -q 'docker-run.sh:docker-run.sh' "${{ steps.build.outputs.install_sh }}" \
               || { echo "::error::install.sh 未把 docker-run.sh 安装到项目根目录"; exit 1; }
-            if grep -q 'README-devcontainer' "${{ steps.build.outputs.install_sh }}"; then
-              echo "::error::install.sh 仍在引用 README-devcontainer.md（已改为按原名 README.md 安装）"
-              exit 1
+            # nginx 配置模板：nginx_mode 启用时安装到 <项目根>/nginx/default.conf
+            if [ "$NGINX_MODE" != "none" ]; then
+              grep -q 'nginx/default.conf' "${{ steps.build.outputs.install_sh }}" \
+                || { echo "::error::install.sh 未安装 nginx/default.conf 配置模板"; exit 1; }
             fi
             # docs/.gitkeep 占位文件
             grep -q 'docs/.gitkeep' "${{ steps.build.outputs.install_sh }}" \
@@ -383,8 +477,8 @@ jobs:
           if [ -n "${{ steps.build.outputs.readme_html }}" ] && [ -s "${{ steps.build.outputs.readme_html }}" ]; then
             grep -q 'install.sh' "${{ steps.build.outputs.readme_html }}" \
               || { echo "::error::readme.html 未包含 install.sh 使用说明"; exit 1; }
-            grep -q 'dist' "${{ steps.build.outputs.readme_html }}" \
-              || { echo "::error::readme.html 未包含 dist/ 放置说明"; exit 1; }
+            grep -q 'downloads' "${{ steps.build.outputs.readme_html }}" \
+              || { echo "::error::readme.html 未包含 downloads/ 放置说明"; exit 1; }
             grep -q -- '--load' "${{ steps.build.outputs.readme_html }}" \
               || { echo "::error::readme.html 未包含 --load 用法说明"; exit 1; }
             grep -q 'AI Agent' "${{ steps.build.outputs.readme_html }}" \
@@ -411,6 +505,7 @@ jobs:
           DEFAULTS = {
               "platform": ("linux-amd64", "choice"),
               "target_codec": ("python3.13", "choice"),
+              "source_layout": ("single", "choice"),
               "pip_packages": ("", "string"),
               "apt_packages": ("", "string"),
               "custom_install_cmd": ("", "string"),
@@ -420,7 +515,8 @@ jobs:
               "npm_packages": ("", "string"),
               "npm_packages_dir": ("deps/packages", "string"),
               "css_framework_install": ("none", "choice"),
-              "enable_extra_services": ("none", "choice"),
+              "nginx_mode": ("none", "choice"),
+              "enable_db": ("none", "choice"),
               "image_mode": ("prod-only", "choice"),
               "image_prefix": ("mydevc1", "string"),
               "image_tag": ("latest", "choice"),
@@ -473,7 +569,7 @@ jobs:
             | grep -q '^-[rwx-]*x' \
             || { echo "::error::src 包内 build.sh 无可执行权限"; exit 1; }
           # 回归测试（离线补装）：模拟 install.sh 的根目录布局
-          # （Dockerfile.addon 改名 Dockerfile、安装根目录 .dockerignore、
+          # （Dockerfile.addon 与 build.sh 安装到项目根、安装根目录 .dockerignore、
           #  deps/wheels/ 放 dummy wheel、deps/packages/ 放 fake tgz），用
           # mock docker 干跑 build.sh，断言：addon 构建调用的上下文只含 wheels
           # 且无任何 dockerignore；enable_node 时一键加载前端依赖会发起
@@ -481,12 +577,13 @@ jobs:
           # 离线补装（COPY wheels/）失败
           echo "--- build.sh addon dry-run (mock docker) ---"
           TESTROOT=$(mktemp -d /tmp/addon-dryrun.XXXXXX)
-          mkdir -p "$TESTROOT/root/docs/devcontainer" "$TESTROOT/bin" "$TESTROOT/root/deps/wheels" "$TESTROOT/root/deps/packages"
-          tar xzf "${{ steps.build.outputs.src_tgz }}" -C "$TESTROOT/root/docs/devcontainer" --strip-components=1
-          # 模拟 install.sh 的根目录布局：Dockerfile.addon 改名 Dockerfile、build.sh 复制到根
-          cp "$TESTROOT/root/docs/devcontainer/Dockerfile.addon" "$TESTROOT/root/Dockerfile"
-          cp "$TESTROOT/root/docs/devcontainer/build.sh" "$TESTROOT/root/build.sh"
-          cp "$TESTROOT/root/docs/devcontainer/.dockerignore" "$TESTROOT/root/.dockerignore"
+          PKGROOT=$(mktemp -d /tmp/addon-pkg.XXXXXX)
+          mkdir -p "$TESTROOT/root" "$TESTROOT/bin" "$TESTROOT/root/deps/wheels" "$TESTROOT/root/deps/packages"
+          tar xzf "${{ steps.build.outputs.src_tgz }}" -C "$PKGROOT" --strip-components=1
+          # 模拟 install.sh 的根目录布局：Dockerfile.addon 与 build.sh 安装到项目根
+          cp "$PKGROOT/Dockerfile.addon" "$TESTROOT/root/Dockerfile.addon"
+          cp "$PKGROOT/build.sh" "$TESTROOT/root/build.sh"
+          cp "$PKGROOT/.dockerignore" "$TESTROOT/root/.dockerignore"
           touch "$TESTROOT/root/deps/wheels/dummy-1.0-py3-none-any.whl"
           touch "$TESTROOT/root/deps/packages/vue-1.0.0.tgz"
           cat > "$TESTROOT/bin/docker" <<'MOCK'
@@ -516,11 +613,11 @@ jobs:
           )
           grep -q '^docker build ' "$TESTROOT/docker.log" \
             || { echo "::error::build.sh 未发起任何 docker build 调用"; exit 1; }
-          grep -Fq -- "-f $TESTROOT/root/Dockerfile " "$TESTROOT/docker.log" \
-            || { echo "::error::build.sh 未使用根目录 Dockerfile（Dockerfile.addon 改名）"; exit 1; }
-          grep -q 'COPY wheels/ /tmp/addon-wheels/' "$TESTROOT/root/Dockerfile" \
-            || { echo "::error::根目录 Dockerfile 不是 addon 版（缺少 COPY wheels）"; exit 1; }
-          rm -rf "$TESTROOT"
+          grep -Fq -- "-f $TESTROOT/root/Dockerfile.addon " "$TESTROOT/docker.log" \
+            || { echo "::error::build.sh 未使用项目根 Dockerfile.addon（离线补装版）"; exit 1; }
+          grep -q 'COPY wheels/ /tmp/addon-wheels/' "$TESTROOT/root/Dockerfile.addon" \
+            || { echo "::error::Dockerfile.addon 不是离线补装版（缺少 COPY wheels）"; exit 1; }
+          rm -rf "$TESTROOT" "$PKGROOT"
           echo "addon dry-run OK: 构建上下文只含 wheels，未受根目录 .dockerignore 影响"
           echo "--- ${{ steps.build.outputs.images_name }} (docker load 用镜像归档) ---"
           # 镜像归档是 gzip 压缩的镜像归档：根目录必须能直接看到 manifest.json（或 OCI index.json）

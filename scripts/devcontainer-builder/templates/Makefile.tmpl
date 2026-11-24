@@ -2,9 +2,7 @@
 # 平台: {{DOCKER_PLATFORM}} | 镜像 TAG: {{TAG}}（时间戳: {{TS}}）
 # 本文件由 install.sh 安装到项目根目录（src root），所有 make 命令都在
 # 项目根目录执行；docker-compose.yml 也在项目根目录（install.sh 复制生成），
-# 挂载默认 ${SRC_ROOT:-./src/}（可用环境变量 SRC_ROOT 覆盖）。
-# docs/devcontainer/ 下是本文件的原始副本，仅用于把改坏的根目录文件
-# 复制回去重置——不要在 docs/devcontainer 下直接运行任何脚本。
+# 挂载默认 ${SRC_ROOT:-./{{APP_DIR}}/}（可用环境变量 SRC_ROOT 覆盖）。
 
 COMPOSE_FILE := $(abspath docker-compose.yml)
 COMPOSE := docker compose -f $(COMPOSE_FILE)
@@ -67,22 +65,16 @@ exec: ## 在运行中的容器执行命令（make exec SERVICE=dev ARGS="bash"�
 logs: ## 跟随查看日志
 	$(COMPOSE) logs -f
 
-push: ## 打包 src 为 SRC Bundle 并上传（make push ARGS="-y"）
+push: ## 按 scripts/manifest.txt 打包并上传 bundle（make push ARGS="-y"）
 	./scripts/push-bundle.sh $(ARGS)
 
-apply: ## 应用最新 bundle（或 ARGS 指定 bundle 路径）到 ./src（make apply ARGS="-y"）
+apply: ## 应用最新 bundle（或 ARGS 指定路径）到 manifest 清单条目（make apply ARGS="-y"）
 	./scripts/apply-bundle.sh $(ARGS)
 
-rollback: ## 回滚到最近的 backup（make rollback ARGS="-y"）
+rollback: ## 回滚到 bundles/backups/ 下最新备份（make rollback ARGS="-y"）
 	./scripts/rollback-bundle.sh $(ARGS)
 
 clean: ## 清除 compose 声明的镜像（make clean ARGS="--no-name" 清除悬空镜像）
 	./scripts/clean-images.sh $(ARGS)
 
-{{DEV_TARGETS}}{{NPM_TARGETS}}package-src: ## 重新打包 docs/devcontainer 为 tgz（输出到 dist/，可配 install.sh 再次安装）
-	mkdir -p dist
-	tar czf dist/devcontainer-src-repack_$$(date +%Y%m%d-%H%M%S).tgz \
-		--exclude='*.tgz' --exclude='__pycache__' --exclude='.pytest_cache' \
-		-C docs/devcontainer .
-
-.PHONY: help check build up down ps exec logs push apply rollback clean {{PHONY_DEV}}{{PHONY_NPM}}package-src
+{{DEV_TARGETS}}{{NPM_TARGETS}}.PHONY: help check build up down ps exec logs push apply rollback clean {{PHONY_DEV}}{{PHONY_NPM}}

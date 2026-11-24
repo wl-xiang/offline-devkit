@@ -13,8 +13,7 @@
 #                                     #（如 mydevc1:addon-{{TS}} / mydevc1-dev:addon-{{TS}}）
 #
 # 本脚本由 install.sh 安装到项目根目录（src root），所有路径按执行时的工作
-# 目录（pwd）解析——请在项目根目录执行；docs/devcontainer 下是原始副本，
-# 仅用于把改坏的文件复制回根目录重置，不要在 docs/devcontainer 下运行。
+# 目录（pwd）解析——请在项目根目录执行（引用项目根 Dockerfile.addon）。
 #
 # 步骤（Python 补装）：
 #   1. 在联网机器上下载缺的包为 wheel（推荐用本仓库 scripts/pip/pip_download.py），
@@ -76,7 +75,7 @@ trap 'rm -rf "$STAGING"' EXIT
 build() {  # $1=Dockerfile target, $2=原镜像, $3=新镜像 TAG
     local new="${2%:*}:$3"
     echo "== build $1 -> $new =="
-    docker build -f "$SRC_ROOT/Dockerfile" --target "$1" -t "$new" "$STAGING"
+    docker build -f "$SRC_ROOT/Dockerfile.addon" --target "$1" -t "$new" "$STAGING"
     echo "  新镜像:   $new"
     echo "  切换使用: sed -i 's|$2|$new|g' \"$SRC_ROOT/docker-compose.yml\""
 }

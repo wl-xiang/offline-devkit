@@ -1,27 +1,31 @@
 #!/usr/bin/env python3
-"""把本地项目 ./src 源码打包为 SRC Bundle（含 bundle.meta）并推送到远端部署服务器。
+"""按 scripts/manifest.txt 清单打包项目并推送 bundle 到远端部署服务器。
 
 打包协议:
-    - 只打包项目根目录下 ./src 的全部内容（真正的 SRC Bundle，不携带项目
-      其它文件，不会污染远端源码目录）
+    - 只打包 scripts/manifest.txt 中列出的条目（目录以 / 结尾，文件写相对
+      项目根的路径），bundle 内保留相对项目根的路径结构（如 app/main.py），
+      不携带清单以外的文件
+    - 条目内部按项目根 .gitignore 过滤被忽略的文件（如 scripts/.env、
+      node_modules/ 等），始终排除 .git/ 目录
     - 产物写入本地 ./bundles/（被 .gitignore 忽略）:
         bundles/bundle_<项目名>_<mmdd-HHMM>.tgz     源码包
         bundles/bundle.meta                          元信息（KV，与 .env 同格式）
     - bundle.meta 与 tgz 一起上传到远端 <SYNC_REMOTE_PATH>/bundles/，
-      apply-bundle.sh 据此校验完整性（BUNDLE_FILE 匹配 + SHA256 比对）
+      apply-bundle.sh 据此校验完整性（BUNDLE_FILE 匹配 + SHA256 比对）；
+      meta 中的 MANIFEST 字段记录打包时的清单快照，供部署端比对
 
 用法（在本地项目根目录内执行；脚本位于 <项目根>/scripts/，也可用 make push）:
     bash scripts/push-bundle.sh                 # 按 .gitignore 忽略打包 + 确认后上传
     make push ARGS="-y"                         # 等价写法（Makefile 目标，ARGS 透传）
     bash scripts/push-bundle.sh -y              # 跳过交互确认直接上传
-    bash scripts/push-bundle.sh --no-ignore     # 不读 .gitignore，全量打包 ./src
+    bash scripts/push-bundle.sh --no-ignore     # 不读 .gitignore，按清单全量打包
     bash scripts/push-bundle.sh --no-ignore --rm  # 同上，上传结束后删除本地 bundle
 
 选项:
     -y, --yes        跳过交互确认直接执行
-    --no-ignore      不读取项目根目录 .gitignore，全量打包（默认会读取
+    --no-ignore      不读取项目根目录 .gitignore，按清单全量打包（默认会读取
                      .gitignore 并忽略其中文件，同时始终排除 .git/ 目录；
-                     忽略规则按 src/ 内的相对路径匹配）
+                     忽略规则按条目内相对项目根的路径匹配）
         --rm         上传操作结束后删除本地 bundle 与 meta（无论传输成功与否）
     -h, --help       打印本用法
 
@@ -41,8 +45,8 @@
                                    其下的 bundles/ 子目录）
 
 流程:
-    1. 校验当前项目根目录存在 src/（源码目录）
-    2. 打包 src/ 内容到 bundles/bundle_<项目名>_<时间戳>.tgz，生成 bundle.meta
+    1. 读取 scripts/manifest.txt 清单（目录条目以 / 结尾）并校验
+    2. 按清单打包到 bundles/bundle_<项目名>_<时间戳>.tgz，生成 bundle.meta
     3. 展示将要发生什么，等待手动输入 y 确认（-y 跳过）
     4. 通过 SFTP 把 tgz + bundle.meta 上传到远端 <部署路径>/bundles/
        （上传后请在部署服务器上运行 apply-bundle.sh 完成解压部署）
@@ -56,12 +60,12 @@ import re
 import sys
 import tarfile
 from datetime import datetime, timezone, timedelta
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 ARCHIVE_PREFIX = "bundle"
 META_NAME = "bundle.meta"
 BUNDLES_DIR = "bundles"
-SRC_DIR = "src"
+MANIFEST_FILE = "scripts/manifest.txt"
 
 # 产物时间戳统一东八区（与构建端约定一致）
 TZ_CN = timezone(timedelta(hours=8))
@@ -135,7 +139,7 @@ def load_config():
     if missing:
         die(
             "缺少必填环境变量: " + ", ".join(missing)
-            + "（参考 .env.example，复制为 .env 填写）"
+            + "（参考 scripts/.env.example，复制为 .env 填写）"
         )
     try:
         port = int(env["SYNC_REMOTE_PORT"]) if env["SYNC_REMOTE_PORT"] else 22
@@ -185,6 +189,49 @@ def sha256_of(path):
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+# ---------- manifest 清单 ----------
+
+def load_manifest(project_dir):
+    """读取 scripts/manifest.txt，返回条目列表（目录条目保留尾部 /）。
+
+    校验：禁止绝对路径 / .. / 重复条目；至少一个条目；每个条目必须存在。
+    """
+    path = project_dir / MANIFEST_FILE
+    if not path.is_file():
+        die(
+            f"未找到清单文件 {MANIFEST_FILE}（install.sh 安装时生成，"
+            "每行一个需要 push/apply/rollback 的文件或目录条目）"
+        )
+    entries = []
+    seen = set()
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        is_dir = line.endswith("/")
+        rel = line.rstrip("/")
+        if not rel:
+            continue
+        pure = PurePosixPath(rel)
+        if pure.is_absolute() or ".." in pure.parts or pure.parts[0] == "/":
+            die(f"manifest 条目必须是相对项目根的路径（不允许绝对路径 / ..）: {line!r}")
+        if "\\00" in line or any(c in line for c in "\r\n"):
+            die(f"manifest 条目含非法字符: {line!r}")
+        if rel in seen:
+            die(f"manifest 条目重复: {line!r}")
+        seen.add(rel)
+        target = project_dir / rel
+        if not target.exists():
+            die(
+                f"manifest 条目在项目根不存在: {line!r}"
+                "（目录/文件已删除请同步更新 manifest.txt）"
+            )
+        entries.append(rel + ("/" if is_dir else ""))
+    if not entries:
+        die(f"{MANIFEST_FILE} 没有有效条目（每行一个文件或目录，目录以 / 结尾）")
+    return entries
 
 
 # ---------- 忽略规则：最小 .gitignore 实现 ----------
@@ -243,7 +290,7 @@ def _ignore_regex(pat):
 def load_ignore(project_dir):
     """读取项目根目录 .gitignore，返回规则列表
     (模式, 是否取反, 仅目录, 是否锚定, 正则)；无论是否存在都排除 .git/。
-    规则按 src/ 内的相对路径匹配（锚定模式相对 src/ 根）。"""
+    规则按条目内相对项目根的路径匹配（锚定模式相对项目根）。"""
     patterns = [(".git", False, True, True, re.compile(r"\.git"))]
     path = project_dir / ".gitignore"
     if not path.is_file():
@@ -283,34 +330,44 @@ def _is_ignored(rel, is_dir, patterns):
     return ignored
 
 
-def _walk_filtered(top, patterns):
+def _walk_filtered(top, base_rel, patterns):
     """自顶向下遍历目录；被忽略的目录整棵剪枝。
-    产出 (绝对路径, 相对 posix 路径)。"""
+    产出 (绝对路径, 相对 base_rel 的 posix 路径)。"""
     stack = [("", top)]
     while stack:
         rel, d = stack.pop()
         for entry in sorted(d.iterdir()):
             erel = f"{rel}/{entry.name}" if rel else entry.name
             eis_dir = entry.is_dir() and not entry.is_symlink()
-            if _is_ignored(erel, eis_dir, patterns):
+            full_rel = f"{base_rel}/{erel}"
+            if _is_ignored(full_rel, eis_dir, patterns):
                 continue
             yield entry, erel
             if eis_dir:
                 stack.append((erel, entry))
 
 
-def pack(src_dir, out_file, patterns=None):
-    """把 src/ 目录的全部内容打包（包内顶层 = src 的内容，无额外包裹目录）。
+def pack(entries, project_dir, out_file, patterns=None):
+    """按 manifest 条目打包（bundle 内路径 = 相对项目根的条目路径）。
 
-    patterns 为 None 时全量打包；否则按忽略规则剪枝（相对 src/ 匹配）。
+    patterns 为 None 时全量打包条目；否则按忽略规则剪枝（相对项目根匹配）。
     """
     with tarfile.open(out_file, "w:gz") as tar:
-        if patterns is None:
-            for entry in sorted(src_dir.iterdir()):
-                tar.add(entry, arcname=entry.name)
-            return
-        for entry, rel in _walk_filtered(src_dir, patterns):
-            tar.add(entry, arcname=rel, recursive=False)
+        for entry in entries:
+            is_dir = entry.endswith("/")
+            rel = entry.rstrip("/")
+            path = project_dir / rel
+            # 目录条目本身也写入 tar（保留空目录结构）
+            if patterns is None:
+                tar.add(path, arcname=rel)
+                continue
+            if not is_dir:
+                if not _is_ignored(rel, False, patterns):
+                    tar.add(path, arcname=rel, recursive=False)
+                continue
+            tar.add(path, arcname=rel, recursive=False)
+            for sub_entry, sub_rel in _walk_filtered(path, rel, patterns):
+                tar.add(sub_entry, arcname=f"{rel}/{sub_rel}", recursive=False)
 
 
 def write_meta(meta_path, fields):
@@ -372,7 +429,7 @@ def upload(cfg, local_files):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="把本地项目 src/ 打包为 SRC Bundle（含 bundle.meta）并推送到远端"
+        description="按 scripts/manifest.txt 清单打包项目并推送 bundle 到远端"
     )
     parser.add_argument(
         "-y", "--yes", action="store_true", help="跳过交互确认直接执行"
@@ -380,7 +437,7 @@ def main():
     parser.add_argument(
         "--no-ignore",
         action="store_true",
-        help="不读取 .gitignore，全量打包 src/（默认按 .gitignore 忽略文件）",
+        help="不读取 .gitignore，按清单全量打包（默认按 .gitignore 忽略文件）",
     )
     parser.add_argument(
         "--rm",
@@ -392,31 +449,29 @@ def main():
     load_env()
     cfg = load_config()
 
-    # 1. 校验源码目录：SRC Bundle 只打包 ./src 的内容
+    # 1. 读取 manifest 清单并校验
     project_dir = Path.cwd().resolve()
     if project_dir.parent == project_dir:
         die("请在项目目录内运行 push-bundle.sh（当前位于文件系统根目录）")
-    src_dir = project_dir / SRC_DIR
-    if not src_dir.is_dir():
-        die(
-            f"当前项目根目录没有 {SRC_DIR}/ 源码目录（install.sh 默认把应用源码"
-            f"放入 <项目根>/{SRC_DIR}）。请确认目录存在后在项目根目录运行。"
-        )
-    if not any(src_dir.iterdir()):
-        die(f"{SRC_DIR}/ 目录为空，没有可打包的源码")
+    entries = load_manifest(project_dir)
+    dir_count = sum(1 for e in entries if e.endswith("/"))
+    file_count = len(entries) - dir_count
 
     bundles_dir = project_dir / BUNDLES_DIR
     bundles_dir.mkdir(exist_ok=True)
 
-    # 2. 打包 src/ 内容 + 生成 bundle.meta
+    # 2. 按清单打包 + 生成 bundle.meta
     #    文件名: bundle_<根目录名>_<mmdd-HHMM>.tgz（"最新"按文件名时间戳判定）
     now = datetime.now(TZ_CN)
     ts = now.strftime("%m%d-%H%M")
     archive = bundles_dir / f"{ARCHIVE_PREFIX}_{project_dir.name}_{ts}.tgz"
     patterns = None if args.no_ignore else load_ignore(project_dir)
     pack_mode = "full" if args.no_ignore else "gitignore"
-    print(f"== 打包 {SRC_DIR}/ -> {BUNDLES_DIR}/{archive.name} (tgz, {pack_mode}) ==")
-    pack(src_dir, archive, patterns)
+    print(f"== 按清单打包 -> {BUNDLES_DIR}/{archive.name} (tgz, {pack_mode}) ==")
+    print(f"  清单条目（{dir_count} 个目录 / {file_count} 个文件）:")
+    for entry in entries:
+        print(f"    {entry}")
+    pack(entries, project_dir, archive, patterns)
     digest = sha256_of(archive)
     size = archive.stat().st_size
     print(f"  {archive}  ({size / 1024 / 1024:.1f} MB)")
@@ -429,12 +484,13 @@ def main():
         ("PROJECT", project_dir.name),
         ("PACK_MODE", pack_mode),
         ("SIZE_BYTES", str(size)),
+        ("MANIFEST", ",".join(entries)),
     ])
     print(f"  {meta_path}（与 bundle 一起上传，供 apply-bundle.sh 校验完整性）")
 
     # 3. 展示将要发生什么，等待手动确认
     print("== 执行 push 将发生 ==")
-    print(f"  打包方式: tgz（{'全量' if args.no_ignore else '.gitignore 忽略规则'}）")
+    print(f"  打包方式: tgz（{'全量' if args.no_ignore else '.gitignore 忽略规则'}，仅含清单条目）")
     print(f"  打包时间: {now.isoformat(timespec='seconds')} (UTC+8)")
     print(f"  上传文件: {BUNDLES_DIR}/{archive.name} + {META_NAME}")
     if args.rm:

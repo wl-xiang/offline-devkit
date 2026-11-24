@@ -55,14 +55,17 @@ def main():
 
     print("== 参数 ==")
     print(f"  platform={p.docker_platform} target_codec={p.target_codec} "
-          f"glibc={p.glibc_version} ({p.pip_platform_tag}) "
+          f"source_layout={p.source_layout} nginx_mode={p.nginx_mode} "
+          f"enable_db={p.db_service} glibc={p.glibc_version} ({p.pip_platform_tag}) "
           f"mirror={p.pip_mirror} ts={p.ts} (UTC+8) image_tag={p.tag}")
     print(f"  pip_packages={p.pip_package_list} apt_packages={p.apt_package_list} "
           f"build_dev_image={p.build_dev_image} dev_image_only={p.dev_image_only}")
-    print(f"  enable_extra_services={p.extra_services} "
-          f"(nginx={p.enable_nginx} postgres={p.enable_postgres} "
-          f"mysql={p.enable_mysql} mongo={p.enable_mongo} "
-          f"db_depends={p.has_db_service})")
+    print(f"  db service (enable_db={p.db_service}) "
+          f"postgres={p.enable_postgres} mysql={p.enable_mysql} "
+          f"mongo={p.enable_mongo} db_depends={p.has_db_service}")
+    if p.source_layout == "api_web" and not p.enable_nginx:
+        print("  注意: source_layout=api_web 且 nginx_mode=none —— web/ 的静态产物"
+              "（web/dist/）没有 nginx 托管，请自行分发或改选 nginx_mode")
     print(f"  playwright={p.enable_playwright} "
           f"oracle_instantclient={p.oracle_instantclient_mode}")
     print(f"  preset_envs={[k for k, _v in p.preset_env_pairs]}")
