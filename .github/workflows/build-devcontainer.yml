@@ -473,6 +473,12 @@ jobs:
             echo "::error::install.sh 未生成"
             exit 1
           fi
+
+      # 上一个 step 只做 src tgz / install.sh 检查：GitHub Actions 对含 ${{ }}
+      # 表达式的 run 块有 21000 字符上限，Verify 拆为两个 step 避免超限
+      - name: Verify readme, snapshot and addon dry-run
+        run: |
+          set -euo pipefail
           echo "--- readme.html (bundle 安装说明) ---"
           if [ -n "${{ steps.build.outputs.readme_html }}" ] && [ -s "${{ steps.build.outputs.readme_html }}" ]; then
             grep -q 'install.sh' "${{ steps.build.outputs.readme_html }}" \
