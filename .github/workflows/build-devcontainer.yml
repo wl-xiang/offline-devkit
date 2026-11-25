@@ -428,6 +428,15 @@ jobs:
           fi
           echo "--- checksum (与 Summary 表格中的 SHA256 对比) ---"
           sha256sum "${{ steps.build.outputs.src_tgz }}"
+
+      # install.sh 校验体量大：拆为独立 step，避免 run 块（含 ${{ }}）
+      # 超过 GitHub Actions 21000 字符表达式上限
+      - name: Verify install.sh (layout & wiring)
+        env:
+          SOURCE_LAYOUT: ${{ inputs.source_layout }}
+          NGINX_MODE: ${{ inputs.nginx_mode }}
+        run: |
+          set -euo pipefail
           if [ -n "${{ steps.build.outputs.install_sh }}" ]; then
             echo "--- install.sh ---"
             test -x "${{ steps.build.outputs.install_sh }}" \
@@ -545,8 +554,8 @@ jobs:
             exit 1
           fi
 
-      # 上一个 step 只做 src tgz / install.sh 检查：GitHub Actions 对含 ${{ }}
-      # 表达式的 run 块有 21000 字符上限，Verify 拆为两个 step 避免超限
+      # GitHub Actions 对含 ${{ }} 表达式的 run 块有 21000 字符上限，
+      # Verify 按体量拆分为多个 step 避免超限
       - name: Verify readme, snapshot and addon dry-run
         run: |
           set -euo pipefail
