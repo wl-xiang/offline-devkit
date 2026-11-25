@@ -40,6 +40,7 @@
 | 启动 / 日志 / 停止 | `make up` / `make logs` / `make down` |
 | 静态检查 / 编译检查 / 测试（预装 Python 时） | `make lint` / `make compile` / `make test` |
 | 容器内执行任意命令（非交互） | `make run dev <命令>`（等价 `docker compose run --rm dev <命令>`；默认 `dev`，也可 `make run app <命令>`） |
+| 打包并上传 bundle | `make push`（宿主机需 Python 3.8+ + paramiko）或 `make v-push`（容器内执行，需构建时勾选 enable_sync_tool） |
 | 外挂服务 | {{SERVICES_SUMMARY}}（compose 服务名见 docker/docker-compose.yml） |
 
 非交互场景（Agent / CI）统一用 `make run dev <命令>`

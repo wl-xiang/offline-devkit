@@ -95,6 +95,7 @@ make up (docker-run.sh 预置入口)
 | `app_port` | string | `host:container` 或单个端口号 | `3000:3000` | 应用端口映射：写成 `3000:3000` 表示宿主机 3000 → 容器 3000；只写 `3000` 等价于 `3000:3000`；空 = 不映射。启用 nginx 时 app 仅容器网络暴露容器端口，由 nginx 反代 |
 | `env_file` | string | 逗号/空格分隔 | 空 | **注入 app 服务的环境变量文件**（等价 compose `env_file`）：文件中的变量会进入 app 容器，常用于放置数据库密码、密钥等不适合写进 `preset_envs` 的配置。相对项目根或绝对路径（如 `.env`） |
 | `selinux_relabel` | boolean | — | `false` | 给 `/app` 挂载追加 `:z` 重打标签（SELinux Enforcing 主机需要） |
+| `enable_sync_tool` | boolean | — | `false` | 安装**代码同步工具（push）运行环境**：构建最小 `python:3.11-slim` + paramiko 镜像（`<前缀>-push:<tag>`），作为独立 compose 服务 `push`（profile=`push`，`restart: "no"`，项目根含 `scripts/` 挂载到 `/project`）。安装后 `make v-push` 在容器内一次性执行 `scripts/push-bundle.sh`（`--rm`），宿主机无需 Python/paramiko；未勾选时仍可用 `make push` 本地执行 |
 
 > **固定值（不再作为输入暴露）**：`glibc_version=2.28`（manylinux 标签）、
 > `pip_mirror=Official (pypi.org)`、`npm_registry=Official (npmjs.org)`；
@@ -154,10 +155,10 @@ GitHub 前端输入的原始参数值，顶层分四个 section：
 ### devcontainer-docker-images_<架构>_<yyyymmdd-HHMMSS>.tgz
 
 该文件是 `docker save` 输出经 gzip 压缩得到的镜像归档（prod、dev、nginx、
-postgres/mysql/mongo，按本次参数），可直接 `docker load -i` 导入，无需再解一层
-tar。`image_mode=dev-only` 时归档中只有一个 dev 镜像（外加按需启用的
-nginx/postgres/mysql/mongo）。Summary 中同时给出
-SHA256，便于校验传输完整性。
+postgres/mysql/mongo，以及 `enable_sync_tool` 时的 push 运行环境镜像，按本次
+参数），可直接 `docker load -i` 导入，无需再解一层 tar。`image_mode=dev-only`
+时归档中只有一个 dev 镜像（外加按需启用的 nginx/postgres/mysql/mongo/push）。
+Summary 中同时给出 SHA256，便于校验传输完整性。
 
 ### devcontainer-src_<架构>_<yyyymmdd-HHMMSS>.tgz
 
@@ -406,7 +407,8 @@ make up && make logs
 | `make exec` | 在运行中的容器执行命令：`make exec SERVICE=dev ARGS="bash"`（默认 `SERVICE=app`） |
 | `make run` | **一次性运行**容器内命令：`make run dev python app/test1.py`（等价 `docker compose run --rm dev python app/test1.py`；第一个参数为 compose 服务名，缺省 `dev`，也可 `make run app <命令>`；容器退出即删除、失败不重启） |
 | `make logs` | 跟随查看日志 |
-| `make push` | 执行 `scripts/push-bundle.sh`，按 `scripts/manifest.txt` 清单打包并上传 bundle（参数透传：`make push ARGS="-y"`） |
+| `make push` | 在宿主机执行 `scripts/push-bundle.sh`，按 `scripts/manifest.txt` 清单打包并上传 bundle（参数透传：`make push ARGS="-y"`；需 Python 3.8+ 与 paramiko，脚本启动前会主动检查） |
+| `make v-push` | 在容器内执行 push（`enable_sync_tool` 时生成）：通过 compose 服务 `push`（profile=`push`，一次性 `--rm`、restart=no）运行 `scripts/push-bundle.sh`，宿主机无需 Python/paramiko（参数透传：`make v-push ARGS="-y"`） |
 | `make apply` | 执行 `scripts/apply-bundle.sh`，默认校验最新 bundle 并按清单覆盖条目（备份到 `bundles/backups/`）；也可用位置参数指定 bundle 路径：`make apply ARGS="bundles/bundle_xxx.tgz"`（参数透传：`make apply ARGS="-y"`） |
 | `make rollback` | 执行 `scripts/rollback-bundle.sh`，用 `bundles/backups/` 下最新的备份恢复条目（参数透传：`make rollback ARGS="-y"`） |
 | `make clean` | 执行 `scripts/clean-images.sh`，清除 compose 声明的镜像（`make clean ARGS="--no-name"` 清除 `<none>:<none>` 悬空镜像；参数透传） |
@@ -816,6 +818,13 @@ scripts/manifest.md 等同名文件会报错终止——请先移走或合并）
 构建时把 `selinux_relabel` 设为 `true`（挂载追加 `:z`），或手动修改项目根
 目录 `docker-compose.yml` 中 app/dev 服务的 `volumes`，在挂载路径末尾追加
 `:z`。
+
+**Q: `make push` 报 Python 版本错误 / 缺少 paramiko，或宿主机根本没有 Python？**
+`push-bundle.sh` 启动前会主动检查 Python 3.8+ 与 paramiko，并给出修复提示；
+如果不想折腾宿主机环境，构建时勾选 `enable_sync_tool`，导入镜像后用
+`make v-push ARGS="-y"` 在 `push` 容器内执行（一次性 `--rm`，宿主机只需 Docker）。
+远端账户配置见 `scripts/.env`（`SYNC_REMOTE_USER` / `SYNC_REMOTE_PASSWORD` /
+`SYNC_REMOTE_PATH`；用户名 + 密码与 sshkey 两种方式都支持）。
 
 **Q: 应用起来了但宿主机访问不到？**
 构建时设置 `app_port`（`host:container` 端口映射，如 `3000:3000`），并确认应用

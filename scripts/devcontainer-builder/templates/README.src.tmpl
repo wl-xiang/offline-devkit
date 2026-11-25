@@ -180,6 +180,11 @@ make down         # 停止
 - `make run` 一次性运行容器内命令（等价 `docker compose run --rm <服务> <命令>`）：
   第一个参数是 compose 服务名（缺省 `dev`，也可 `app`），其后为容器内命令，例如
   `make run dev python {{APP_DIR}}/test1.py`；容器退出即删除、失败不重启。
+- **代码同步工具运行环境（enable_sync_tool）**：`make v-push` 通过 compose 的
+  `push` 服务（profile=`push`，一次性 `--rm`，restart=no）在最小 Python 镜像
+  （`python:3.11-slim` + paramiko）里执行 `scripts/push-bundle.sh`——宿主机无需
+  Python/paramiko，只需 Docker；项目根（含 `scripts/`、`scripts/.env`、`bundles/`）
+  已挂载进容器。`make push` 仍是宿主机直接执行（需 Python 3.8+ 与 paramiko）。
 - `make check` 可离线自检镜像是否已导入、架构是否匹配。
 - `make help` 查看全部可用目标。
 {{DEV_TOOLS_NOTE}}

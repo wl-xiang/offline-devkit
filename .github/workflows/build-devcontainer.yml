@@ -147,6 +147,11 @@ on:
         type: boolean
         required: true
         default: false
+      enable_sync_tool:
+        description: 'Install the code-sync (push) runtime: a minimal python:3.11-slim image with paramiko, provided as a standalone compose service `push` (profile: push, restart: no, project root incl. scripts/ mounted at /project). Adds `make v-push` to run scripts/push-bundle.sh inside the container (one-off, --rm) so the host needs no Python/paramiko. `make push` still runs locally.'
+        type: boolean
+        required: true
+        default: false
 
 permissions:
   contents: read
@@ -214,6 +219,7 @@ jobs:
           APP_PORT: ${{ inputs.app_port }}
           ENV_FILE: ${{ inputs.env_file }}
           SELINUX_RELABEL: ${{ inputs.selinux_relabel }}
+          ENABLE_SYNC_TOOL: ${{ inputs.enable_sync_tool }}
           IMAGE_MODE: ${{ inputs.image_mode }}
         run: python scripts/devcontainer-builder/main.py
 
@@ -222,6 +228,7 @@ jobs:
           TARGET_CODEC: ${{ inputs.target_codec }}
           SOURCE_LAYOUT: ${{ inputs.source_layout }}
           NGINX_MODE: ${{ inputs.nginx_mode }}
+          ENABLE_SYNC_TOOL: ${{ inputs.enable_sync_tool }}
         run: |
           set -euo pipefail
           echo "--- ${{ steps.build.outputs.src_name }} (top entries) ---"
@@ -384,6 +391,17 @@ jobs:
             || { echo "::error::Makefile 的 ps 未透传 ARGS"; exit 1; }
           grep -q 'exec $(SERVICE) $(ARGS)' /tmp/Makefile.check \
             || { echo "::error::Makefile 的 exec 未透传 SERVICE/ARGS"; exit 1; }
+          # 代码同步工具运行环境（enable_sync_tool）：Makefile v-push + compose push 服务
+          if [ "$ENABLE_SYNC_TOOL" = "true" ]; then
+            grep -q '^v-push:' /tmp/Makefile.check \
+              || { echo "::error::Makefile 缺少 v-push 目标"; exit 1; }
+            grep -q -- '--profile push run --rm push' /tmp/Makefile.check \
+              || { echo "::error::v-push 未通过 compose push 服务一次性运行"; exit 1; }
+            grep -q '^  push:' /tmp/compose.start.tpl \
+              || { echo "::error::compose 模板缺少 push 服务"; exit 1; }
+            grep -q 'restart: "no"' /tmp/compose.start.tpl \
+              || { echo "::error::push 服务缺少 restart: \"no\"（一次性运行）"; exit 1; }
+          fi
           # 离线补装机制（build.sh + Dockerfile.addon）
           grep -q 'devcontainer-src/Dockerfile.addon$' /tmp/src_tgz.list \
             || { echo "::error::src 包缺少 Dockerfile.addon"; exit 1; }
@@ -610,6 +628,7 @@ jobs:
               "app_port": ("3000:3000", "string"),
               "env_file": ("", "string"),
               "selinux_relabel": ("false", "boolean"),
+              "enable_sync_tool": ("false", "boolean"),
           }
           text = Path(sys.argv[1]).read_text(encoding="utf-8")
           # 纯 JSON：JSONC 注释会导致 json.loads 解析失败

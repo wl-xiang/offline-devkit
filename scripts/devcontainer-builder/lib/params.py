@@ -120,6 +120,13 @@ ORACLE_CLIENT_DIR = "/opt/oracle/instantclient19"
 # npm download Action 产物（packages/）在容器内的只读挂载点
 NPM_PACKAGES_CONTAINER_DIR = "/opt/npm-packages"
 
+# 代码同步工具（push）运行环境：enable_sync_tool 勾选时构建的最小 Python 镜像
+# （构建期联网安装 paramiko），以 compose 服务 `push`（profile=push）运行
+# scripts/push-bundle.sh，宿主机无需 Python/paramiko。镜像名 <前缀>-push:<tag>。
+SYNC_BASE_IMAGE = "python:3.11-slim-bookworm"
+SYNC_CONTAINER_WORKDIR = "/project"
+SYNC_CONTAINER_HOME = "/home/push"
+
 # 预装前端框架 + 安装方式（css_framework_install，单个下拉参数）：
 #   none                        = 不安装（默认）
 #   bootstrap_pack_in_artifact  = Bootstrap：构建期下载 bootstrap-<version>.tgz
@@ -278,6 +285,7 @@ class Params:
     app_port: str
     env_file: str
     selinux_relabel: bool
+    enable_sync_tool: bool
     image_tag: str
     ts: str
 
@@ -428,6 +436,11 @@ class Params:
         return f"{self.image_prefix}-dev:{self.tag}"
 
     @property
+    def sync_image(self):
+        """代码同步工具（push）镜像：<前缀>-push:<TAG>（最小 Python + paramiko）。"""
+        return f"{self.image_prefix}-push:{self.tag}"
+
+    @property
     def arch_label(self):
         """产物文件名中的架构标签：amd64 / arm64（不含 linux- 前缀）。"""
         return self.arch
@@ -455,6 +468,8 @@ class Params:
             images = [self.prod_image]
             if self.build_dev_image:
                 images.append(self.dev_image)
+        if self.enable_sync_tool:
+            images.append(self.sync_image)
         if self.nginx_service_mode:
             images.append(NGINX_IMAGE)
         for service in ("postgres16", "mysql8.4", "mongo9"):
@@ -670,6 +685,7 @@ def load():
                   if "APP_PORT" in os.environ else "3000:3000"),
         env_file=_env("ENV_FILE", ""),
         selinux_relabel=_env_bool("SELINUX_RELABEL", False),
+        enable_sync_tool=_env_bool("ENABLE_SYNC_TOOL", False),
         image_tag=_env("IMAGE_TAG", "latest"),
         ts=datetime.now(TZ_CN).strftime("%Y%m%d-%H%M%S"),
     )
@@ -871,6 +887,7 @@ WORKFLOW_INPUTS = (
     ("app_port", "APP_PORT", "string", "3000:3000"),
     ("env_file", "ENV_FILE", "string", ""),
     ("selinux_relabel", "SELINUX_RELABEL", "boolean", "false"),
+    ("enable_sync_tool", "ENABLE_SYNC_TOOL", "boolean", "false"),
 )
 
 

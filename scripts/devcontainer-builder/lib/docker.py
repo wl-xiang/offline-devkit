@@ -30,12 +30,26 @@ def build_image(p, staging, target, image):
     _run(cmd)
 
 
+def build_push_image(p, context_dir, image):
+    """构建代码同步工具（push）镜像：context_dir 内只含 Dockerfile，
+    基于最小 python 镜像联网安装 paramiko（构建期联网，运行期离线）。"""
+    cmd = [
+        "docker", "buildx", "build",
+        "--platform", p.docker_platform,
+        "-t", image,
+        "--load",
+        *BUILDX_CACHE_ARGS,
+        str(context_dir),
+    ]
+    _run(cmd)
+
+
 def pull_service_images(p):
     """按需拉取外挂服务镜像（与目标平台一致；清单来自 image_refs 中
-    除应用镜像外的部分，如 nginx / postgres / mysql / mongo）。"""
-    app_images = {p.prod_image, p.dev_image}
+    除本地构建镜像（app/dev/push）外的部分，如 nginx / postgres / mysql / mongo）。"""
+    built_images = {p.prod_image, p.dev_image, p.sync_image}
     for image in p.image_refs:
-        if image in app_images:
+        if image in built_images:
             continue
         _run(["docker", "pull", "--platform", p.docker_platform, image])
 

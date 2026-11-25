@@ -1,4 +1,33 @@
-#!/usr/bin/env python3
+#!/bin/sh
+''':'
+# ---- 宿主机预检（sh/python 双语法文件：本段只由 sh 执行，随后 exec python3）----
+# 主动检查 Python 版本与依赖，避免低版本 Python 在解析 f-string 时直接抛
+# SyntaxError、缺 paramiko 时执行到上传阶段才失败。
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "错误: 未找到 python3，无法运行 push-bundle.sh" >&2
+    echo "  方案1: 安装 Python 3.8+ 与 paramiko（python3 -m pip install paramiko）" >&2
+    echo "  方案2: 用容器内环境执行，宿主机无需 Python（需构建时勾选 enable_sync_tool）:" >&2
+    echo "         make v-push ARGS=\"-y\"" >&2
+    exit 1
+fi
+if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' >/dev/null 2>&1; then
+    echo "错误: push-bundle.sh 需要 Python 3.8+（当前: $(python3 -V 2>&1)）" >&2
+    echo "  方案1: 升级 python3 并安装 paramiko（python3 -m pip install paramiko）" >&2
+    echo "  方案2: 用容器内环境执行（容器内置 Python 3.11 + paramiko）: make v-push ARGS=\"-y\"" >&2
+    exit 1
+fi
+skip_deps=0
+for arg in "$@"; do
+    case "$arg" in -h|--help) skip_deps=1 ;; esac
+done
+if [ "$skip_deps" = "0" ] && ! python3 -c 'import paramiko' >/dev/null 2>&1; then
+    echo "错误: 缺少 Python 依赖 paramiko（push 通过 SFTP 上传 bundle）" >&2
+    echo "  方案1: 安装依赖: python3 -m pip install paramiko" >&2
+    echo "  方案2: 用容器内环境执行（镜像已内置 paramiko）: make v-push ARGS=\"-y\"" >&2
+    exit 1
+fi
+exec python3 -- "$0" "$@"
+'''
 """按 scripts/manifest.txt 清单打包项目并推送 bundle 到远端部署服务器。
 
 打包协议:

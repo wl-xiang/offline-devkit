@@ -111,8 +111,9 @@ ${C_BOLD}选项:${C_RESET}
                         prod = 仅导入 prod 镜像（不导入 dev）
                         app  = 应用服务使用的镜像（= prod；仅 dev 镜像模式下
                                为 dev 镜像）
-                        sidecar 镜像（nginx / postgres / mysql / mongo，
-                        如已打包）在任何 target 下都会一并导入。
+                        sidecar 镜像（nginx / postgres / mysql / mongo /
+                        代码同步工具 push 运行环境，如已打包）在任何 target
+                        下都会一并导入。
   -h, --help            显示本帮助并退出。
 
 ${C_BOLD}示例:${C_RESET}
@@ -670,4 +671,4 @@ if [ "$COMPOSE_MODE" = "v1" ]; then
 elif [ "$COMPOSE_MODE" = "missing" ]; then
     printf '%s\n' "${C_RED}${C_BOLD}警告: 未检测到 docker compose 或 docker-compose，make 命令无法执行，请先安装 docker compose。${C_RESET}"
 fi
-{{ORACLE_NOTICE_BLOCK}}{{NPM_NOTICE_BLOCK}}{{FRAMEWORK_NOTICE_BLOCK}}
+{{ORACLE_NOTICE_BLOCK}}{{NPM_NOTICE_BLOCK}}{{SYNC_NOTICE_BLOCK}}{{FRAMEWORK_NOTICE_BLOCK}}
