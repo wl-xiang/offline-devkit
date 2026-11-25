@@ -1616,7 +1616,8 @@ def _npm_readme_section(p):
 def _agent_readme_section(p):
     """bundle README 的 AI Agent 约定：开发/测试统一在容器内执行，不依赖宿主机环境。"""
     if p.dev_tools_enabled:
-        run = "docker compose run --rm dev"
+        run = "make run dev"
+        equiv = "（等价 `docker compose run --rm dev <命令>`）"
         intro = (
             "本项目的运行环境**只在容器内**（dev 镜像按 target_codec 预装语言"
             "环境，Python 环境已内置 ruff / pytest）。宿主机无需安装 Python，"
@@ -1637,6 +1638,7 @@ def _agent_readme_section(p):
             ]
     else:
         run = "docker compose run --rm app"
+        equiv = ""
         intro = (
             "本次**未构建 dev 镜像**（没有 ruff / pytest），但运行环境仍然只在"
             "容器内。宿主机无需安装 Python，也不要用宿主机的 `python` / `pip` "
@@ -1669,7 +1671,7 @@ def _agent_readme_section(p):
 - 容器把项目根目录挂载为 `/app`，工作目录固定 `/app`；容器内修改会直接写回宿主机。
 - **宿主机即使存在 `python` / `pytest` / `npm`，也不要用来运行项目代码或安装依赖**：
   宿主环境与镜像不一致，所有验证都应以容器内结果为准。
-- 非交互场景（Agent / CI）请用 `{run} <命令>`；`make shell` / `bash` 交互式
+- 非交互场景（Agent / CI）请用 `{run} <命令>`{equiv}；`make shell` / `bash` 交互式
   终端会等待输入，不要用于自动化。
 - 首次使用先执行 `make check` 确认镜像已导入；离线机器不要执行 `make build` 或
   `docker compose build`。
@@ -1683,7 +1685,7 @@ def _agent_readme_section(p):
 def _agent_html_section(p):
     """readme.html 中的 AI Agent 使用约定卡片。"""
     if p.dev_tools_enabled:
-        run = "docker compose run --rm dev"
+        run = "make run dev"
         intro = (
             "运行环境只在容器内（dev 镜像已内置 ruff / pytest）。宿主机无需安装 "
             "Python，请勿用宿主机的 <code>python</code> / <code>pip</code> / "

@@ -446,7 +446,7 @@ install.sh 复制改名而来）包含
 | 查看 Python 版本 | `docker compose run --rm dev python -V` |
 | 执行 Python 脚本 | `make run dev python path/to/script.py`（等价 `docker compose run --rm dev python path/to/script.py`） |
 | 交互式 shell | `make shell` |
-| 运行测试 | `make test`（单个文件：`docker compose run --rm dev pytest -q tests/test_x.py`） |
+| 运行测试 | `make test`（单个文件：`make run dev pytest -q tests/test_x.py`） |
 | 静态检查 / 编译检查 | `make lint` / `make compile` |
 | 启动应用 / 查看日志 | `make up` / `make logs` |
 | 前端离线依赖 | `make npm-install`（target_codec 含 node24 时） |
