@@ -804,16 +804,20 @@ jobs:
             test -s "$FRAMEWORK_TGZ" \
               || { echo "::error::pack_in_artifact 模式未生成前端框架 tgz"; exit 1; }
             base=$(basename "$FRAMEWORK_TGZ")
+            # 先落盘再 grep：tar tzf | grep -q 在 pipefail 下，grep 命中即退出
+            # 并关闭管道读端，tar 写剩余目录项触发 SIGPIPE（tar: stdout: write
+            # error），会把布局校验误判为失败
+            tar tzf "$FRAMEWORK_TGZ" > /tmp/framework_tgz.list
             if [ "$FRAMEWORK" = "bootstrap" ]; then
               echo "$base" | grep -qE '^bootstrap-[A-Za-z0-9._+~-]+\.tgz$' \
                 || { echo "::error::bootstrap 产物文件名应为 bootstrap-<version>.tgz: $base"; exit 1; }
-              tar tzf "$FRAMEWORK_TGZ" | grep -q '^package/dist/css/bootstrap.min.css' \
+              grep -q '^package/dist/css/bootstrap.min.css' /tmp/framework_tgz.list \
                 || { echo "::error::bootstrap tgz 不是 npm 包布局（缺少 package/dist/css/bootstrap.min.css）"; exit 1; }
               FW_LABEL=bootstrap
             elif [ "$FRAMEWORK" = "tailwind" ]; then
               echo "$base" | grep -qE '^tailwindcss-browser-[A-Za-z0-9._+~-]+\.tgz$' \
                 || { echo "::error::tailwind 产物文件名应为 tailwindcss-browser-<version>.tgz: $base"; exit 1; }
-              tar tzf "$FRAMEWORK_TGZ" | grep -q '^package/dist/index.global.js' \
+              grep -q '^package/dist/index.global.js' /tmp/framework_tgz.list \
                 || { echo "::error::tailwind tgz 不是 @tailwindcss/browser 布局（缺少 package/dist/index.global.js）"; exit 1; }
               FW_LABEL=tailwindcss-browser
             else
