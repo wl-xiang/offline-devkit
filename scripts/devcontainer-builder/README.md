@@ -103,7 +103,7 @@ scripts/devcontainer-builder/
 | `APP_PORT` | `3000:3000` | 端口映射 `host:container`（单端口等价同端口）；启用 nginx 时只暴露容器端口 |
 | `ENV_FILE` | 空 | 注入 app 服务的 env 文件，逗号/空格分隔 |
 | `SELINUX_RELABEL` | `false` | 挂载追加 `:z`（SELinux Enforcing 主机） |
-| `ENABLE_SYNC_TOOL` | `false` | 构建代码同步工具（push）运行环境：最小 `python:3.11-slim` + paramiko 镜像（`<前缀>-push:<tag>`），compose 服务 `push`（profile=`push`，restart=no，项目根含 `scripts/` 挂载到 `/project`）；Makefile 生成 `make v-push`（容器内一次性执行 push-bundle.sh） |
+| `ENABLE_SYNC_TOOL` | `false` | 构建代码同步工具（v-push）运行环境：最小 `python:3.11-slim` + paramiko 镜像（`<前缀>-vpush:1.0.0`，tag 固定为版本号 `SYNC_IMAGE_VERSION`，运行环境变更时才递增），compose 服务 `v-push`（profile=`v-push`，restart=no，项目根含 `scripts/` 挂载到 `/project`）；Makefile 生成 `make v-push`（容器内一次性执行 push-bundle.sh），install.sh 导入镜像时本机已存在同版本 v-push 镜像则跳过该镜像 |
 | `DEVCONTAINER_SKIP_DOCKER` | 空 | 置 `1` 跳过 docker 步骤（本地联调） |
 
 ## 本地运行

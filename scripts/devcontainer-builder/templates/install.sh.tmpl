@@ -112,8 +112,9 @@ ${C_BOLD}选项:${C_RESET}
                         app  = 应用服务使用的镜像（= prod；仅 dev 镜像模式下
                                为 dev 镜像）
                         sidecar 镜像（nginx / postgres / mysql / mongo /
-                        代码同步工具 push 运行环境，如已打包）在任何 target
-                        下都会一并导入。
+                        v-push 运行环境，如已打包）在任何 target 下都会一并
+                        导入；v-push 运行镜像（tag 固定为版本号）本机已存在
+                        同版本时自动跳过其导入（all 全量导入同样生效）。
   -h, --help            显示本帮助并退出。
 
 ${C_BOLD}示例:${C_RESET}
@@ -163,39 +164,67 @@ find_images_tgz() {
 
 load_images_all() {
     local img_tgz=$1
+    # v-push 运行镜像 tag 固定为版本号：本机已存在同版本镜像时跳过其导入
+    # （归档内其余镜像经条目筛选后照常导入，避免重复解包覆盖）
+    if [ "{{SYNC_ENABLED}}" = "1" ] \
+        && docker image inspect "{{SYNC_IMAGE}}" >/dev/null 2>&1; then
+        note "检测到 v-push 运行镜像 {{SYNC_IMAGE}} 已存在（版本一致），跳过其导入"
+        _load_subset "$img_tgz" exclude "{{SYNC_IMAGE}}"
+        ok "已导入 ${C_BOLD}${img_tgz}${C_RESET}（除 v-push 运行镜像）"
+        return
+    fi
     step "导入镜像归档（docker load，全部镜像）"
     docker load -i "$img_tgz"
     ok "已导入 ${C_BOLD}${img_tgz}${C_RESET}"
 }
 
-# --load-target dev|prod|app：docker load 本身不支持按镜像过滤，这里从
-# docker save 归档中读出 manifest.json，筛出目标镜像（外加 sidecar 镜像）的
-# config 与 layer，重建一个临时归档后再 docker load。
-load_images_filtered() {
-    local img_tgz=$1 target=$2; shift 2
-    local -a want=("$@")
-    local manifest entry tags match cfg w found=0
+# _load_subset：按条件筛选 docker save 归档条目后导入（临时重建归档）。
+#   _load_subset <img_tgz> only <镜像...>     仅导入列出的镜像（--load-target）
+#   _load_subset <img_tgz> exclude <镜像...>  导入除列出镜像外的全部
+# （v-push 运行镜像本机已存在同版本时用 exclude 跳过）
+# 归档 manifest.json 逐条目列出每个镜像的 config 与 layer；必须重写
+# manifest.json 只保留参与导入的条目——docker load 会按其逐条读取文件，
+# 保留未参与条目会因文件缺失而报错。
+_load_subset() {
+    local img_tgz=$1 mode=$2; shift 2
+    local manifest cfg
     local tmp
     tmp=$(mktemp -d "${TMPDIR:-/tmp}/devc-load.XXXXXX") \
-        || { err "无法创建临时目录（按 target 过滤导入需要）"; exit 1; }
+        || { err "无法创建临时目录（按条件导入需要）"; exit 1; }
     # 提前展开临时目录字面量：EXIT 时函数已返回，local 变量在 set -u 下不可见
     trap "rm -rf '$tmp'" EXIT
     if ! manifest=$(tar xzOf "$img_tgz" manifest.json 2>/dev/null) \
         && ! manifest=$(tar xzOf "$img_tgz" ./manifest.json 2>/dev/null); then
-        err "镜像归档缺少 manifest.json，无法按 --load-target=$target 过滤"
-        echo "      （可去掉 --load-target 使用默认行为导入归档内全部镜像）"
+        err "镜像归档缺少 manifest.json，无法按条件筛选导入"
+        echo "      （可去掉 --load-target / 重新安装以导入归档内全部镜像）"
         exit 1
     fi
+    # 每行一个 {...} 条目，按 mode 过滤（匹配 RepoTags 中的带引号镜像名）
+    printf '%s' "$manifest" | sed 's/},{/}\n{/g' > "$tmp/entries.raw"
+    local -a greps=()
+    local t
+    for t in "$@"; do greps+=(-e "\"$t\""); done
+    if [ "$mode" = "only" ]; then
+        grep -F "${greps[@]}" "$tmp/entries.raw" > "$tmp/entries.keep" || true
+    else
+        grep -F -v "${greps[@]}" "$tmp/entries.raw" > "$tmp/entries.keep" || true
+    fi
+    if [ ! -s "$tmp/entries.keep" ]; then
+        if [ "$mode" = "only" ]; then
+            err "镜像归档中没有匹配的镜像（期望: $*）"
+            echo "      （本次构建可能未构建该镜像；可去掉 --load-target 导入全部镜像）"
+        else
+            err "镜像归档剔除 $* 后没有剩余镜像，无法导入"
+        fi
+        exit 1
+    fi
+    # 重写 manifest.json：仅保留参与导入的条目（数组内逗号拼接）
+    { printf '['; paste -sd, "$tmp/entries.keep"; printf ']'; } > "$tmp/manifest.json"
+    # 收集参与条目的 config 与 layer 文件
     local -a keep=("manifest.json")
+    local entry
     while IFS= read -r entry; do
         [ -n "$entry" ] || continue
-        tags=$(printf '%s' "$entry" | grep -o '"RepoTags": *\[[^]]*\]' | head -n 1 || true)
-        match=0
-        for w in "${want[@]}"; do
-            case "$tags" in *"\"$w\""*) match=1; break ;; esac
-        done
-        [ "$match" = "1" ] || continue
-        found=$((found + 1))
         cfg=$(printf '%s' "$entry" | sed -n 's/.*"Config": *"\([^"]*\)".*/\1/p')
         [ -n "$cfg" ] && keep+=("$cfg")
         while IFS= read -r layer; do
@@ -204,20 +233,13 @@ load_images_filtered() {
             | grep -o '"Layers": *\[[^]]*\]' \
             | sed -e 's/^"Layers": *\[//' -e 's/\]$//' -e 's/","/\n/g' -e 's/"//g' \
             || true)
-    done <<EOF
-$(printf '%s' "$manifest" | sed 's/},{/}\n{/g')
-EOF
-    if [ "$found" -eq 0 ]; then
-        err "镜像归档中没有匹配 --load-target=$target 的镜像（期望: ${want[*]}）"
-        echo "      （本次构建可能未构建该镜像；可去掉 --load-target 导入全部镜像）"
-        exit 1
-    fi
+    done < "$tmp/entries.keep"
     printf '%s\n' "${keep[@]}" | awk 'NF' | sort -u > "$tmp/files.list"
-    step "按 --load-target=$target 过滤导入（${want[*]}）"
+    step "筛选导入归档条目（$mode: $*）"
     tar xzf "$img_tgz" -C "$tmp" -T "$tmp/files.list" \
-        || { err "解包镜像归档失败（按 target 过滤导入）"; exit 1; }
+        || { err "解包镜像归档失败（按条件导入）"; exit 1; }
     tar cf - -C "$tmp" -T "$tmp/files.list" | docker load
-    ok "已按 target=$target 导入 ${C_BOLD}$img_tgz${C_RESET} 中的目标镜像"
+    ok "已按条件导入 ${C_BOLD}$img_tgz${C_RESET}"
 }
 
 load_images() {
@@ -236,9 +258,15 @@ load_images() {
     esac
     local w
     for w in {{SIDECAR_IMAGES}}; do
+        # v-push 运行镜像 tag 固定为版本号，本机已存在时直接判定可跳过
+        if [ "$w" = "{{SYNC_IMAGE}}" ] \
+            && docker image inspect "$w" >/dev/null 2>&1; then
+            note "检测到 v-push 运行镜像 $w 已存在（版本一致），跳过其导入"
+            continue
+        fi
         want+=("$w")
     done
-    load_images_filtered "$img_tgz" "$LOAD_TARGET" "${want[@]}"
+    _load_subset "$img_tgz" only "${want[@]}"
 }
 
 LOAD_IMAGES=0

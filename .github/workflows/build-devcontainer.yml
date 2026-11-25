@@ -391,16 +391,22 @@ jobs:
             || { echo "::error::Makefile 的 ps 未透传 ARGS"; exit 1; }
           grep -q 'exec $(SERVICE) $(ARGS)' /tmp/Makefile.check \
             || { echo "::error::Makefile 的 exec 未透传 SERVICE/ARGS"; exit 1; }
-          # 代码同步工具运行环境（enable_sync_tool）：Makefile v-push + compose push 服务
+          # 代码同步工具运行环境（enable_sync_tool）：Makefile v-push + compose v-push 服务
           if [ "$ENABLE_SYNC_TOOL" = "true" ]; then
             grep -q '^v-push:' /tmp/Makefile.check \
               || { echo "::error::Makefile 缺少 v-push 目标"; exit 1; }
-            grep -q -- '--profile push run --rm push' /tmp/Makefile.check \
-              || { echo "::error::v-push 未通过 compose push 服务一次性运行"; exit 1; }
-            grep -q '^  push:' /tmp/compose.start.tpl \
-              || { echo "::error::compose 模板缺少 push 服务"; exit 1; }
+            grep -q -- '--profile v-push run --rm v-push' /tmp/Makefile.check \
+              || { echo "::error::v-push 未通过 compose v-push 服务一次性运行"; exit 1; }
+            grep -q '^  v-push:' /tmp/compose.start.tpl \
+              || { echo "::error::compose 模板缺少 v-push 服务"; exit 1; }
             grep -q 'restart: "no"' /tmp/compose.start.tpl \
-              || { echo "::error::push 服务缺少 restart: \"no\"（一次性运行）"; exit 1; }
+              || { echo "::error::v-push 服务缺少 restart: \"no\"（一次性运行）"; exit 1; }
+            # v-push 镜像 tag 固定为版本号，不得使用 latest/timestamp
+            if grep -qE -- '-vpush:(latest|timestamp)' /tmp/compose.start.tpl; then
+              echo "::error::v-push 镜像 tag 必须固定为版本号，不得使用 latest/timestamp"; exit 1
+            fi
+            grep -qE -- '-vpush:[0-9]+\.' /tmp/compose.start.tpl \
+              || { echo "::error::compose 模板缺少固定版本号的 v-push 镜像（-vpush:<版本>）"; exit 1; }
           fi
           # 离线补装机制（build.sh + Dockerfile.addon）
           grep -q 'devcontainer-src/Dockerfile.addon$' /tmp/src_tgz.list \
@@ -468,8 +474,10 @@ jobs:
               || { echo "::error::install.sh 缺少 --no-load 选项"; exit 1; }
             grep -q -- '--load-target' "${{ steps.build.outputs.install_sh }}" \
               || { echo "::error::install.sh 缺少 --load-target 选项"; exit 1; }
-            grep -q 'load_images_filtered' "${{ steps.build.outputs.install_sh }}" \
-              || { echo "::error::install.sh 缺少按 target 过滤导入的逻辑"; exit 1; }
+            grep -q '_load_subset' "${{ steps.build.outputs.install_sh }}" \
+              || { echo "::error::install.sh 缺少按条件筛选导入（--load-target / 跳过 v-push 镜像）的逻辑"; exit 1; }
+            grep -q 'manifest.json' "${{ steps.build.outputs.install_sh }}" \
+              || { echo "::error::install.sh 筛选导入未读取 manifest.json"; exit 1; }
             grep -q 'dev|prod|app|all' "${{ steps.build.outputs.install_sh }}" \
               || { echo "::error::install.sh 的 --load-target 不支持 dev|prod|app|all"; exit 1; }
             grep -q 'load_images_all' "${{ steps.build.outputs.install_sh }}" \

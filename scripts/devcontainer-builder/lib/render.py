@@ -63,15 +63,16 @@ _DEV_SERVICE_TMPL = """\
       - dev
 """
 
-# compose 中的 push 服务（enable_sync_tool）：最小 Python 镜像（内置 paramiko），
-# 单独 profile=push，仅 `make v-push` 激活；一次性运行（restart: "no"）。
-# 项目根（含 scripts/、scripts/manifest.txt、.env、bundles/）读写挂载到 /project，
-# push 在容器内按清单打包并把 bundle 写回宿主机 ./bundles/。
+# compose 中的 v-push 服务（enable_sync_tool）：最小 Python 镜像（内置 paramiko，
+# tag 固定为版本号），单独 profile=v-push，仅 `make v-push` 激活；一次性运行
+# （restart: "no"）。项目根（含 scripts/、scripts/manifest.txt、.env、bundles/）
+# 读写挂载到 /project，v-push 在容器内按清单打包并把 bundle 写回宿主机 ./bundles/。
 # 宿主机 ~/.ssh 只读挂载供 sshkey 鉴权（password 方式不使用其内容）。
 _PUSH_SERVICE_TMPL = """\
-  # 代码同步工具运行环境（enable_sync_tool）：最小 Python 镜像（内置 paramiko）。
-  # 仅 profile=push（`make v-push`）激活，一次性运行（restart: "no"）。
-  push:
+  # 代码同步工具运行环境（enable_sync_tool）：最小 Python 镜像（内置 paramiko），
+  # 镜像 tag 固定为版本号（不随 image_tag 的 latest/timestamp 变化）。
+  # 仅 profile=v-push（`make v-push`）激活，一次性运行（restart: "no"）。
+  v-push:
     image: {{SYNC_IMAGE}}
     working_dir: {{SYNC_WORKDIR}}
     restart: "no"
@@ -81,31 +82,31 @@ _PUSH_SERVICE_TMPL = """\
       HOME: {{SYNC_HOME}}
     volumes:
       # 项目根读写挂载：包含 scripts/（push-bundle.sh / manifest.txt / .env）、
-      # .gitignore 与 bundles/ 产物目录；push 在容器内按清单打包并写回宿主机
+      # .gitignore 与 bundles/ 产物目录；v-push 在容器内按清单打包并写回宿主机
       - ../:{{SYNC_WORKDIR}}{{SELINUX_SUFFIX}}
       # sshkey 鉴权时用宿主机 ~/.ssh（password 用户名+密码方式不读取其内容）
       - ${HOME}/.ssh:{{SYNC_HOME}}/.ssh:ro
     networks:
       - app-net
     profiles:
-      - push
+      - v-push
     command: ["python3", "scripts/push-bundle.sh"]
 """
 
-# Makefile 中代码同步工具（push）目标（enable_sync_tool 时生成）
+# Makefile 中代码同步工具（v-push）目标（enable_sync_tool 时生成）
 _SYNC_MAKE_TARGETS = """\
-check-push: ## 检查代码同步工具（push）镜像是否已导入
+check-v-push: ## 检查 v-push 运行镜像（{{SYNC_IMAGE}}）是否已导入
 \t@docker image inspect {{SYNC_IMAGE}} >/dev/null 2>&1 || { \\
-\t\techo "代码同步工具镜像 {{SYNC_IMAGE}} 未导入：请先 docker load 镜像归档"; \\
+\t\techo "v-push 运行镜像 {{SYNC_IMAGE}} 未导入：请先 docker load 镜像归档"; \\
 \t\texit 1; \\
 \t}
 
-v-push: check-push ## 在容器内执行 push（一次性，--rm；宿主机无需 Python/paramiko）
-\t$(COMPOSE) --profile push run --rm push python3 scripts/push-bundle.sh $(ARGS)
+v-push: check-v-push ## 在容器内执行 push（一次性，--rm；宿主机无需 Python/paramiko）
+\t$(COMPOSE) --profile v-push run --rm v-push python3 scripts/push-bundle.sh $(ARGS)
 
 """
 
-_SYNC_PHONY = "check-push v-push "
+_SYNC_PHONY = "check-v-push v-push "
 
 # Makefile 中依赖 dev 镜像的目标（需要 dev 工具时生成）
 _DEV_MAKE_TARGETS = """\
@@ -415,7 +416,8 @@ def _sidecar_images(p):
     无论 dev/prod/app 都会一并导入）：独立 nginx 服务 + DB 服务。"""
     images = []
     if p.enable_sync_tool:
-        # push 运行环境镜像：本地构建，但任何 --load-target 都一并导入
+        # v-push 运行环境镜像：本地构建（tag 固定版本号），任何 --load-target
+        # 都会一并导入；install.sh 在本机已存在同版本镜像时自动跳过其导入
         images.append(p.sync_image)
     if p.nginx_service_mode:
         images.append(NGINX_IMAGE)
@@ -1067,10 +1069,12 @@ def render_web_package_json(p):
 
 
 def render_dockerfile_push(p):
-    """代码同步工具（push）运行环境镜像：最小 python:3.11-slim + paramiko。
+    """代码同步工具（v-push）运行环境镜像：最小 python:3.11-slim + paramiko。
 
     仅供构建端使用（构建期联网 pip install，运行期离线）：镜像随镜像归档分发，
-    compose 的 push 服务（profile=push）直接使用，宿主机无需 Python/paramiko。
+    tag 固定为 SYNC_IMAGE_VERSION（不随 image_tag 变化），compose 的 v-push 服务
+    （profile=v-push）直接使用，宿主机无需 Python/paramiko。运行环境变更时
+    递增 SYNC_IMAGE_VERSION 后重新构建即可。
     """
     if not p.enable_sync_tool:
         return ""
@@ -1162,15 +1166,15 @@ note "4. make shell 后运行 npm run dev -- --host 0.0.0.0（vite 默认 5173�
 
 
 def _sync_notice_block(p):
-    """install.sh 中的代码同步工具（push 运行环境）提示。"""
+    """install.sh 中的代码同步工具（v-push 运行环境）提示。"""
     if not p.enable_sync_tool:
         return ""
     return f'''
 echo ""
-printf '%s\\n' "${{C_BOLD}}代码同步工具运行环境（push profile，本包已启用）${{C_RESET}}"
-note "镜像 {p.sync_image}（python:3.11-slim + paramiko）随镜像归档导入，本机无需 Python/paramiko"
+printf '%s\\n' "${{C_BOLD}}代码同步工具运行环境（v-push profile，本包已启用）${{C_RESET}}"
+note "镜像 {p.sync_image}（python:3.11-slim + paramiko，tag 固定版本号）随镜像归档导入，本机无需 Python/paramiko"
 note "1. cp scripts/.env.example scripts/.env 填写 SYNC_REMOTE_HOST/USER/PASSWORD(或 KEY)/PATH"
-note "2. make v-push ARGS=\\"-y\\"  # 在 push 容器内执行 scripts/push-bundle.sh（一次性，--rm）"
+note "2. make v-push ARGS=\\"-y\\"  # 在 v-push 容器内执行 scripts/push-bundle.sh（一次性，--rm）"
 note "本地已装 Python 3.8+ 与 paramiko 时仍可用 make push（宿主机直接执行）"
 '''
 
