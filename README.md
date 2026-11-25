@@ -79,6 +79,8 @@ cd ~/apps/myapp1                                     # 所有 make 命令都在�
 make check      # 离线自检镜像/架构
 make shell      # dev 容器交互 bash（ruff/pytest 已内置）
 make lint && make compile && make test
+make run dev python test1.py       # 一次性在 dev 容器跑 app/test1.py（--rm，失败不重启）
+make v-push     # 在容器内执行 push（构建时勾选 enable_sync_tool；宿主机无需 Python）
 make up         # docker compose up -d --no-build，运行 python main.py
 ```
 

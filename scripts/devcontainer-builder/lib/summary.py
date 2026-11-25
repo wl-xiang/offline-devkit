@@ -99,6 +99,14 @@ def build_markdown(p, results):
     else:
         node_mode = "未启用"
     out.append(f"| Node.js / npm | {node_mode} |")
+    if p.enable_sync_tool:
+        out.append(
+            "| 代码同步工具 (v-push) | 已启用：`python:3.11-slim` + paramiko"
+            f"（`{p.sync_image}`，固定镜像名；compose 服务 `v-push` / "
+            "profile `v-push`，`make v-push` 容器内执行） |"
+        )
+    else:
+        out.append("| 代码同步工具 (v-push) | 未启用（`make push` 在宿主机执行） |")
     if p.framework_pack:
         framework_name = (framework_tgz.name if framework_tgz
                           else f"{p.framework_vendor_label}-{p.framework_spec}.tgz")

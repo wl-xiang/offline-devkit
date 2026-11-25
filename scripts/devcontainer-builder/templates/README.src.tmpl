@@ -86,6 +86,7 @@ make shell        # 交互式 bash
 make lint         # ruff check .（预装 Python 时）
 make compile      # python -m compileall -q .（预装 Python 时）
 make test         # pytest -q（预装 Python 时）
+make run dev python test1.py   # 一次性跑应用源码目录下的 test1.py（--rm，失败不重启；预装 Python 时）
 
 # 4. 运行（--no-build，不联网）
 make up && make logs
@@ -176,6 +177,19 @@ make down         # 停止
   `bash downloads/install.sh --load-only` 或 `docker load -i` 重新导入镜像归档。
 - `make ps` 查看容器状态、`make exec SERVICE=dev ARGS="bash"` 在运行中的容器内
   执行命令；两者都支持 `ARGS=` 透传参数。
+- `make run` 一次性运行容器内命令（等价 `docker compose run --rm <服务> <命令>`）：
+  第一个参数是 compose 服务名（缺省 `dev`，也可 `app`），其后为容器内命令。容器
+  工作目录 `/app` 就是挂载的应用源码目录（`{{APP_DIR}}/`），脚本路径相对该目录写：
+  宿主机 `{{APP_DIR}}/test1.py` → `make run dev python test1.py`（仅 `{{APP_DIR}}/app/`
+  这类嵌套子目录才需要额外前缀）；容器退出即删除、失败不重启。
+- **代码同步工具运行环境（enable_sync_tool）**：`make v-push` 通过 compose 的
+  `v-push` 服务（profile=`v-push`，一次性 `--rm`，restart=no）在最小 Python 镜像
+  （`python:3.11-slim` + paramiko）里执行 `scripts/push-bundle.sh`——宿主机无需
+  Python/paramiko，只需 Docker；项目根（含 `scripts/`、`scripts/.env`、`bundles/`）
+  已挂载进容器。运行镜像 `{{SYNC_IMAGE}}` 为固定名（与 `image_prefix` /
+  `image_tag` 无关，多套 devcontainer 共用），install.sh 导入镜像归档时若本机
+  已存在该镜像，只跳过这一个镜像的导入（其余镜像照常导入）。`make push` 仍是
+  宿主机直接执行（需 Python 3.8+ 与 paramiko）。
 - `make check` 可离线自检镜像是否已导入、架构是否匹配。
 - `make help` 查看全部可用目标。
 {{DEV_TOOLS_NOTE}}

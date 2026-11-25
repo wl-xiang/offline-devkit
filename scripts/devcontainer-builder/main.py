@@ -74,6 +74,8 @@ def main():
     print(f"  node={p.enable_node}(v{p.node_version}) npm_packages={p.npm_package_list} "
           f"npm_packages_dir={p.npm_packages_dir}")
     print(f"  css_framework_install={p.css_framework_install}")
+    print(f"  enable_sync_tool={p.enable_sync_tool}"
+          + (f" (push image={p.sync_image})" if p.enable_sync_tool else ""))
 
     work_dir = REPO_ROOT / "dist" / "devcontainer"
     if work_dir.exists():
@@ -112,6 +114,15 @@ def main():
             if p.build_dev_image:
                 print("== docker build (dev) ==")
                 docker_mod.build_image(p, staging, "dev", p.dev_image)
+        if p.enable_sync_tool:
+            # 代码同步工具运行环境：独立最小 python 镜像（构建期联网安装 paramiko）
+            print("== docker build (push runtime) ==")
+            push_ctx = work_dir / "push"
+            push_ctx.mkdir(parents=True, exist_ok=True)
+            (push_ctx / "Dockerfile").write_text(
+                render_mod.render_dockerfile_push(p), encoding="utf-8"
+            )
+            docker_mod.build_push_image(p, push_ctx, p.sync_image)
         docker_mod.pull_service_images(p)
         images = docker_mod.image_list(p)
         images_tgz = (

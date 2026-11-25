@@ -19,6 +19,9 @@ from .params import (
     NPM_PACKAGES_CONTAINER_DIR,
     Params,
     PYTHON_VERSION,
+    SYNC_BASE_IMAGE,
+    SYNC_CONTAINER_HOME,
+    SYNC_CONTAINER_WORKDIR,
 )
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -60,6 +63,53 @@ _DEV_SERVICE_TMPL = """\
       - dev
 """
 
+# compose 中的 v-push 服务（enable_sync_tool）：最小 Python 镜像（内置 paramiko，
+# 固定名 devcontainer-vpush:py311，与 image_prefix/image_tag 无关），单独
+# profile=v-push，仅 `make v-push` 激活；一次性运行（restart: "no"）。项目根
+# （含 scripts/、scripts/manifest.txt、.env、bundles/）读写挂载到 /project，
+# v-push 在容器内按清单打包并把 bundle 写回宿主机 ./bundles/。
+# 宿主机 ~/.ssh 只读挂载供 sshkey 鉴权（password 方式不使用其内容）。
+_PUSH_SERVICE_TMPL = """\
+  # 代码同步工具运行环境（enable_sync_tool）：最小 Python 镜像（内置 paramiko），
+  # 镜像名固定为 {{SYNC_IMAGE}}（不随 image_prefix / image_tag 变化，多套
+  # devcontainer 共用）。
+  # 仅 profile=v-push（`make v-push`）激活，一次性运行（restart: "no"）。
+  v-push:
+    image: {{SYNC_IMAGE}}
+    working_dir: {{SYNC_WORKDIR}}
+    restart: "no"
+    pull_policy: never
+    user: "${HOST_UID:-0}:${HOST_GID:-0}"
+    environment:
+      HOME: {{SYNC_HOME}}
+    volumes:
+      # 项目根读写挂载：包含 scripts/（push-bundle.sh / manifest.txt / .env）、
+      # .gitignore 与 bundles/ 产物目录；v-push 在容器内按清单打包并写回宿主机
+      - ../:{{SYNC_WORKDIR}}{{SELINUX_SUFFIX}}
+      # sshkey 鉴权时用宿主机 ~/.ssh（password 用户名+密码方式不读取其内容）
+      - ${HOME}/.ssh:{{SYNC_HOME}}/.ssh:ro
+    networks:
+      - app-net
+    profiles:
+      - v-push
+    command: ["python3", "scripts/push-bundle.sh"]
+"""
+
+# Makefile 中代码同步工具（v-push）目标（enable_sync_tool 时生成）
+_SYNC_MAKE_TARGETS = """\
+check-v-push: ## 检查 v-push 运行镜像（{{SYNC_IMAGE}}）是否已导入
+\t@docker image inspect {{SYNC_IMAGE}} >/dev/null 2>&1 || { \\
+\t\techo "v-push 运行镜像 {{SYNC_IMAGE}} 未导入：请先 docker load 镜像归档"; \\
+\t\texit 1; \\
+\t}
+
+v-push: check-v-push ## 在容器内执行 push（一次性，--rm；宿主机无需 Python/paramiko）
+\t$(COMPOSE) --profile v-push run --rm v-push python3 scripts/push-bundle.sh $(ARGS)
+
+"""
+
+_SYNC_PHONY = "check-v-push v-push "
+
 # Makefile 中依赖 dev 镜像的目标（需要 dev 工具时生成）
 _DEV_MAKE_TARGETS = """\
 check-dev: ## 检查 dev 镜像是否已导入（离线环境不会自行构建）
@@ -68,10 +118,16 @@ check-dev: ## 检查 dev 镜像是否已导入（离线环境不会自行构建�
 \t\texit 1; \\
 \t}
 
-shell: check-dev ## 进入 dev 容器交互式 bash
-\t$(DEV_RUN)
-
+# run 模式下 dev 也是参数（compose 服务名），抑制其作为目标执行
+ifneq ($(RUN_MODE),1)
 dev: check-dev ## 等价于 shell
+\t$(DEV_RUN)
+endif
+
+run: check-dev ## 一次性运行容器内命令：make run dev <命令>（--rm，不重启）
+\t$(COMPOSE) run --rm $(RUN_SERVICE) $(RUN_CMD)
+
+shell: check-dev ## 进入 dev 容器交互式 bash
 \t$(DEV_RUN)
 
 """
@@ -89,7 +145,7 @@ test: check-dev ## 运行 pytest
 
 """
 
-_DEV_PHONY = "check-dev shell dev "
+_DEV_PHONY = "check-dev shell dev run "
 
 _PY_PHONY = "lint compile test "
 
@@ -274,6 +330,14 @@ def _base_mapping(p):
         "GO_ENABLED": "1" if p.go_enabled else "0",
         "IMAGE_LIST": " ".join(p.image_refs),
         "DEV_IMAGE": p.dev_image,
+        # ---- 代码同步工具（push）运行环境：最小 Python 镜像（enable_sync_tool）----
+        "SYNC_ENABLED": "1" if p.enable_sync_tool else "0",
+        "SYNC_IMAGE": p.sync_image,
+        "SYNC_BASE_IMAGE": SYNC_BASE_IMAGE,
+        "SYNC_WORKDIR": SYNC_CONTAINER_WORKDIR,
+        "SYNC_HOME": SYNC_CONTAINER_HOME,
+        # SELinux Enforcing 主机：项目根读写挂载同样追加 :z（与 app 一致）
+        "SELINUX_SUFFIX": ":z" if p.selinux_relabel else "",
         # 用户包 + 预装组件（playwright / oracledb）的合并清单
         "PIP_PACKAGES_LINES": "\n".join(p.preinstall_pip_packages),
         "DEV_PIP_TOOLS": " ".join(p.dev_pip_tools),
@@ -353,6 +417,11 @@ def _sidecar_images(p):
     """本次构建打包进镜像归档的外挂服务镜像（install.sh --load-target 过滤时
     无论 dev/prod/app 都会一并导入）：独立 nginx 服务 + DB 服务。"""
     images = []
+    if p.enable_sync_tool:
+        # v-push 运行环境镜像：固定名 devcontainer-vpush:py311，本地构建，
+        # 任何 --load-target 都会一并导入；install.sh 在本机已存在该镜像时
+        # 只跳过这一个镜像的导入（其余镜像照常导入）
+        images.append(p.sync_image)
     if p.nginx_service_mode:
         images.append(NGINX_IMAGE)
     for service in ("postgres16", "mysql8.4", "mongo9"):
@@ -755,6 +824,9 @@ def render_compose(p):
             "DEV_EXTRA_VOLUMES": _extra_volumes(p),
             "DEV_ENV_BLOCK": _env_block(p),
         })
+    push_service = ""
+    if p.enable_sync_tool:
+        push_service = _sub(_PUSH_SERVICE_TMPL, _base_mapping(p))
 
     services = []
     if p.nginx_service_mode:
@@ -781,6 +853,7 @@ def render_compose(p):
             "APP_OPTIONS_BLOCK": _app_options_block(p),
             "DEPENDS_ON_BLOCK": _depends_on_block(p),
             "DEV_SERVICE_BLOCK": dev_service,
+            "PUSH_SERVICE_BLOCK": push_service,
             "SERVICE_BLOCKS": service_blocks,
             "VOLUMES_BLOCK": volumes_block,
         },
@@ -849,6 +922,11 @@ def render_makefile(p):
     if p.dev_tools_enabled and p.python_enabled:
         phony_dev += _PY_PHONY
     npm_phony = _NPM_PHONY if (p.enable_node and p.dev_tools_enabled) else ""
+    sync_targets = ""
+    sync_phony = ""
+    if p.enable_sync_tool:
+        sync_targets = _sub(_SYNC_MAKE_TARGETS, _base_mapping(p))
+        sync_phony = _SYNC_PHONY
     return _sub(
         _load("Makefile.tmpl"),
         {
@@ -857,6 +935,8 @@ def render_makefile(p):
             "PHONY_DEV": phony_dev,
             "NPM_TARGETS": _npm_make_targets(p),
             "PHONY_NPM": npm_phony,
+            "SYNC_TARGETS": sync_targets,
+            "PHONY_SYNC": sync_phony,
         },
     )
 
@@ -991,6 +1071,26 @@ def render_web_package_json(p):
     return _load("package.json.tmpl")
 
 
+def render_dockerfile_push(p):
+    """代码同步工具（v-push）运行环境镜像：最小 python:3.11-slim + paramiko。
+
+    仅供构建端使用（构建期联网 pip install，运行期离线）：镜像随镜像归档分发，
+    名字固定为 devcontainer-vpush:py311（与 image_prefix / image_tag 无关），
+    compose 的 v-push 服务（profile=v-push）直接使用，宿主机无需 Python/paramiko。
+    运行环境变更（基础镜像 / Python 版本 / paramiko）时更新 SYNC_IMAGE_TAG 后
+    重新构建即可。
+    """
+    if not p.enable_sync_tool:
+        return ""
+    return (
+        "# 由 scripts/devcontainer-builder 生成：代码同步工具（push）运行环境\n"
+        "# 最小 Python 镜像 + paramiko；构建期联网安装，运行期完全离线。\n"
+        f"FROM {SYNC_BASE_IMAGE}\n"
+        "RUN pip install --no-cache-dir --no-compile paramiko \\\n"
+        "    && python -c \"import paramiko; print('paramiko', paramiko.__version__)\"\n"
+    )
+
+
 def render_docker_run_sh(p):
     """容器默认启动脚本（镜像 ENTRYPOINT）：cd /app 后运行预置入口。
 
@@ -1069,6 +1169,20 @@ note "4. make shell 后运行 npm run dev -- --host 0.0.0.0（vite 默认 5173�
 '''
 
 
+def _sync_notice_block(p):
+    """install.sh 中的代码同步工具（v-push 运行环境）提示。"""
+    if not p.enable_sync_tool:
+        return ""
+    return f'''
+echo ""
+printf '%s\\n' "${{C_BOLD}}代码同步工具运行环境（v-push profile，本包已启用）${{C_RESET}}"
+note "镜像 {p.sync_image}（python:3.11-slim + paramiko）随镜像归档导入，本机无需 Python/paramiko"
+note "1. cp scripts/.env.example scripts/.env 填写 SYNC_REMOTE_HOST/USER/PASSWORD(或 KEY)/PATH"
+note "2. make v-push ARGS=\\"-y\\"  # 在 v-push 容器内执行 scripts/push-bundle.sh（一次性，--rm）"
+note "本地已装 Python 3.8+ 与 paramiko 时仍可用 make push（宿主机直接执行）"
+'''
+
+
 def _framework_notice_block(p):
     """install.sh 中的前端框架提示（css_framework_install 非 none 时）。"""
     if not p.framework_enabled:
@@ -1121,6 +1235,7 @@ def render_install_sh(p, out_file):
             **_base_mapping(p),
             "ORACLE_NOTICE_BLOCK": _oracle_notice_block(p),
             "NPM_NOTICE_BLOCK": _npm_notice_block(p),
+            "SYNC_NOTICE_BLOCK": _sync_notice_block(p),
             "FRAMEWORK_NOTICE_BLOCK": _framework_notice_block(p),
         },
     )
@@ -1505,7 +1620,8 @@ def _npm_readme_section(p):
 def _agent_readme_section(p):
     """bundle README 的 AI Agent 约定：开发/测试统一在容器内执行，不依赖宿主机环境。"""
     if p.dev_tools_enabled:
-        run = "docker compose run --rm dev"
+        run = "make run dev"
+        equiv = "（等价 `docker compose run --rm dev <命令>`）"
         intro = (
             "本项目的运行环境**只在容器内**（dev 镜像按 target_codec 预装语言"
             "环境，Python 环境已内置 ruff / pytest）。宿主机无需安装 Python，"
@@ -1526,6 +1642,7 @@ def _agent_readme_section(p):
             ]
     else:
         run = "docker compose run --rm app"
+        equiv = ""
         intro = (
             "本次**未构建 dev 镜像**（没有 ruff / pytest），但运行环境仍然只在"
             "容器内。宿主机无需安装 Python，也不要用宿主机的 `python` / `pip` "
@@ -1555,10 +1672,12 @@ def _agent_readme_section(p):
 | --- | --- |
 {table}
 
-- 容器把项目根目录挂载为 `/app`，工作目录固定 `/app`；容器内修改会直接写回宿主机。
+- 容器把应用源码目录（`app/`，febe_separation 布局为 `api/`；app_source_dir
+  指定子目录时以该子目录为准）挂载为 `/app`，工作目录固定 `/app`；容器内修改
+  会直接写回宿主机。命令里的脚本路径相对该目录写（`app/test1.py` → `test1.py`）。
 - **宿主机即使存在 `python` / `pytest` / `npm`，也不要用来运行项目代码或安装依赖**：
   宿主环境与镜像不一致，所有验证都应以容器内结果为准。
-- 非交互场景（Agent / CI）请用 `{run} <命令>`；`make shell` / `bash` 交互式
+- 非交互场景（Agent / CI）请用 `{run} <命令>`{equiv}；`make shell` / `bash` 交互式
   终端会等待输入，不要用于自动化。
 - 首次使用先执行 `make check` 确认镜像已导入；离线机器不要执行 `make build` 或
   `docker compose build`。
@@ -1572,7 +1691,7 @@ def _agent_readme_section(p):
 def _agent_html_section(p):
     """readme.html 中的 AI Agent 使用约定卡片。"""
     if p.dev_tools_enabled:
-        run = "docker compose run --rm dev"
+        run = "make run dev"
         intro = (
             "运行环境只在容器内（dev 镜像已内置 ruff / pytest）。宿主机无需安装 "
             "Python，请勿用宿主机的 <code>python</code> / <code>pip</code> / "
