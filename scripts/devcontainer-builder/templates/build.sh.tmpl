@@ -2,53 +2,57 @@
 # 由 scripts/devcontainer-builder 生成，请勿手工编辑。
 # 镜像 TAG: {{TAG}}（时间戳: {{TS}}）
 #
-# 用途：离线补装——按 deps/ 目录内容自动启用（两项都没有时报错退出）：
-#   1. Python 补装：deps/wheels/*.whl 打进现有镜像，生成 addon 镜像。
-#   2. 前端依赖一键加载：deps/packages/ 放入 Npm Download Action 打包的
+# 用途：离线补装——按 docker/deps/ 目录内容自动启用（两项都没有时报错退出）：
+#   1. Python 补装：docker/deps/wheels/*.whl 打进现有镜像，生成 addon 镜像。
+#   2. 前端依赖一键加载：docker/deps/packages/ 放入 Npm Download Action 打包的
 #      npm_packages 产物（顶层 packages/ 的内容：*.tgz + package.json），
 #      通过容器离线安装到挂载的源码目录（/app）。
-# 用法: bash build.sh [新TAG后缀]     # 后缀默认 addon-{{TS}}，
+# 用法: bash docker/build.sh [新TAG后缀]  # 后缀默认 addon-{{TS}}，
 #                                     # 新镜像沿用仓库名：prod <前缀>:<后缀>、
 #                                     #                  dev  <前缀>-dev:<后缀>
 #                                     #（如 mydevc1:addon-{{TS}} / mydevc1-dev:addon-{{TS}}）
 #
-# 本脚本由 install.sh 安装到项目根目录（src root），所有路径按执行时的工作
-# 目录（pwd）解析——请在项目根目录执行（引用项目根 Dockerfile.addon）。
+# 本脚本由 install.sh 安装到项目根 docker/ 目录（与 Dockerfile.addon、deps/
+# 同目录），所有路径按脚本自身位置解析——在项目根执行 `bash docker/build.sh`
+# 即可，无需 cd 进 docker/。
 #
 # 步骤（Python 补装）：
 #   1. 在联网机器上下载缺的包为 wheel（推荐用本仓库 scripts/pip/pip_download.py），
-#      拷回内网机器项目根目录 deps/wheels/ 下；
-#   2. 在项目根目录执行 bash build.sh；
-#   3. 按输出的 sed 命令把项目根目录的 docker-compose.yml 切换到新镜像，
+#      拷回内网机器 docker/deps/wheels/ 下（目录不存在先 bash docker/init-deps.sh）；
+#   2. 在项目根目录执行 bash docker/build.sh；
+#   3. 按输出的 sed 命令把 docker/docker-compose.yml 切换到新镜像，
 #      make up 生效。回滚：重新 docker load 原 devcontainer-docker-images_{{ARCH}}_{{TS}}.tgz 即可恢复原镜像。
 # 步骤（前端依赖一键加载）：
 #   1. 在联网机器用本仓库的 Npm Download Action（npm_download.yml）打包前端
-#      依赖，把产物解压出的 packages/ 内容（*.tgz + package.json）放到项目根
-#      目录 deps/packages/ 下（compose 挂载目录为 ${NPM_PACKAGES_DIR:-deps/packages}）；
-#   2. 在项目根目录执行 bash build.sh，脚本通过容器离线安装依赖到 /app。
-# （Artifact 的 zip 解压后可能丢失可执行权限，统一用 `bash build.sh` 调用）
+#      依赖，把产物解压出的 packages/ 内容（*.tgz + package.json）放到
+#      docker/deps/packages/ 下（compose 挂载目录 ${NPM_PACKAGES_DIR:-deps/packages}，
+#      相对值相对 docker/ 目录解析）；
+#   2. 在项目根目录执行 bash docker/build.sh，脚本通过容器离线安装依赖到 /app。
+# （Artifact 的 zip 解压后可能丢失可执行权限，统一用 `bash docker/build.sh` 调用）
 set -euo pipefail
 
-SRC_ROOT=$(pwd -P)                            # 项目根目录（src root）
-WHEELS_DIR="$SRC_ROOT/deps/wheels"
-# 与 compose 的 NPM_PACKAGES_DIR 挂载保持一致（相对路径相对项目根解析）
+DOCKER_DIR=$(cd "$(dirname "$0")" && pwd -P)   # docker/ 目录（compose 项目目录）
+SRC_ROOT=$(cd "$DOCKER_DIR/.." && pwd -P)      # 项目根目录（src root）
+WHEELS_DIR="$DOCKER_DIR/deps/wheels"
+# 与 compose 的 NPM_PACKAGES_DIR 挂载保持一致（相对路径相对 docker/ 目录解析）
 NPM_PACKAGES_DIR=${NPM_PACKAGES_DIR:-deps/packages}
 case "$NPM_PACKAGES_DIR" in
     /*) NPM_DIR="$NPM_PACKAGES_DIR" ;;
-    *)  NPM_DIR="$SRC_ROOT/${NPM_PACKAGES_DIR#./}" ;;
+    *)  NPM_DIR="$DOCKER_DIR/${NPM_PACKAGES_DIR#./}" ;;
 esac
 
 have_wheels=0
 have_npm=0
 if ls "$WHEELS_DIR"/*.whl >/dev/null 2>&1; then
     have_wheels=1
-    echo "== 检测到 deps/wheels/*.whl，将执行 Python 离线补装（addon 镜像）=="
+    echo "== 检测到 docker/deps/wheels/*.whl，将执行 Python 离线补装（addon 镜像）=="
 fi
 {{NPM_DEPS_BLOCK}}if [ "$have_wheels" -eq 0 ] && [ "$have_npm" -eq 0 ]; then
-    echo "错误: 没有可执行的离线补装任务（deps/ 下没有 .whl，也没有 *.tgz）。"
-    echo "  - Python 补装: 把 .whl 放到 $WHEELS_DIR/（目录不存在请先创建）"
+    echo "错误: 没有可执行的离线补装任务（docker/deps/ 下没有 .whl，也没有 *.tgz）。"
+    echo "  - deps/ 目录不存在时先执行: bash docker/init-deps.sh"
+    echo "  - Python 补装: 把 .whl 放到 $WHEELS_DIR/"
     echo "  - 前端依赖:   把 Npm Download Action 产物的 packages/ 内容"
-    echo "                （*.tgz + package.json）放到 $NPM_DIR/（目录不存在请先创建）"
+    echo "                （*.tgz + package.json）放到 $NPM_DIR/"
     exit 1
 fi
 
@@ -57,12 +61,12 @@ NEW_SUFFIX=${1:-addon-{{TS}}}
 if [ "$have_wheels" -eq 1 ]; then
 # 构建上下文使用临时目录（只含 wheels），避免把整个项目目录发给 docker daemon；
 # docker 只按【上下文根目录】查找 .dockerignore，因此项目根目录的 .dockerignore
-# （排除 deps/）不会作用于本次构建——离线补装不受它影响
-STAGING="$SRC_ROOT/.addon-build"
+# （排除 docker/deps/）不会作用于本次构建——离线补装不受它影响
+STAGING="$DOCKER_DIR/.addon-build"
 rm -rf "$STAGING"
 mkdir -p "$STAGING/wheels"
 # 双保险：上下文内绝不允许出现任何 dockerignore——项目根目录那份排除了
-# deps/，一旦被带入本上下文，COPY wheels/ 会被静默忽略而构建失败
+# docker/deps/，一旦被带入本上下文，COPY wheels/ 会被静默忽略而构建失败
 # （"failed to compute cache key: not found"）。正常流程本目录只装 wheels，
 # 此处显式清理以防未来改动引入或异常残留。
 rm -f "$STAGING/.dockerignore" "$STAGING/Dockerfile.dockerignore"
@@ -75,9 +79,9 @@ trap 'rm -rf "$STAGING"' EXIT
 build() {  # $1=Dockerfile target, $2=原镜像, $3=新镜像 TAG
     local new="${2%:*}:$3"
     echo "== build $1 -> $new =="
-    docker build -f "$SRC_ROOT/Dockerfile.addon" --target "$1" -t "$new" "$STAGING"
+    docker build -f "$DOCKER_DIR/Dockerfile.addon" --target "$1" -t "$new" "$STAGING"
     echo "  新镜像:   $new"
-    echo "  切换使用: sed -i 's|$2|$new|g' \"$SRC_ROOT/docker-compose.yml\""
+    echo "  切换使用: sed -i 's|$2|$new|g' \"$DOCKER_DIR/docker-compose.yml\""
 }
 
 {{BUILD_CALLS}}
@@ -87,6 +91,6 @@ fi
 
 if [ "$have_wheels" -eq 1 ]; then
     echo ""
-    echo "完成（Python 补装）。执行上面输出的 sed 命令切换项目根目录的 docker-compose.yml 后，make up 即使用新镜像。"
+    echo "完成（Python 补装）。执行上面输出的 sed 命令切换 docker/docker-compose.yml 后，make up 即使用新镜像。"
     echo "（回滚：重新 docker load 原始 devcontainer-docker-images_{{ARCH}}_{{TS}}.tgz）"
 fi

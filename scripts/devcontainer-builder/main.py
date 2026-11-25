@@ -14,8 +14,10 @@
        参数快照，由 lib/params.py 的 workflow_inputs_snapshot 生成）写入 dist/
     6. lib/summary.py 写 GITHUB_STEP_SUMMARY / GITHUB_OUTPUT，
        上传唯一 Artifact：<image_prefix>_devcontainer_<arch>_<ts>（zip，内含镜像归档
-       tgz、src tgz、install.sh、readme.html 与 devcontainer.json 五个文件；
-       css_framework_install=*_pack_in_artifact 时额外包含 <框架标签>-<version>.tgz）
+       tgz、src tgz、install.sh、clean.sh（一键清理，按 images.txt 删容器/镜像）、
+       images.txt、readme.html 与 devcontainer.json；
+       css_framework_install=*_pack_in_artifact 时额外包含
+       <框架标签>-<version>.tgz）
 
 本地联调可设置 DEVCONTAINER_SKIP_DOCKER=1 跳过 docker 步骤。
 """
@@ -63,8 +65,8 @@ def main():
     print(f"  db service (enable_db={p.db_service}) "
           f"postgres={p.enable_postgres} mysql={p.enable_mysql} "
           f"mongo={p.enable_mongo} db_depends={p.has_db_service}")
-    if p.source_layout == "api_web" and not p.enable_nginx:
-        print("  注意: source_layout=api_web 且 nginx_mode=none —— web/ 的静态产物"
+    if p.source_layout == "febe_separation" and not p.enable_nginx:
+        print("  注意: source_layout=febe_separation 且 nginx_mode=none —— web/ 的静态产物"
               "（web/dist/）没有 nginx 托管，请自行分发或改选 nginx_mode")
     print(f"  playwright={p.enable_playwright} "
           f"oracle_instantclient={p.oracle_instantclient_mode}")
@@ -141,6 +143,14 @@ def main():
         p, REPO_ROOT / "dist" / "install.sh"
     )
     print(f"== install 脚本: {install_sh} ==")
+    # clean.sh（一键清理：compose down + 按 images.txt 删除容器/镜像）与
+    # images.txt（镜像清单）：与 install.sh 同级分发（zip 顶层），
+    # 不安装进项目，留在 downloads/ 供卸载/清理使用
+    clean_sh = render_mod.render_clean_sh(p, REPO_ROOT / "dist" / "clean.sh")
+    print(f"== 清理脚本: {clean_sh} ==")
+    images_txt = REPO_ROOT / "dist" / "images.txt"
+    images_txt.write_text(render_mod.render_images_txt(p), encoding="utf-8")
+    print(f"== 镜像清单: {images_txt} ==")
     readme_html = render_mod.render_readme_html(
         p, REPO_ROOT / "dist" / "readme.html"
     )
@@ -167,6 +177,8 @@ def main():
         "src_tgz": src_tgz,
         "images_tgz": images_tgz,
         "install_sh": install_sh,
+        "clean_sh": clean_sh,
+        "images_txt": images_txt,
         "readme_html": readme_html,
         "devcontainer_json": devcontainer_json,
         "framework_tgz": framework_tgz,

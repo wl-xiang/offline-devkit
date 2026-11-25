@@ -30,8 +30,8 @@ WORKDIR /app
 
 # ---- 默认启动脚本（镜像 ENTRYPOINT）----
 # 默认行为：cd /app 后运行预置入口（python main.py / go run main.go）。
-# docker-compose.yml 把项目根的 docker-run.sh 只读挂载覆盖镜像内副本，
-# 修改启动方式直接改项目根的 docker-run.sh 即可，无需重建镜像。
+# docker-compose.yml 把 docker/ 目录的 docker-run.sh 只读挂载覆盖镜像内副本，
+# 修改启动方式直接改 docker/docker-run.sh 即可，无需重建镜像。
 # CMD ["bash"] 供 make shell / dev 服务使用（docker-run.sh 会透传参数 exec bash）。
 COPY docker-run.sh {{DOCKER_RUN_CONTAINER_PATH}}
 RUN chmod 755 {{DOCKER_RUN_CONTAINER_PATH}}

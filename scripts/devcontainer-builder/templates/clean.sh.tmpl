@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# 由 scripts/devcontainer-builder 生成（时间戳: {{TS}}，镜像 TAG: {{TAG}}），请勿手工编辑。
+#
+# 用途：与 install.sh 同目录分发（bundle zip 解压后的 downloads/ 目录），
+# 一键清理本 devcontainer 的容器与镜像：
+#   1. 先尝试在项目根（脚本所在目录的上一级）执行 docker compose down——
+#      成功则容器已全部停止并移除，无需再手动 stop / rm；
+#      compose 不可用或失败时，按 images.txt 逐镜像查找并停止/删除其容器；
+#   2. 按 images.txt 逐个 docker rmi 删除镜像（本机不存在的自动跳过）。
+#
+# 用法（在 downloads/ 中执行，无需进入项目根）:
+#     bash clean.sh          # compose down（或按镜像清容器）+ 删除 images.txt 中的镜像
+#     ./clean.sh             # 保留可执行权限时可直接执行
+#     bash clean.sh -h       # 查看帮助
+#
+# 说明:
+#   - 清理后可用 install.sh --load-only 或 docker load -i 重新导入镜像归档；
+#   - DB 数据目录（项目根 volumes/）不会被删除，如需一并清理请手动处理；
+#   - 项目根 docker/docker-compose.yml 缺失时跳过 compose down，直接按镜像清容器。
+set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
+ROOT="$SCRIPT_DIR/.."
+IMAGES_FILE="$SCRIPT_DIR/images.txt"
+
+usage() {
+    cat <<'EOF'
+用法: bash clean.sh [-h|--help]
+
+一键清理本 devcontainer 的容器与镜像（脚本与 images.txt / install.sh 同目录，
+位于项目根的 downloads/ 下）：
+  1. 先尝试在项目根执行 docker compose down（成功则容器已停止并移除）；
+     失败时按 images.txt 逐镜像 stop / rm 其容器；
+  2. 按 images.txt 逐个 docker rmi 删除镜像（本机不存在的自动跳过）。
+
+选项:
+  -h, --help   显示本帮助并退出
+
+说明:
+  清理后可用 install.sh --load-only 或 docker load -i 重新导入镜像归档。
+  DB 数据目录（项目根 volumes/）不会被删除。
+EOF
+}
+
+case "${1:-}" in
+    -h|--help) usage; exit 0 ;;
+    "") ;;
+    *) printf '错误: 未知参数: %s（用 -h 查看用法）\n' "$1" >&2; exit 2 ;;
+esac
+
+command -v docker >/dev/null 2>&1 \
+    || { printf '错误: 未检测到 docker 命令\n' >&2; exit 1; }
+[ -f "$IMAGES_FILE" ] \
+    || { printf '错误: 未找到镜像清单 %s（需与本脚本放在同一目录）\n' "$IMAGES_FILE" >&2; exit 1; }
+
+# 读取镜像清单（去重、忽略空行与注释）
+images=()
+while IFS= read -r img; do
+    [ -n "$img" ] || continue
+    case "$img" in '#'*) continue ;; esac
+    case " ${images[*]-} " in *" $img "*) continue ;; esac
+    images+=("$img")
+done < "$IMAGES_FILE"
+
+if [ "${#images[@]}" -eq 0 ]; then
+    printf '错误: %s 中没有镜像清单\n' "$IMAGES_FILE" >&2
+    exit 1
+fi
+
+ROOT_ABS=$(cd "$ROOT" && pwd -P)
+compose_down_done=0
+if [ -f "$ROOT_ABS/docker/docker-compose.yml" ]; then
+    echo "== 尝试 docker compose down（项目根: $ROOT_ABS）=="
+    if (cd "$ROOT_ABS" && docker compose down); then
+        compose_down_done=1
+    elif (cd "$ROOT_ABS" && docker compose -f docker/docker-compose.yml down); then
+        compose_down_done=1
+    elif (cd "$ROOT_ABS" && docker-compose down); then
+        compose_down_done=1
+    elif (cd "$ROOT_ABS" && docker-compose -f docker/docker-compose.yml down); then
+        compose_down_done=1
+    else
+        echo "  compose down 失败（服务未启动 / compose 不可用），改为按镜像清理容器"
+    fi
+else
+    echo "未找到 $ROOT_ABS/docker/docker-compose.yml，跳过 compose down，直接按镜像清理容器"
+fi
+
+# compose down 未成功时（或 compose 文件缺失时）：按镜像逐个停止并移除容器
+if [ "$compose_down_done" -ne 1 ]; then
+    echo "== 按 images.txt 停止并移除容器 =="
+    for img in "${images[@]}"; do
+        ids=$(docker ps -aq --filter "ancestor=$img" 2>/dev/null || true)
+        [ -n "$ids" ] || continue
+        for id in $ids; do
+            docker stop "$id" >/dev/null 2>&1 || true
+            if docker rm -f "$id" >/dev/null 2>&1; then
+                echo "  已移除容器 $id（镜像 $img）"
+            fi
+        done
+    done
+fi
+
+echo "== 删除镜像（images.txt）=="
+failed=0
+for img in "${images[@]}"; do
+    if ! docker image inspect "$img" >/dev/null 2>&1; then
+        echo "  跳过  $img（本机不存在）"
+        continue
+    fi
+    if docker rmi -f "$img" >/dev/null 2>&1; then
+        echo "  已删除  $img"
+    else
+        echo "  失败    $img（可能仍被其他容器使用，请先停止相关容器）" >&2
+        failed=1
+    fi
+done
+
+if [ "$failed" -ne 0 ]; then
+    printf '== 部分镜像删除失败 ==\n' >&2
+    exit 1
+fi
+echo "== 清理完成（重新导入镜像: bash install.sh --load-only 或 docker load -i 镜像归档）=="

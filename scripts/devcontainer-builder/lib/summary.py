@@ -38,6 +38,8 @@ def build_markdown(p, results):
     install_sh = results.get("install_sh")
     readme_html = results.get("readme_html")
     devcontainer_json = results.get("devcontainer_json")
+    clean_sh = results.get("clean_sh")
+    images_txt = results.get("images_txt")
     framework_tgz = results.get("framework_tgz")
     skipped_docker = results.get("skipped_docker", False)
     bundle_name = p.bundle_name
@@ -111,7 +113,8 @@ def build_markdown(p, results):
         out.append(f"| npm 全局预装包 | {npm_pkg_summary} |")
         out.append(
             f"| npm 离线包目录 | `${{NPM_PACKAGES_DIR:-{p.npm_packages_dir}}}`"
-            " → `/opt/npm-packages`（只读挂载） |"
+            " → `/opt/npm-packages`（只读挂载；相对值相对 docker/ 目录解析，"
+            f"默认 docker/{p.npm_packages_dir}） |"
         )
     env_summary = ", ".join(f"`{k}`" for k, _v in p.preset_env_pairs) or "(无)"
     out.append(f"| 预设环境变量 (app/dev) | {env_summary} |")
@@ -219,6 +222,17 @@ def build_markdown(p, results):
             f"| {human_size(devcontainer_json.stat().st_size)} "
             f"| `{sha256_of(devcontainer_json)}` |"
         )
+    if clean_sh:
+        out.append(
+            f"| {clean_sh.name}（一键清理脚本：compose down + 按 images.txt "
+            "删除容器/镜像，与 install.sh 同目录使用） "
+            f"| {human_size(clean_sh.stat().st_size)} | `{sha256_of(clean_sh)}` |"
+        )
+    if images_txt:
+        out.append(
+            f"| {images_txt.name}（镜像清单，clean.sh 清理用） "
+            f"| {human_size(images_txt.stat().st_size)} | `{sha256_of(images_txt)}` |"
+        )
     if framework_tgz:
         out.append(
             f"| {framework_tgz.name}（前端框架离线包，install.sh 安装到"
@@ -251,16 +265,17 @@ def build_markdown(p, results):
     out.append("bash install.sh ../                     # 参数 ../ 即项目根目录（或改用上一行的 --load 一步到位）")
     out.append("```")
     out.append("")
-    app_dir_note = "api/ + web/ 两个源码目录" if p.is_api_web else "app/ 源码目录"
-    out.append("   install.sh 会把 `Makefile` / `build.sh` / `Dockerfile`"
+    app_dir_note = "api/ + web/ 两个源码目录" if p.is_febe_separation else "app/ 源码目录"
+    out.append("   install.sh 会把 `Makefile` / `AGENTS.md` / `devcontainer.json` /"
+               " `.dockerignore` / `.gitignore` 安装到项目根，把 `Dockerfile`"
                "（联网重建版）/ `Dockerfile.addon`（离线补装，build.sh 引用）/"
-               " `requirements.txt` / `docker-run.sh` / `devcontainer.json` /"
-               " `.dockerignore` / `.gitignore` 安装到项目根"
-               "目录（同名文件已存在时终止安装），把部署辅助脚本 `manifest.txt` /"
+               " `build.sh` / `docker-run.sh` / `init-deps.sh` /"
+               " `docker-compose.yml` / `.env.example` 安装到项目根 `docker/`"
+               " 目录（compose 项目目录），把 `requirements.txt` 安装到应用源码"
+               " 目录（同名文件已存在时终止安装），把部署辅助脚本 `manifest.txt` /"
                " `push-bundle.sh` / `apply-bundle.sh` / `rollback-bundle.sh` /"
                " `clean-images.sh` 安装到"
-               " 项目根 `scripts/`（同名冲突时终止安装），根目录 `.env.example`"
-               "（docker-compose.yml 运行时变量模板）仅在缺失时安装；"
+               " 项目根 `scripts/`（同名冲突时终止安装）；"
                f"准备 {app_dir_note}并放置占位入口，把快速上手说明安装为"
                " `docs/DEVCONTAINER.md`"
                + ("，创建 `nginx/` 配置模板目录" if p.enable_nginx else "") + "。")
@@ -317,7 +332,7 @@ def build_markdown(p, results):
     if p.nginx_service_mode:
         out.append("nginx 已启用（独立服务）: 宿主机 `http://<host>:8080` → 容器 80 端口；"
                    "配置模板在项目根 `nginx/default.conf`（挂载进 nginx 容器）。")
-        if p.is_api_web:
+        if p.is_febe_separation:
             out.append("`web/dist` 静态产物挂载到 nginx 容器 `/usr/share/nginx/html`；"
                        "`/api/` 反代到 app 容器端口。")
         out.append("")
@@ -367,16 +382,20 @@ def build_markdown(p, results):
                    " `/opt/npm-packages`：")
         out.append("")
         out.append("```bash")
-        out.append(f"# 1. 把 Npm Download 产物的 packages/ 内容放到项目根 {p.npm_packages_dir}/")
-        out.append(f"ls {p.npm_packages_dir}/*.tgz")
+        host_dir = (p.npm_packages_dir if p.npm_packages_dir.startswith("/")
+                    else f"docker/{p.npm_packages_dir}")
+        out.append(f"# 1. 把 Npm Download 产物的 packages/ 内容放到 {host_dir}/"
+                   "（目录不存在先 bash docker/init-deps.sh）")
+        out.append(f"ls {host_dir}/*.tgz")
         out.append("# 2. 离线安装依赖到 /app")
         out.append("make npm-install")
-        out.append("# 3. 启动前端开发服务器：把项目根 docker-run.sh 的默认命令改为 npm run dev -- --host 0.0.0.0、")
+        out.append("# 3. 启动前端开发服务器：把 docker/docker-run.sh 的默认命令改为 npm run dev -- --host 0.0.0.0、")
         out.append("#    app_port 设为 5173:5173（vite）/ 8080:8080（webpack）后 make up；临时调试可用：")
         out.append("#    docker compose run --rm -p 5173:5173 dev npm run dev -- --host 0.0.0.0")
         out.append("```")
         out.append("")
-        out.append(f"离线包目录可用 `NPM_PACKAGES_DIR` 覆盖（默认 `{p.npm_packages_dir}`）。")
+        out.append(f"离线包目录可用 `NPM_PACKAGES_DIR` 覆盖（默认 `{p.npm_packages_dir}`，"
+                   "相对值相对 docker/ 目录解析）。")
         out.append("")
     out.append("> 完整手册见仓库 `docs/offline-devcontainer.md`。")
     out.append("")
@@ -425,6 +444,12 @@ def emit(p, results):
         if devcontainer_json:
             entries.append(("devcontainer_json", str(devcontainer_json)))
             entries.append(("devcontainer_json_name", devcontainer_json.name))
+        clean_sh = results.get("clean_sh")
+        if clean_sh:
+            entries.append(("clean_sh", str(clean_sh)))
+        images_txt = results.get("images_txt")
+        if images_txt:
+            entries.append(("images_txt", str(images_txt)))
         framework_tgz = results.get("framework_tgz")
         if framework_tgz:
             entries.append(("framework_tgz", str(framework_tgz)))

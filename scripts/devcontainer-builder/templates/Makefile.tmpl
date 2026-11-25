@@ -1,10 +1,11 @@
 # 由 scripts/devcontainer-builder 生成，请勿手工编辑。
 # 平台: {{DOCKER_PLATFORM}} | 镜像 TAG: {{TAG}}（时间戳: {{TS}}）
 # 本文件由 install.sh 安装到项目根目录（src root），所有 make 命令都在
-# 项目根目录执行；docker-compose.yml 也在项目根目录（install.sh 复制生成），
-# 挂载默认 ${SRC_ROOT:-./{{APP_DIR}}/}（可用环境变量 SRC_ROOT 覆盖）。
+# 项目根目录执行；docker-compose.yml 在 docker/ 目录（install.sh 复制生成），
+# compose 项目目录 = docker/，挂载默认 ${SRC_ROOT:-../{{APP_DIR}}/}
+# （相对 docker/ 解析，../ 即项目根；可用环境变量 SRC_ROOT 覆盖）。
 
-COMPOSE_FILE := $(abspath docker-compose.yml)
+COMPOSE_FILE := $(abspath docker/docker-compose.yml)
 COMPOSE := docker compose -f $(COMPOSE_FILE)
 DEV_RUN := $(COMPOSE) run --rm dev
 IMAGES := {{IMAGE_LIST}}
