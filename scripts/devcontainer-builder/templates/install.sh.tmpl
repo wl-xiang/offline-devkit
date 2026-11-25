@@ -113,8 +113,9 @@ ${C_BOLD}选项:${C_RESET}
                                为 dev 镜像）
                         sidecar 镜像（nginx / postgres / mysql / mongo /
                         v-push 运行环境，如已打包）在任何 target 下都会一并
-                        导入；v-push 运行镜像（tag 固定为版本号）本机已存在
-                        同版本时自动跳过其导入（all 全量导入同样生效）。
+                        导入；v-push 运行镜像（固定名 {{SYNC_IMAGE}}）本机已
+                        存在时自动跳过该镜像的导入（只影响这一个镜像，其余
+                        镜像照常导入，all 全量导入同样生效）。
   -h, --help            显示本帮助并退出。
 
 ${C_BOLD}示例:${C_RESET}
@@ -164,13 +165,13 @@ find_images_tgz() {
 
 load_images_all() {
     local img_tgz=$1
-    # v-push 运行镜像 tag 固定为版本号：本机已存在同版本镜像时跳过其导入
-    # （归档内其余镜像经条目筛选后照常导入，避免重复解包覆盖）
+    # v-push 运行镜像固定名 devcontainer-vpush:py311：本机已存在时只跳过该镜像，
+    # 归档内其余镜像（app/dev/nginx/db 等）经条目筛选后照常导入
     if [ "{{SYNC_ENABLED}}" = "1" ] \
         && docker image inspect "{{SYNC_IMAGE}}" >/dev/null 2>&1; then
-        note "检测到 v-push 运行镜像 {{SYNC_IMAGE}} 已存在（版本一致），跳过其导入"
+        note "检测到 v-push 运行镜像 {{SYNC_IMAGE}} 已存在，跳过该镜像导入（其余镜像照常导入）"
         _load_subset "$img_tgz" exclude "{{SYNC_IMAGE}}"
-        ok "已导入 ${C_BOLD}${img_tgz}${C_RESET}（除 v-push 运行镜像）"
+        ok "已导入 ${C_BOLD}${img_tgz}${C_RESET}（仅跳过 v-push 运行镜像）"
         return
     fi
     step "导入镜像归档（docker load，全部镜像）"
@@ -200,7 +201,11 @@ _load_subset() {
         exit 1
     fi
     # 每行一个 {...} 条目，按 mode 过滤（匹配 RepoTags 中的带引号镜像名）
-    printf '%s' "$manifest" | sed 's/},{/}\n{/g' > "$tmp/entries.raw"
+    # 先去掉 JSON 数组的外层 [ ]，再按 },{ 拆分——否则首行残留 `[`、末行残留
+    # `]`，拼接后会变成 `[[{...}]` 这类非法 manifest.json
+    printf '%s' "$manifest" | tr -d '\n\r' \
+        | sed -e 's/^[[:space:]]*\[//' -e 's/\][[:space:]]*$//' -e 's/},{/}\n{/g' \
+        > "$tmp/entries.raw"
     local -a greps=()
     local t
     for t in "$@"; do greps+=(-e "\"$t\""); done
@@ -220,25 +225,28 @@ _load_subset() {
     fi
     # 重写 manifest.json：仅保留参与导入的条目（数组内逗号拼接）
     { printf '['; paste -sd, "$tmp/entries.keep"; printf ']'; } > "$tmp/manifest.json"
-    # 收集参与条目的 config 与 layer 文件
-    local -a keep=("manifest.json")
+    # 收集参与条目的 config 与 layer 文件。注意不能把 manifest.json 放进解包
+    # 列表——否则会从原归档解出原清单、覆盖上面重写的筛选结果（导致“跳过某个
+    # 镜像”实际不生效）。manifest.json 只使用重写后的版本。
+    local -a extract=()
     local entry
     while IFS= read -r entry; do
         [ -n "$entry" ] || continue
         cfg=$(printf '%s' "$entry" | sed -n 's/.*"Config": *"\([^"]*\)".*/\1/p')
-        [ -n "$cfg" ] && keep+=("$cfg")
+        [ -n "$cfg" ] && extract+=("$cfg")
         while IFS= read -r layer; do
-            [ -n "$layer" ] && keep+=("$layer")
+            [ -n "$layer" ] && extract+=("$layer")
         done < <(printf '%s' "$entry" \
             | grep -o '"Layers": *\[[^]]*\]' \
             | sed -e 's/^"Layers": *\[//' -e 's/\]$//' -e 's/","/\n/g' -e 's/"//g' \
             || true)
     done < "$tmp/entries.keep"
-    printf '%s\n' "${keep[@]}" | awk 'NF' | sort -u > "$tmp/files.list"
+    printf '%s\n' "${extract[@]:-}" | awk 'NF' | sort -u > "$tmp/files.extract"
     step "筛选导入归档条目（$mode: $*）"
-    tar xzf "$img_tgz" -C "$tmp" -T "$tmp/files.list" \
+    tar xzf "$img_tgz" -C "$tmp" -T "$tmp/files.extract" \
         || { err "解包镜像归档失败（按条件导入）"; exit 1; }
-    tar cf - -C "$tmp" -T "$tmp/files.list" | docker load
+    # 归档内 manifest.json（重写版）+ 参与条目的 config/layer → docker load
+    tar cf - -C "$tmp" manifest.json -T "$tmp/files.extract" | docker load
     ok "已按条件导入 ${C_BOLD}$img_tgz${C_RESET}"
 }
 
@@ -258,10 +266,12 @@ load_images() {
     esac
     local w
     for w in {{SIDECAR_IMAGES}}; do
-        # v-push 运行镜像 tag 固定为版本号，本机已存在时直接判定可跳过
-        if [ "$w" = "{{SYNC_IMAGE}}" ] \
+        # 仅对 v-push 运行镜像（固定名）做“本机已存在则跳过”判断；
+        # 其余 sidecar（nginx / db 等）与目标镜像始终参与导入
+        if [ "{{SYNC_ENABLED}}" = "1" ] \
+            && [ "$w" = "{{SYNC_IMAGE}}" ] \
             && docker image inspect "$w" >/dev/null 2>&1; then
-            note "检测到 v-push 运行镜像 $w 已存在（版本一致），跳过其导入"
+            note "检测到 v-push 运行镜像 $w 已存在，跳过该镜像导入（其余镜像照常导入）"
             continue
         fi
         want+=("$w")

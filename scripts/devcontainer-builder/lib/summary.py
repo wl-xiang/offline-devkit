@@ -102,7 +102,7 @@ def build_markdown(p, results):
     if p.enable_sync_tool:
         out.append(
             "| 代码同步工具 (v-push) | 已启用：`python:3.11-slim` + paramiko"
-            f"（`{p.sync_image}`，tag 固定版本号；compose 服务 `v-push` / "
+            f"（`{p.sync_image}`，固定镜像名；compose 服务 `v-push` / "
             "profile `v-push`，`make v-push` 容器内执行） |"
         )
     else:

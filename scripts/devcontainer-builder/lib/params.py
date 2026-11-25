@@ -123,11 +123,13 @@ NPM_PACKAGES_CONTAINER_DIR = "/opt/npm-packages"
 # 代码同步工具（v-push）运行环境：enable_sync_tool 勾选时构建的最小 Python 镜像
 # （构建期联网安装 paramiko），以 compose 服务 `v-push`（profile=v-push）运行
 # scripts/push-bundle.sh，宿主机无需 Python/paramiko。
-# 镜像名 <前缀>-vpush:<SYNC_IMAGE_VERSION>：tag 固定为版本号，不随 image_tag
-# （latest/timestamp）变化；仅当运行环境本身变更（基础镜像/pip 依赖）时才
-# 递增版本号——install.sh 据此判定本机是否已装同版本镜像并跳过其导入。
+# 镜像名固定为 devcontainer-vpush:py311，与 image_prefix / image_tag 无关：
+# 该镜像只提供 Python 3.11 + paramiko，可在多个 devcontainer 之间复用；仅当
+# 运行环境本身变更（基础镜像 / Python 版本 / paramiko 依赖）时才更新 tag。
+# install.sh 据此判定本机是否已装同版本镜像并跳过其导入（只作用于该镜像）。
 SYNC_BASE_IMAGE = "python:3.11-slim-bookworm"
-SYNC_IMAGE_VERSION = "1.0.0"
+SYNC_IMAGE_NAME = "devcontainer-vpush"
+SYNC_IMAGE_TAG = "py311"
 SYNC_CONTAINER_WORKDIR = "/project"
 SYNC_CONTAINER_HOME = "/home/push"
 
@@ -441,9 +443,10 @@ class Params:
 
     @property
     def sync_image(self):
-        """代码同步工具（v-push）镜像：<前缀>-vpush:<固定版本号>
-        （python3.11-slim + paramiko；tag 不随 image_tag 变化）。"""
-        return f"{self.image_prefix}-vpush:{SYNC_IMAGE_VERSION}"
+        """代码同步工具（v-push）镜像：devcontainer-vpush:py311
+        （python3.11-slim + paramiko；镜像名与 image_prefix/tag 无关，多套
+        devcontainer 共用，运行环境变更时才更新 tag）。"""
+        return f"{SYNC_IMAGE_NAME}:{SYNC_IMAGE_TAG}"
 
     @property
     def arch_label(self):

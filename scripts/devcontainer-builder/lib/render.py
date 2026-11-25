@@ -64,13 +64,15 @@ _DEV_SERVICE_TMPL = """\
 """
 
 # compose 中的 v-push 服务（enable_sync_tool）：最小 Python 镜像（内置 paramiko，
-# tag 固定为版本号），单独 profile=v-push，仅 `make v-push` 激活；一次性运行
-# （restart: "no"）。项目根（含 scripts/、scripts/manifest.txt、.env、bundles/）
-# 读写挂载到 /project，v-push 在容器内按清单打包并把 bundle 写回宿主机 ./bundles/。
+# 固定名 devcontainer-vpush:py311，与 image_prefix/image_tag 无关），单独
+# profile=v-push，仅 `make v-push` 激活；一次性运行（restart: "no"）。项目根
+# （含 scripts/、scripts/manifest.txt、.env、bundles/）读写挂载到 /project，
+# v-push 在容器内按清单打包并把 bundle 写回宿主机 ./bundles/。
 # 宿主机 ~/.ssh 只读挂载供 sshkey 鉴权（password 方式不使用其内容）。
 _PUSH_SERVICE_TMPL = """\
   # 代码同步工具运行环境（enable_sync_tool）：最小 Python 镜像（内置 paramiko），
-  # 镜像 tag 固定为版本号（不随 image_tag 的 latest/timestamp 变化）。
+  # 镜像名固定为 {{SYNC_IMAGE}}（不随 image_prefix / image_tag 变化，多套
+  # devcontainer 共用）。
   # 仅 profile=v-push（`make v-push`）激活，一次性运行（restart: "no"）。
   v-push:
     image: {{SYNC_IMAGE}}
@@ -416,8 +418,9 @@ def _sidecar_images(p):
     无论 dev/prod/app 都会一并导入）：独立 nginx 服务 + DB 服务。"""
     images = []
     if p.enable_sync_tool:
-        # v-push 运行环境镜像：本地构建（tag 固定版本号），任何 --load-target
-        # 都会一并导入；install.sh 在本机已存在同版本镜像时自动跳过其导入
+        # v-push 运行环境镜像：固定名 devcontainer-vpush:py311，本地构建，
+        # 任何 --load-target 都会一并导入；install.sh 在本机已存在该镜像时
+        # 只跳过这一个镜像的导入（其余镜像照常导入）
         images.append(p.sync_image)
     if p.nginx_service_mode:
         images.append(NGINX_IMAGE)
@@ -1072,9 +1075,10 @@ def render_dockerfile_push(p):
     """代码同步工具（v-push）运行环境镜像：最小 python:3.11-slim + paramiko。
 
     仅供构建端使用（构建期联网 pip install，运行期离线）：镜像随镜像归档分发，
-    tag 固定为 SYNC_IMAGE_VERSION（不随 image_tag 变化），compose 的 v-push 服务
-    （profile=v-push）直接使用，宿主机无需 Python/paramiko。运行环境变更时
-    递增 SYNC_IMAGE_VERSION 后重新构建即可。
+    名字固定为 devcontainer-vpush:py311（与 image_prefix / image_tag 无关），
+    compose 的 v-push 服务（profile=v-push）直接使用，宿主机无需 Python/paramiko。
+    运行环境变更（基础镜像 / Python 版本 / paramiko）时更新 SYNC_IMAGE_TAG 后
+    重新构建即可。
     """
     if not p.enable_sync_tool:
         return ""
@@ -1172,7 +1176,7 @@ def _sync_notice_block(p):
     return f'''
 echo ""
 printf '%s\\n' "${{C_BOLD}}代码同步工具运行环境（v-push profile，本包已启用）${{C_RESET}}"
-note "镜像 {p.sync_image}（python:3.11-slim + paramiko，tag 固定版本号）随镜像归档导入，本机无需 Python/paramiko"
+note "镜像 {p.sync_image}（python:3.11-slim + paramiko）随镜像归档导入，本机无需 Python/paramiko"
 note "1. cp scripts/.env.example scripts/.env 填写 SYNC_REMOTE_HOST/USER/PASSWORD(或 KEY)/PATH"
 note "2. make v-push ARGS=\\"-y\\"  # 在 v-push 容器内执行 scripts/push-bundle.sh（一次性，--rm）"
 note "本地已装 Python 3.8+ 与 paramiko 时仍可用 make push（宿主机直接执行）"
@@ -1668,7 +1672,9 @@ def _agent_readme_section(p):
 | --- | --- |
 {table}
 
-- 容器把项目根目录挂载为 `/app`，工作目录固定 `/app`；容器内修改会直接写回宿主机。
+- 容器把应用源码目录（`app/`，febe_separation 布局为 `api/`；app_source_dir
+  指定子目录时以该子目录为准）挂载为 `/app`，工作目录固定 `/app`；容器内修改
+  会直接写回宿主机。命令里的脚本路径相对该目录写（`app/test1.py` → `test1.py`）。
 - **宿主机即使存在 `python` / `pytest` / `npm`，也不要用来运行项目代码或安装依赖**：
   宿主环境与镜像不一致，所有验证都应以容器内结果为准。
 - 非交互场景（Agent / CI）请用 `{run} <命令>`{equiv}；`make shell` / `bash` 交互式

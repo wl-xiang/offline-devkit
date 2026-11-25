@@ -401,12 +401,12 @@ jobs:
               || { echo "::error::compose 模板缺少 v-push 服务"; exit 1; }
             grep -q 'restart: "no"' /tmp/compose.start.tpl \
               || { echo "::error::v-push 服务缺少 restart: \"no\"（一次性运行）"; exit 1; }
-            # v-push 镜像 tag 固定为版本号，不得使用 latest/timestamp
-            if grep -qE -- '-vpush:(latest|timestamp)' /tmp/compose.start.tpl; then
-              echo "::error::v-push 镜像 tag 必须固定为版本号，不得使用 latest/timestamp"; exit 1
+            # v-push 镜像名固定为 devcontainer-vpush:py311（与 image_prefix/image_tag 无关）
+            grep -q 'image: devcontainer-vpush:py311' /tmp/compose.start.tpl \
+              || { echo "::error::compose 模板缺少固定镜像名 devcontainer-vpush:py311"; exit 1; }
+            if grep -qE 'devcontainer-vpush:(latest|timestamp)' /tmp/compose.start.tpl; then
+              echo "::error::v-push 镜像 tag 必须固定为 py311，不得使用 latest/timestamp"; exit 1
             fi
-            grep -qE -- '-vpush:[0-9]+\.' /tmp/compose.start.tpl \
-              || { echo "::error::compose 模板缺少固定版本号的 v-push 镜像（-vpush:<版本>）"; exit 1; }
           fi
           # 离线补装机制（build.sh + Dockerfile.addon）
           grep -q 'devcontainer-src/Dockerfile.addon$' /tmp/src_tgz.list \

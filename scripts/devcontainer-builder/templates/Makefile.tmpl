@@ -11,9 +11,13 @@ DEV_RUN := $(COMPOSE) run --rm dev
 IMAGES := {{IMAGE_LIST}}
 
 # ---- 一次性运行（run）参数解析 ----
-# make run dev python app/test1.py
-#   等价于 docker compose run --rm dev python app/test1.py
-# 第一个参数是 compose 服务名（dev / app，缺省 dev），其后为容器内命令；
+# make run dev python test1.py
+#   等价于 docker compose run --rm dev python test1.py
+# 第一个参数是 compose 服务名（dev / app，缺省 dev），其后为容器内命令。
+# 容器工作目录 /app 就是挂载的应用源码目录（single_app=app/，febe_separation
+# =api/；app_source_dir 指定子目录时以该子目录为准），因此脚本路径相对该目录
+# 写：宿主机 app/test1.py → make run dev python test1.py（只有 app/app/ 这类
+# 嵌套子目录才需要额外前缀）。
 # run 只运行一次：自动带 --rm（容器退出即删除），失败也不会重启（区别于
 # make up 的 restart 策略）。
 # make 会把 run 之后的所有词都当作“目标”，这里把它们解析为服务名 + 命令，
