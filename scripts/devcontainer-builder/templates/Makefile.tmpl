@@ -10,6 +10,21 @@ COMPOSE := docker compose -f $(COMPOSE_FILE)
 DEV_RUN := $(COMPOSE) run --rm dev
 IMAGES := {{IMAGE_LIST}}
 
+# ---- 一次性运行（run）参数解析 ----
+# make run dev python app/test1.py
+#   等价于 docker compose run --rm dev python app/test1.py
+# 第一个参数是 compose 服务名（dev / app，缺省 dev），其后为容器内命令；
+# run 只运行一次：自动带 --rm（容器退出即删除），失败也不会重启（区别于
+# make up 的 restart 策略）。
+# make 会把 run 之后的所有词都当作“目标”，这里把它们解析为服务名 + 命令，
+# 并在文件末尾声明为空规则，避免 make 尝试构建 python / test1.py 等目标。
+RUN_MODE := $(if $(filter run,$(firstword $(MAKECMDGOALS))),1)
+ifeq ($(RUN_MODE),1)
+RUN_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+RUN_SERVICE := $(or $(word 1,$(RUN_ARGS)),dev)
+RUN_CMD := $(wordlist 2,$(words $(RUN_ARGS)),$(RUN_ARGS))
+endif
+
 # 目标参数透传：make ps ARGS="-a" / make exec SERVICE=dev ARGS="bash -l"
 #                  make push ARGS="-y" / make apply ARGS="-y" 或
 #                  make apply ARGS="bundles/bundle_xxx.tgz" / make rollback ARGS="-y"
@@ -79,3 +94,11 @@ clean: ## 清除 compose 声明的镜像（make clean ARGS="--no-name" 清除悬
 	./scripts/clean-images.sh $(ARGS)
 
 {{DEV_TARGETS}}{{NPM_TARGETS}}.PHONY: help check build up down ps exec logs push apply rollback clean {{PHONY_DEV}}{{PHONY_NPM}}
+
+# run 的服务名与命令只是 make 的目标占位（解析见文件顶部 RUN_*），
+# 声明为空规则，避免 make 报 "No rule to make target 'python'" 之类错误。
+ifeq ($(RUN_MODE),1)
+ifneq ($(strip $(RUN_ARGS)),)
+$(eval $(RUN_ARGS):;@:)
+endif
+endif

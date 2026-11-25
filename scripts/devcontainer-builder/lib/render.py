@@ -68,10 +68,16 @@ check-dev: ## 检查 dev 镜像是否已导入（离线环境不会自行构建�
 \t\texit 1; \\
 \t}
 
-shell: check-dev ## 进入 dev 容器交互式 bash
-\t$(DEV_RUN)
-
+# run 模式下 dev 也是参数（compose 服务名），抑制其作为目标执行
+ifneq ($(RUN_MODE),1)
 dev: check-dev ## 等价于 shell
+\t$(DEV_RUN)
+endif
+
+run: check-dev ## 一次性运行容器内命令：make run dev <命令>（--rm，不重启）
+\t$(COMPOSE) run --rm $(RUN_SERVICE) $(RUN_CMD)
+
+shell: check-dev ## 进入 dev 容器交互式 bash
 \t$(DEV_RUN)
 
 """
@@ -89,7 +95,7 @@ test: check-dev ## 运行 pytest
 
 """
 
-_DEV_PHONY = "check-dev shell dev "
+_DEV_PHONY = "check-dev shell dev run "
 
 _PY_PHONY = "lint compile test "
 

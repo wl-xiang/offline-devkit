@@ -404,6 +404,7 @@ make up && make logs
 | `make down` | 停止并移除容器与网络 |
 | `make ps` | 查看容器状态（可透传参数：`make ps ARGS="-a"`） |
 | `make exec` | 在运行中的容器执行命令：`make exec SERVICE=dev ARGS="bash"`（默认 `SERVICE=app`） |
+| `make run` | **一次性运行**容器内命令：`make run dev python app/test1.py`（等价 `docker compose run --rm dev python app/test1.py`；第一个参数为 compose 服务名，缺省 `dev`，也可 `make run app <命令>`；容器退出即删除、失败不重启） |
 | `make logs` | 跟随查看日志 |
 | `make push` | 执行 `scripts/push-bundle.sh`，按 `scripts/manifest.txt` 清单打包并上传 bundle（参数透传：`make push ARGS="-y"`） |
 | `make apply` | 执行 `scripts/apply-bundle.sh`，默认校验最新 bundle 并按清单覆盖条目（备份到 `bundles/backups/`）；也可用位置参数指定 bundle 路径：`make apply ARGS="bundles/bundle_xxx.tgz"`（参数透传：`make apply ARGS="-y"`） |
@@ -414,10 +415,14 @@ make up && make logs
 | `make compile` | python -m compileall -q . |
 | `make test` | pytest -q |
 
-> `shell` / `dev` 依赖 dev 镜像（`image_mode=prod+dev` 或 `dev-only` 时生成）；
+> `shell` / `dev` / `run` 依赖 dev 镜像（`image_mode=prod+dev` 或 `dev-only` 时生成）；
 > `lint` / `compile` / `test` 目标仅在 target_codec 预装 Python 时生成。上述目标
 > 通过 compose 的 `dev` profile 激活，不影响
 > `make up` 的运行行为。
+>
+> `make run` 中容器工作目录固定为 `/app`（项目根），脚本路径按项目根写，
+> 如 `app/test1.py`；命令带 `-` 开头的参数时用 `--` 分隔，例如
+> `make run dev -- python -V`。
 >
 > 容器默认以当前用户身份运行：Makefile 自动导出 `HOST_UID`/`HOST_GID`
 > （`$(id -u)` / `$(id -g)`），避免挂载目录出现 root 属主文件。临时需要
@@ -434,7 +439,7 @@ install.sh 复制改名而来）包含
 | 目的 | 推荐命令（prod+dev / dev-only） |
 |------|------|
 | 查看 Python 版本 | `docker compose run --rm dev python -V` |
-| 执行 Python 脚本 | `docker compose run --rm dev python path/to/script.py` |
+| 执行 Python 脚本 | `make run dev python path/to/script.py`（等价 `docker compose run --rm dev python path/to/script.py`） |
 | 交互式 shell | `make shell` |
 | 运行测试 | `make test`（单个文件：`docker compose run --rm dev pytest -q tests/test_x.py`） |
 | 静态检查 / 编译检查 | `make lint` / `make compile` |
