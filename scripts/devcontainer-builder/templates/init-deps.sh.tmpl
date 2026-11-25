@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# 由 scripts/devcontainer-builder 生成，请勿手工编辑。
+#
+# 用途：在脚本所在目录（docker/）下生成 deps/ 离线依赖目录结构。
+# 本包不再默认安装 deps/，需要离线补装 Python 包（deps/wheels）或离线安装
+# 前端依赖（deps/packages）时，先在项目根目录执行：
+#     bash docker/init-deps.sh
+#
+# 生成内容：
+#   docker/deps/wheels/requirements.gitkeep.txt   离线安装头（--no-index --find-links=./）；
+#                                                 wheel 放入 deps/wheels/ 后即可
+#                                                 pip install -r 该文件 <包名> 离线安装
+#   docker/deps/packages/packages.gitkeep.json    占位文件；放入 Npm Download Action
+#                                                 产物的 packages/ 内容（*.tgz + package.json）
+#
+# 两个目录就绪后，在项目根目录执行 bash docker/build.sh 即可离线补装。
+# （Artifact 的 zip 解压后可能丢失可执行权限，统一用 `bash docker/init-deps.sh` 调用）
+set -euo pipefail
+
+DIR=$(cd "$(dirname "$0")" && pwd -P)
+
+mkdir -p "$DIR/deps/wheels" "$DIR/deps/packages"
+
+REQ_FILE="$DIR/deps/wheels/requirements.gitkeep.txt"
+if [ ! -e "$REQ_FILE" ]; then
+    printf -- '--no-index --find-links=./\n' > "$REQ_FILE"
+    echo "已创建 $REQ_FILE（离线安装头）"
+fi
+
+PKG_FILE="$DIR/deps/packages/packages.gitkeep.json"
+if [ ! -e "$PKG_FILE" ]; then
+    printf '{}\n' > "$PKG_FILE"
+    echo "已创建 $PKG_FILE（占位；放入 Npm Download 产物的 packages/ 内容）"
+fi
+
+echo "== deps 目录已就绪: $DIR/deps/ =="
+echo "  - Python 补装: 把 *.whl 放到 deps/wheels/ 后执行 bash docker/build.sh"
+echo "  - 前端依赖:   把 Npm Download 产物的 packages/ 内容（*.tgz + package.json）"
+echo "                放到 deps/packages/ 后执行 bash docker/build.sh"

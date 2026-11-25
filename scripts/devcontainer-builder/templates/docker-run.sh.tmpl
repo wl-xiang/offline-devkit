@@ -4,7 +4,7 @@
 #
 # 默认行为：cd /app 后运行预置入口（{{DOCKER_RUN_DEFAULT_COMMAND}}）。
 # 本脚本由 install.sh 安装到项目根目录，docker-compose.yml 把它只读挂载覆盖
-# 镜像内副本 —— 修改项目根的 docker-run.sh 即可自定义启动方式，无需重建镜像。
+# 镜像内副本 —— 修改 docker/docker-run.sh 即可自定义启动方式，无需重建镜像。
 #
 # 带参数调用时透传执行（不改变默认行为）：
 #   docker compose run --rm app python -c "..."   # 临时执行命令

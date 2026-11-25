@@ -2,18 +2,20 @@
 # 平台: {{DOCKER_PLATFORM}} | 镜像 TAG: {{TAG}}（时间戳: {{TS}}）
 # 预装语言环境 (target_codec): {{TARGET_CODEC}} | 源码布局: {{SOURCE_LAYOUT}}
 #   | nginx: {{NGINX_MODE}} | DB 服务: {{ENABLE_DB}}
-# 本模板由 install.sh 原样复制到项目根目录为 docker-compose.yml（去掉 .tpl 后缀）。
-# 模板内环境变量由 docker compose 在运行时解析（冒号杠默认值语法），
-# 可用环境变量覆盖：
-#   ${SRC_ROOT:-./{{APP_DIR}}/}   -> 应用根目录，默认 ./{{APP_DIR}}/ =
-#                                    docker-compose.yml 所在项目根目录下的 {{APP_DIR}} 子目录
+# 本模板由 install.sh 原样复制到 docker/ 目录为 docker-compose.yml（去掉 .tpl
+# 后缀）。compose 项目目录 = 本文件所在目录（docker/），运行时自动读取
+# docker/.env（模板见同目录 .env.example）。模板内相对路径与下列环境变量均
+# 相对 docker/ 解析（../ 即项目根），可用环境变量覆盖：
+#   ${SRC_ROOT:-../{{APP_DIR}}/}  -> 应用根目录，默认 ../{{APP_DIR}}/ =
+#                                    docker/ 上一级（项目根）下的 {{APP_DIR}} 子目录
 #   ${SRC_ROOT_NAME:-app} -> compose 项目名后缀，默认 app
-{{ORACLE_COMPOSE_HINT}}#   ${NPM_PACKAGES_DIR:-deps/packages}
-#                         -> Npm Download 产物目录（预装 Node 时）
+{{ORACLE_COMPOSE_HINT}}#   ${NPM_PACKAGES_DIR:-{{NPM_PACKAGES_DIR}}}
+#                         -> Npm Download 产物目录（预装 Node 时；相对值相对
+#                            docker/ 解析，默认 deps/packages = docker/deps/packages）
 # 离线使用：镜像已由 devcontainer-docker-images_{{ARCH}}_{{TS}}.tgz 导入，
 # pull_policy=never + make up --no-build 不会触发任何联网。
 # 启动方式：镜像 ENTRYPOINT 为 docker-run.sh（默认 cd /app 后运行预置入口），
-# 项目根的 docker-run.sh 已只读挂载覆盖镜像内副本，改根目录脚本即可调整启动
+# docker/docker-run.sh 已只读挂载覆盖镜像内副本，改它即可调整启动
 # 方式，无需重建镜像；enable_db 含 DB 服务时 app 自动 depends_on
 # 服务名 `db`（postgres16/mysql8.4/mongo9 在 compose 中的服务名统一固定为 db）。
 # DB 数据目录：bind mount 到项目根 ./volumes/（pgdata / mysqldata / mongodata），
@@ -23,10 +25,10 @@ services:
   app:
     image: {{APP_IMAGE}}
     build:
-      context: .
-      # 联网重建版 Dockerfile 由 install.sh 安装到项目根（context = 项目根目录，
-      # 其内 COPY requirements.txt）；离线机器无需 build
-      dockerfile: Dockerfile
+      # 联网重建版 Dockerfile 由 install.sh 安装到 docker/（context = 项目根，
+      # 其内 COPY {{APP_DIR}}/requirements.txt）；离线机器无需 build
+      context: ..
+      dockerfile: docker/Dockerfile
       target: {{APP_BUILD_TARGET}}
     working_dir: /app
     restart: unless-stopped

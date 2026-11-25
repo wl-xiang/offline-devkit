@@ -1,0 +1,71 @@
+# AGENTS.md —— AI Agent 使用本 devcontainer 的约定
+
+本文件由 GitHub Action `build-devcontainer` 生成、经 `install.sh` 安装到项目根目录。
+**完整手册见 `docs/DEVCONTAINER.md`（必读）**；本文件只保留 Agent 必须遵守的约定。
+
+## 核心约束：完全离线
+
+- 本环境为**完全离线**开发环境：唯一的运行/测试/部署载体是已导入的容器镜像
+  （应用镜像 `{{APP_IMAGE}}`，TAG `{{TAG}}`）。**禁止任何联网操作**：
+  不执行 `pip install`（无 `--no-index`）、`npm install`（无 `--offline`）、
+  `apt-get`、`curl`/`wget` 下载，不执行 `make build`、`docker compose build`、
+  `docker pull`——离线机器上这些命令要么失败、要么破坏环境。
+- **只能使用容器内已有依赖**（构建时按 workflow 参数预装的 Python/Go/Node
+  运行时、pip/npm 包、ruff/pytest 等工具）。先 `make shell` 进入容器探明
+  已有依赖再写代码。
+- 宿主机即使存在 `python` / `pip` / `pytest` / `npm` / `go`，也**不要**用它们运行
+  项目代码或安装依赖——所有开发、测试、运行、验证一律在容器内完成，
+  以容器内结果为准。
+
+## 目录布局
+
+- `Makefile`（项目根）：所有 make 命令都在**项目根目录**执行。
+- `docker/`：`docker-compose.yml`、`Dockerfile`（联网重建版，离线机器禁用）、
+  `Dockerfile.addon`（离线补装版）、`build.sh`、`docker-run.sh`（容器默认启动
+  脚本，改它即可调整启动命令，无需重建镜像）、`.env.example`（复制为同目录
+  `.env` 生效）、`init-deps.sh`（需要离线依赖目录时生成 `docker/deps/`）。
+- 源码布局 `{{SOURCE_LAYOUT}}`：应用源码在 `{{APP_DIR}}/`（compose 挂载为容器
+  `/app`）{{WEB_DIR_NOTE}}依赖清单 `{{APP_DIR}}/requirements.txt`（预装 Python 时）。
+- `scripts/`：`manifest.txt`（同步清单）、`push-bundle.sh` / `apply-bundle.sh` /
+  `rollback-bundle.sh` / `clean-images.sh`（make push / apply / rollback / clean）。
+- `docs/DEVCONTAINER.md`：完整使用手册；`devcontainer.json`：本次构建的
+  workflow 输入参数快照（重建/换参数的依据）。
+
+## 常用命令（项目根目录执行）
+
+| 目的 | 命令 |
+| --- | --- |
+| 离线自检（镜像已导入、架构匹配） | `make check` |
+| 交互式 shell | `make shell` |
+| 启动 / 日志 / 停止 | `make up` / `make logs` / `make down` |
+| 静态检查 / 编译检查 / 测试（预装 Python 时） | `make lint` / `make compile` / `make test` |
+| 容器内执行任意命令（非交互） | `docker compose run --rm dev <命令>`（或 `app`） |
+| 外挂服务 | {{SERVICES_SUMMARY}}（compose 服务名见 docker/docker-compose.yml） |
+
+非交互场景（Agent / CI）统一用 `docker compose run --rm dev <命令>`；
+不要用 `make shell` / 交互式 bash 等待输入。
+
+## 开发 → 测试 → 部署
+
+1. **开发**：直接编辑 `{{APP_DIR}}/`（容器内 `/app` 实时可见，支持热更新）。
+2. **测试**：容器内跑 `make lint` / `make test`；运行验证用 `make up && make logs`。
+3. **部署**：`make push` 按 `scripts/manifest.txt` 打包并上传到远端服务器
+   （连接信息配置 `scripts/.env`，参考 `scripts/.env.example`）；部署服务器上
+   `make apply` 覆盖清单条目、`make rollback` 回滚。修改过的文件若不在清单内，
+   先把它加入 `scripts/manifest.txt`。
+
+## 缺依赖时的正确做法
+
+- **首选提示用户重建 devcontainer**：如果某个依赖是刚需（或明显更方便），
+  不要绕过离线约束硬写代码——提示用户修改 `./devcontainer.json` 对应的
+  workflow 输入参数（如 `pip_packages` / `npm_packages` / `apt_packages` /
+  `target_codec` 等），在构建端（GitHub Actions → Build DevContainer）按修改后
+  的参数重新构建一个新的 devcontainer bundle，重新 `install.sh` 安装导入，
+  即可继续完全离线开发。
+- **临时补装**（少量 Python 包，无需改参数）：在联网机器用构建仓库的
+  Pip Download Action / `pip_download.py` 下载 wheel → 放入 `docker/deps/wheels/`
+  （目录不存在先 `bash docker/init-deps.sh`）→ 项目根执行
+  `bash docker/build.sh` 生成 addon 镜像，按输出提示切换 `docker/docker-compose.yml`。
+  前端依赖同理放入 `docker/deps/packages/` 后 `bash docker/build.sh`。
+- 不要把临时补装当成长期方案：依赖定型后应更新 `devcontainer.json`
+  参数重新构建，让镜像内置该依赖。

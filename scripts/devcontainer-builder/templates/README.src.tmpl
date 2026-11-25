@@ -6,33 +6,41 @@
 
 安装后的目录布局：
 
-- **项目根目录**：`Makefile`、`Dockerfile`（联网重建版，compose build / make
-  build 使用）、`Dockerfile.addon`（离线补装版，build.sh 引用）、
-  `requirements.txt`（联网重建依赖清单）、`build.sh`、`docker-run.sh`
-  （容器默认启动脚本，compose 只读挂载覆盖镜像内副本，改它即可调整启动方式）、
-  `docker-compose.yml`、`.dockerignore`、`.gitignore`、`.env.example`
-  （docker-compose.yml 运行时变量模板，默认值与 compose 内置默认值一致）、
-  `devcontainer.json`（workflow 输入参数快照）、`deps/wheels/`（离线补装
-  wheel，含离线安装头 requirements.gitkeep.txt）、`deps/packages/`（Npm
-  Download Action 产物内容，前端离线依赖）、`scripts/`（部署辅助脚本：
-  `manifest.txt` 同步清单、`push-bundle.sh` / `apply-bundle.sh` /
-  `rollback-bundle.sh` / `clean-images.sh` 与其变量模板
-  `scripts/.env.example`）。
+- **项目根目录**：`Makefile`（所有 make 命令的执行入口）、`AGENTS.md`
+  （AI Agent 使用约定）、`.dockerignore`（保留在项目根：compose build 的
+  context 是项目根，docker 只按构建上下文根目录查找 .dockerignore）、
+  `.gitignore`、`devcontainer.json`（workflow 输入参数快照，重建 devcontainer
+  时修改参数的依据）。
   —— 你日常操作的位置。
-- **源码目录**：源码布局 `{{SOURCE_LAYOUT}}`。`single` = 单体服务，应用源码在
-  `{{APP_DIR}}/`（compose 默认挂载为容器内 `/app`，install.sh 会按预装语言环境
-  放置占位 `main.py` / `main.go`）；`api_web` = 前后端分离，后端在 `api/`
-  （挂载为 `/app`），前端在 `web/`（构建产物输出到 `web/dist/`，
-  nginx_mode 启用时由 nginx 托管）。
+- **`docker/`**：docker 相关文件集中目录（compose 项目目录）——
+  `docker-compose.yml`、`Dockerfile`（联网重建版，compose build / make build
+  使用，context = 项目根，COPY `{{APP_DIR}}/requirements.txt`）、
+  `Dockerfile.addon`（离线补装版，build.sh 引用）、`build.sh`（离线补装
+  入口，`bash docker/build.sh`）、`docker-run.sh`（容器默认启动脚本，compose
+  只读挂载覆盖镜像内副本，改它即可调整启动方式）、`init-deps.sh`
+  （`bash docker/init-deps.sh` 按需生成 `docker/deps/` 离线依赖目录：
+  `deps/wheels/` 放补装 wheel、`deps/packages/` 放 Npm Download Action 产物）、
+  `.env.example`（docker-compose.yml 运行时变量模板，默认值与 compose 内置
+  默认值一致；复制为同目录 `.env` 生效）。
+- **源码目录**：源码布局 `{{SOURCE_LAYOUT}}`。`single_app` = 单体服务，应用
+  源码在 `{{APP_DIR}}/`（compose 默认挂载为容器内 `/app`，install.sh 会按预装
+  语言环境放置占位 `main.py` / `main.go`；预装 Python 时 `requirements.txt`
+  与预装 Node 时的 `package.json` 也在此目录）；`febe_separation` = 前后端
+  分离，后端在 `api/`（挂载为 `/app`，`requirements.txt` 在此），前端在
+  `web/`（占位 `index.html` 与预装 Node 时的 `package.json` 在此，构建产物
+  输出到 `web/dist/`，nginx_mode 启用时由 nginx 托管）。
 - **`nginx/`**（nginx_mode 启用时）：nginx 配置模板 `default.conf`。
   `nginx_service` 由独立 nginx 服务挂载（宿主机 8080 → 容器 80）；
   `nginx_binary` 时 nginx 已 APT 装进镜像，由 docker-run.sh 启动时拉起
   （对外端口复用 app_port，容器内监听 80）。可直接修改。
 - **`docs/`**：`.gitkeep` 占位文件与本说明（`DEVCONTAINER.md`）。
+- **`scripts/`**（部署辅助脚本）：`manifest.txt` 同步清单、
+  `push-bundle.sh` / `apply-bundle.sh` / `rollback-bundle.sh` /
+  `clean-images.sh` 与其变量模板 `scripts/.env.example`。
 - **`bundles/`**：push/apply/rollback 的 bundle 产物目录——`bundle_*.tgz`、
   `bundle.meta` 与 `backups/`（apply 覆盖前的条目备份）。
-- **`downloads/`**：bundle zip 的解压位置（镜像归档 tgz / src tgz / install.sh /
-  readme.html）。
+- **`downloads/`**：bundle zip 的解压位置（镜像归档 tgz / src tgz /
+  install.sh / clean.sh / images.txt / readme.html）。
 
 | 项目 | 值 |
 | --- | --- |
@@ -87,23 +95,26 @@ make down         # 停止
 {{AGENT_SECTION}}
 ## 说明
 
-- **所有 make / build.sh 命令都在项目根目录执行**：Makefile 与 build.sh 的路径
-  均按执行时的工作目录（pwd）解析。
-- `docker-compose.yml` 位于项目根目录，由 install.sh 从包内
-  `docker-compose.yml.tpl` 原样复制（仅去掉 `.tpl` 后缀，不做渲染）。模板中的
-  环境变量由 docker compose 运行时解析（冒号杠默认值语法）：`${SRC_ROOT:-./{{APP_DIR}}/}`
-  应用根目录（默认 `./{{APP_DIR}}/` = 项目根目录下的 {{APP_DIR}} 子目录，挂载为
-  容器 `/app`）、`${SRC_ROOT_NAME:-app}` compose 项目名后缀。需要调整时可用
-  环境变量覆盖（如 `SRC_ROOT=/path/to/app docker compose up`），或直接改项目
-  根目录的 `docker-compose.yml`。
+- **所有 make / build.sh 命令都在项目根目录执行**：Makefile 的路径按执行时的
+  工作目录（pwd）解析；`build.sh` 位于 `docker/`，按脚本自身位置解析路径，
+  在项目根执行 `bash docker/build.sh` 即可。
+- `docker-compose.yml` 位于 `docker/` 目录（compose 项目目录 = docker/，自动
+  读取 `docker/.env`），由 install.sh 从包内 `docker-compose.yml.tpl` 原样复制
+  （仅去掉 `.tpl` 后缀，不做渲染）。模板中的环境变量由 docker compose 运行时
+  解析（冒号杠默认值语法）：`${SRC_ROOT:-../{{APP_DIR}}/}` 应用根目录（相对
+  docker/ 解析，默认 = 项目根目录下的 {{APP_DIR}} 子目录，挂载为容器 `/app`）、
+  `${SRC_ROOT_NAME:-app}` compose 项目名后缀。需要调整时可用环境变量覆盖
+  （如 `SRC_ROOT=/path/to/app docker compose up`），或直接改
+  `docker/docker-compose.yml`。
 - app 服务的启动方式由镜像 ENTRYPOINT（`docker-run.sh`）承载：默认 `cd /app`
-  后运行预置入口（python main.py / go run main.go）。项目根的 `docker-run.sh`
-  已只读挂载覆盖镜像内副本，改根目录脚本即可调整启动命令，无需重建镜像；
+  后运行预置入口（python main.py / go run main.go）。`docker/docker-run.sh`
+  已只读挂载覆盖镜像内副本，改它即可调整启动命令，无需重建镜像；
   `docker compose run --rm app <命令>` 会透传执行命令（临时调试用）。
-- **两个 Dockerfile 各司其职**：根目录 `Dockerfile` 是联网重建版（compose
-  build / `make build` 使用，COPY 项目根 `requirements.txt`，需外网）；根目录
-  `Dockerfile.addon` 是离线补装版（`bash build.sh` 引用，把 `deps/wheels/`
-  打进现有镜像）。离线机器只使用后者。
+- **两个 Dockerfile 各司其职**：`docker/Dockerfile` 是联网重建版（compose
+  build / `make build` 使用，context = 项目根，COPY 应用源码目录内的
+  `requirements.txt`，需外网）；`docker/Dockerfile.addon` 是离线补装版
+  （`bash docker/build.sh` 引用，把 `docker/deps/wheels/` 打进现有镜像）。
+  离线机器只使用后者。
 - compose 项目名为 `<镜像前缀>-<SRC_ROOT_NAME>`（默认 `<镜像前缀>-app`，
   可用环境变量 `SRC_ROOT_NAME` 覆盖），同一台机器上安装多个应用互不冲突。
 - 容器默认以当前用户身份运行（Makefile 自动导出 `HOST_UID`/`HOST_GID`），
@@ -111,26 +122,31 @@ make down         # 停止
   容器内需要 root 时（如 `pip install` 到系统目录）：
   `make shell HOST_UID=0 HOST_GID=0`。
 - 若应用源码目录缺占位入口，install.sh 会按预装语言环境复制占位 `main.py`
-  （python main.py）或 `main.go`（go run main.go）；api_web 布局另在
-  `web/` 放置占位 `index.html`（与预装 Node 时的 `package.json`）。
-  请替换为你的真实应用入口。
+  （python main.py）或 `main.go`（go run main.go）；febe_separation 布局另在
+  `web/` 放置占位 `index.html`，`package.json`（预装 Node 时）按布局放入
+  `{{APP_DIR}}/`（single_app）或 `web/`（febe_separation）。请替换为你的真实
+  应用入口。
 - `.dockerignore` / `.gitignore` 由 install.sh 安装到项目根目录（已存在时仅
   追加缺失条目）：构建上下文与 git 忽略 `/downloads/`（bundle 产物）、
-  `/bundles/`（同步产物与备份）、`deps/` 内容（离线依赖：deps/wheels、
-  deps/packages，gitkeep 占位文件除外）、`volumes/`（DB 数据目录）、
-  `.addon-build/`（补装构建临时目录）等，避免大文件进入镜像层或被误提交。
+  `/bundles/`（同步产物与备份）、`docker/deps/`（离线依赖，init-deps.sh 生成）、
+  `volumes/`（DB 数据目录）、`.addon-build/`（补装构建临时目录）等，避免大
+  文件进入镜像层或被误提交。
 - **离线补装 Python 包**：发现缺包时，在联网机器用本仓库的
-  `scripts/pip/pip_download.py` 下载 wheel 到项目根目录 `deps/wheels/`，然后在
-  项目根目录执行 `bash build.sh`——基于现有镜像生成 addon 新镜像（prod 为
-  `<镜像前缀>:addon-{{TS}}`，dev 为 `<镜像前缀>-dev:addon-{{TS}}`；wheel 只在
-  构建层临时存在，不会增大镜像体积），按输出的 sed 命令切换项目根目录的
-  `docker-compose.yml` 即可。详见下文「离线补装 Python 包」。
+  `scripts/pip/pip_download.py` 下载 wheel 到 `docker/deps/wheels/`（目录不存在
+  先 `bash docker/init-deps.sh`），然后在项目根目录执行 `bash docker/build.sh`——
+  基于现有镜像生成 addon 新镜像（prod 为 `<镜像前缀>:addon-{{TS}}`，dev 为
+  `<镜像前缀>-dev:addon-{{TS}}`；wheel 只在构建层临时存在，不会增大镜像体积），
+  按输出的 sed 命令切换 `docker/docker-compose.yml` 即可。详见下文
+  「离线补装 Python 包」。
+- **AI Agent**：约定见项目根 `AGENTS.md`——完全离线开发、一切操作在容器内、
+  缺依赖时提示用户按 `devcontainer.json` 参数重建 devcontainer。
 - 本包**不含 wheel**：所有 wheel 已在构建镜像时安装（构建端经 BuildKit
   bind mount 参与安装，不占用镜像体积，运行容器内没有 wheels）。离线安装
-  额外依赖请用 `build.sh` 补装（见下文）；临时应急可把 wheel 放入项目根
-  目录 `deps/wheels/` 后 `pip install -r deps/wheels/requirements.gitkeep.txt <pkg>`
-  （离线安装头已由 install.sh 预置，`--find-links=./` 自动指向 deps/wheels/
-  所在目录；此方式装进容器可写层，重建容器后失效，持久生效仍需 build.sh）。
+  额外依赖请用 `bash docker/build.sh` 补装（见下文）；临时应急可把 wheel 放入
+  `docker/deps/wheels/` 后 `pip install -r docker/deps/wheels/requirements.gitkeep.txt <pkg>`
+  （离线安装头由 `bash docker/init-deps.sh` 生成，`--find-links=./` 自动指向
+  deps/wheels/ 所在目录；此方式装进容器可写层，重建容器后失效，持久生效仍需
+  build.sh）。
 - `make build` 需要联网（apt/pip 源），离线机器请勿使用；镜像请统一通过
   `devcontainer-docker-images_{{ARCH}}_{{TS}}.tgz` 导入。
 - **文件同步（manifest 驱动）**：`scripts/manifest.txt` 每行一个条目（目录以
@@ -151,9 +167,11 @@ make down         # 停止
   `bash scripts/rollback-bundle.sh`（或 `make rollback ARGS="-y"`），自动取
   `bundles/backups/` 下最新的备份恢复条目（回滚前同样会先备份当前版本）。
 - `make clean`（等价 `bash scripts/clean-images.sh`）：在项目根一键清除本
-  DevContainer 使用的镜像——镜像清单取自 `docker-compose.yml` 的 services
-  声明（app / dev / nginx / db 等服务），`make clean ARGS="-y"` 可跳过确认；
-  `make clean ARGS="--no-name"` 改为清除名称与 Tag 均为 `<none>` 的悬空镜像。
+  DevContainer 使用的镜像——镜像清单取自 `docker/docker-compose.yml` 的
+  services 声明（app / dev / nginx / db 等服务），`make clean ARGS="-y"` 可跳过
+  确认；`make clean ARGS="--no-name"` 改为清除名称与 Tag 均为 `<none>` 的悬空
+  镜像。整包清理（容器 + 镜像）也可在 `downloads/` 里执行
+  `bash clean.sh`（先 `docker compose down`，再按 `images.txt` 删除镜像）。
   镜像被容器占用时请先 `make down`；清除后可用
   `bash downloads/install.sh --load-only` 或 `docker load -i` 重新导入镜像归档。
 - `make ps` 查看容器状态、`make exec SERVICE=dev ARGS="bash"` 在运行中的容器内
@@ -162,7 +180,7 @@ make down         # 停止
 - `make help` 查看全部可用目标。
 {{DEV_TOOLS_NOTE}}
 {{ORACLE_SECTION}}{{FRAMEWORK_SECTION}}{{NPM_SECTION}}
-## 离线补装 Python 包（build.sh）
+## 离线补装 Python 包（docker/build.sh）
 
 构建时漏了的包、后来才需要的包，都可以在不联网的机器上补进镜像：
 
@@ -170,23 +188,24 @@ make down         # 停止
 # 1. 联网机器：下载 wheel（生成 wheels/ 目录，含带 --no-index 头的 requirements.txt；
 #    pip_download.py 在本仓库 scripts/pip/ 下，或直接使用仓库的 Pip Download Action）
 python scripts/pip/pip_download.py <包名...> -d /tmp/wheels
-#    把 /tmp/wheels 整个目录拷回内网项目根目录 deps/wheels/
+#    把 /tmp/wheels 整个目录拷回内网项目根目录 docker/deps/wheels/
+#    （deps/ 目录不存在先执行: bash docker/init-deps.sh）
 
 # 2. 内网机器，项目根目录执行：
-bash build.sh            # 生成 addon 新镜像（prod <镜像前缀>:<后缀>、dev <镜像前缀>-dev:<后缀>；可传参自定义后缀）
+bash docker/build.sh     # 生成 addon 新镜像（prod <镜像前缀>:<后缀>、dev <镜像前缀>-dev:<后缀>；可传参自定义后缀）
 
-# 3. 按输出的 sed 命令把项目根目录的 docker-compose.yml 切换到新镜像，然后：
+# 3. 按输出的 sed 命令把 docker/docker-compose.yml 切换到新镜像，然后：
 make up && make logs
 ```
 
 说明：
 
-- `Dockerfile.addon` 基于现有镜像分层构建：wheel 复制到 `/tmp` 安装后同层
-  删除，不增大镜像体积；已装过的依赖 pip 自动跳过。
-- `deps/wheels/requirements.gitkeep.txt` 含真实包名时按清单装；只有离线安装头（
-  install.sh 预置的状态）时，安装目录下全部 `*.whl`。
-- build.sh 的构建上下文是临时目录 `.addon-build`（只含 wheels），不会把
-  整个项目目录发给 docker daemon，也不受根目录 `.dockerignore`（排除
-  deps/）影响——docker 只按上下文根目录查找 `.dockerignore`，且 build.sh
+- `docker/Dockerfile.addon` 基于现有镜像分层构建：wheel 复制到 `/tmp` 安装后
+  同层删除，不增大镜像体积；已装过的依赖 pip 自动跳过。
+- `docker/deps/wheels/requirements.gitkeep.txt` 含真实包名时按清单装；只有
+  离线安装头（init-deps.sh 生成的初始状态）时，安装目录下全部 `*.whl`。
+- build.sh 的构建上下文是临时目录 `docker/.addon-build`（只含 wheels），不会把
+  整个项目目录发给 docker daemon，也不受项目根 `.dockerignore`（排除
+  docker/deps/）影响——docker 只按上下文根目录查找 `.dockerignore`，且 build.sh
   会显式清理上下文内的任何 dockerignore 双保险；构建结束自动清理。
 - 回滚：重新 `docker load -i devcontainer-docker-images_{{ARCH}}_{{TS}}.tgz` 即可恢复原镜像。

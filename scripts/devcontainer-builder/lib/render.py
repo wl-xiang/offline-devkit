@@ -39,14 +39,15 @@ SCRIPTS_FILES = (
 )
 
 # compose 中的 dev 服务（profile=dev，仅 make shell/lint/compile/test 时激活）
-# build.dockerfile 指向项目根 Dockerfile（联网重建版，由 install.sh 安装到项目根；
-# 离线补装用 Dockerfile.addon 也在项目根，由 build.sh 引用）
+# build.dockerfile 指向 docker/Dockerfile（联网重建版，由 install.sh 安装到
+# 项目根 docker/；离线补装用 Dockerfile.addon 也在 docker/，由 build.sh 引用）。
+# context 为项目根（compose 项目目录是 docker/，.. 即项目根）
 _DEV_SERVICE_TMPL = """\
   dev:
     image: {{DEV_IMAGE}}
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
       target: dev
     working_dir: /app
     pull_policy: never
@@ -94,11 +95,15 @@ _PY_PHONY = "lint compile test "
 
 # 前端离线开发（enable_node）：Makefile 变量与 npm 目标
 _NPM_MAKE_VARS = """\
-# npm 离线包目录 = Npm Download Action 产物 packages/ 的宿主机位置；
+# npm 离线包目录 = Npm Download Action 产物 packages/ 的宿主机位置（相对值
+# 相对 docker/ 目录解析，默认 deps/packages = docker/deps/packages）；
 # compose 以只读方式挂载到容器 {{NPM_CONTAINER_DIR}}，多个容器可共用。
 # 可在命令行覆盖：make npm-install NPM_PACKAGES_DIR=/data/packages
 NPM_PACKAGES_DIR ?= {{NPM_PACKAGES_DIR}}
 export NPM_PACKAGES_DIR
+# 宿主机 shell 检查用的目录（相对项目根）：NPM_PACKAGES_DIR 为相对路径时
+# 即 docker/<NPM_PACKAGES_DIR>；绝对路径时与 NPM_PACKAGES_DIR 一致
+NPM_HOST_DIR ?= {{NPM_HOST_DIR}}
 
 """
 
@@ -107,7 +112,7 @@ npm-install: check-dev ## 用离线 npm 包（{{NPM_CONTAINER_DIR}}）把依赖�
 \t$(DEV_RUN) bash -c 'set -e; \\
 \t\tls {{NPM_CONTAINER_DIR}}/*.tgz >/dev/null 2>&1 || { \\
 \t\t\techo "错误: {{NPM_CONTAINER_DIR}} 下没有 *.tgz"; \\
-\t\t\techo "请把 Npm Download Action 的 npm_packages 产物解压到项目根目录 $(NPM_PACKAGES_DIR)/"; \\
+\t\t\techo "请把 Npm Download Action 的 npm_packages 产物解压到项目根目录 $(NPM_HOST_DIR)/"; \\
 \t\t\techo "或用 make npm-install NPM_PACKAGES_DIR=/path/to/packages 指定目录"; \\
 \t\t\texit 1; \\
 \t\t}; \\
@@ -169,7 +174,8 @@ def render_build_sh(p):
     """build.sh：deps/wheels 有 .whl 时 docker build Dockerfile.addon（默认新 TAG
     为 addon-<时间戳>，新镜像沿用镜像仓库名：prod <前缀>:<后缀>、dev <前缀>-dev:<后缀>）；
     enable_node 且 deps/packages 有 *.tgz（Npm Download Action 产物）时一键
-    离线加载前端依赖。"""
+    离线加载前端依赖。脚本由 install.sh 安装到 docker/，deps/ 位于 docker/deps
+    （init-deps.sh 生成）。"""
     calls = "\n".join(
         f'build {target} "{image}" "$NEW_SUFFIX"'
         for target, image, _stage in _addon_targets(p)
@@ -201,12 +207,12 @@ def _npm_load_block(p):
     return (
         'if [ "$have_npm" -eq 1 ]; then\n'
         '    echo "== 一键加载前端依赖: 容器内 npm install --offline /opt/npm-packages/*.tgz -> /app =="\n'
-        "    if ! docker compose -f \"$SRC_ROOT/docker-compose.yml\" run --rm dev bash -c '\n"
+        "    if ! docker compose -f \"$SRC_ROOT/docker/docker-compose.yml\" run --rm dev bash -c '\n"
         "        set -e\n"
         "        ls /opt/npm-packages/*.tgz >/dev/null 2>&1 || {\n"
         '            echo "错误: 容器内 /opt/npm-packages 下没有 *.tgz"\n'
-        '            echo "  请确认 deps/packages/ 放入了 Npm Download Action 产物的 packages/ 内容，"\n'
-        '            echo "  或用 NPM_PACKAGES_DIR 指定目录（需与 docker-compose.yml 的挂载一致）"\n'
+        '            echo "  请确认 docker/deps/packages/ 放入了 Npm Download Action 产物的 packages/ 内容，"\n'
+        '            echo "  或用 NPM_PACKAGES_DIR 指定目录（相对 docker/ 目录解析，需与 docker-compose.yml 的挂载一致）"\n'
         "            exit 1\n"
         "        }\n"
         "        npm install --offline --no-audit --no-fund /opt/npm-packages/*.tgz\n"
@@ -246,7 +252,8 @@ def _base_mapping(p):
         "SOURCE_LAYOUT": p.source_layout,
         "ENABLE_DB": p.db_service,
         "NGINX_MODE": p.nginx_mode,
-        # 应用源码目录名：single=app（唯一），api_web=api（后端）；web 为前端目录
+        # 应用源码目录名：single_app=app（唯一），febe_separation=api（后端）；
+        # web 为前端目录
         "APP_DIR": p.app_dir,
         "WEB_DIR": p.src_dirs[-1],
         "VENDOR_BASE_DIR": p.src_dirs[-1],
@@ -354,19 +361,16 @@ def _sidecar_images(p):
     return " ".join(images)
 
 
-# scripts/manifest.txt 的根目录操作文件条目（install.sh 安装清单的全集；
-# 目录条目在前，文件条目在后，顺序即 push 打包顺序）
+# scripts/manifest.txt 的条目全集（install.sh 安装清单；目录条目在前，
+# 文件条目在后，顺序即 push 打包顺序）。Dockerfile / docker-compose.yml /
+# build.sh / docker-run.sh / .env.example / init-deps.sh 都在 docker/ 目录
+# （整目录同步），requirements.txt 在应用源码目录内（随源码目录条目同步）
 MANIFEST_ROOT_FILES = (
-    "Dockerfile",
-    "Dockerfile.addon",
-    "requirements.txt",
-    "docker-compose.yml",
-    "docker-run.sh",
     "Makefile",
-    ".env.example",
     "devcontainer.json",
     ".dockerignore",
     ".gitignore",
+    "AGENTS.md",
 )
 
 
@@ -377,7 +381,7 @@ def manifest_entries(p):
     （如 scripts/.env、node_modules/ 不会进 bundle）。
     """
     entries = [d + "/" for d in p.src_dirs]
-    entries += ["docs/", "scripts/"]
+    entries += ["docs/", "scripts/", "docker/"]
     if p.enable_nginx:
         entries.append("nginx/")
     entries += list(MANIFEST_ROOT_FILES)
@@ -450,15 +454,16 @@ def _oracle_compose_hint(p):
 
 def _extra_volumes(p):
     """app/dev 服务额外的只读挂载（Oracle 客户端、npm 离线包、宿主机时区、
-    api_web + nginx_binary 模式的 web 静态产物目录）。"""
+    febe_separation + nginx_binary 模式的 web 静态产物目录）。
+    相对路径相对 compose 项目目录 docker/ 解析（../ 即项目根）。"""
     lines = []
     if p.oracle_client_mount:
         lines.append(f"      - {p.oracle_client_mount}\n")
     if p.npm_packages_mount:
         lines.append(f"      - {p.npm_packages_mount}\n")
-    if p.nginx_binary_mode and p.is_api_web:
+    if p.nginx_binary_mode and p.is_febe_separation:
         # web 静态产物挂进容器 /usr/share/nginx/html（容器内 nginx 托管）
-        lines.append(f"      - ./{p.src_dirs[-1]}/dist:/usr/share/nginx/html:ro\n")
+        lines.append(f"      - ../{p.src_dirs[-1]}/dist:/usr/share/nginx/html:ro\n")
     for volume in p.timezone_volumes:
         lines.append(f"      - {volume}\n")
     return "".join(lines)
@@ -543,9 +548,14 @@ def _playwright_block(p):
 def _npm_make_vars(p):
     if not p.enable_node:
         return ""
+    if p.npm_packages_dir.startswith("/"):
+        host_dir = p.npm_packages_dir
+    else:
+        host_dir = "docker/" + p.npm_packages_dir
     return _sub(_NPM_MAKE_VARS, {
         "NPM_CONTAINER_DIR": NPM_PACKAGES_CONTAINER_DIR,
         "NPM_PACKAGES_DIR": p.npm_packages_dir,
+        "NPM_HOST_DIR": host_dir,
     })
 
 
@@ -562,10 +572,10 @@ def _npm_check(p):
     if not p.enable_node:
         return ""
     return (
-        '\t@if ls "$(NPM_PACKAGES_DIR)"/*.tgz >/dev/null 2>&1; then \\\n'
-        '\t\techo "  OK    npm 离线包: $(NPM_PACKAGES_DIR)/*.tgz"; \\\n'
+        '\t@if ls "$(NPM_HOST_DIR)"/*.tgz >/dev/null 2>&1; then \\\n'
+        '\t\techo "  OK    npm 离线包: $(NPM_HOST_DIR)/*.tgz"; \\\n'
         "\telse \\\n"
-        '\t\techo "  WARN  未发现 npm 离线包（$(NPM_PACKAGES_DIR)/*.tgz）——'
+        '\t\techo "  WARN  未发现 npm 离线包（$(NPM_HOST_DIR)/*.tgz）——'
         '需要前端离线依赖时请解压 Npm Download Action 产物"; \\\n'
         "\tfi\n"
     )
@@ -578,7 +588,7 @@ def _install_block(p, local_wheels, req_path="requirements.txt"):
     if local_wheels:
         return (
             "# wheels 经 BuildKit bind mount 只读挂载参与安装，不复制进任何镜像层：\n"
-            "# 运行容器内没有 wheels（离线补装请用项目根目录 build.sh / Dockerfile.addon）\n"
+            "# 运行容器内没有 wheels（离线补装请用 docker/build.sh / docker/Dockerfile.addon）\n"
             "# --no-compile：不生成 .pyc（配合 PYTHONDONTWRITEBYTECODE=1），减小 site-packages\n"
             f"COPY {req_path} /app/requirements.txt\n"
             "\n"
@@ -611,10 +621,11 @@ def _dev_pip_block(p, local_wheels):
 
 
 def render_dockerfile(p, local_wheels=True):
-    # 联网重建版 Dockerfile 由 install.sh 安装到项目根（compose build 的
-    # dockerfile 指向项目根 Dockerfile，context=项目根），requirements.txt
-    # 同样安装到项目根，COPY 路径为根目录相对路径
-    req_path = "requirements.txt"
+    # 联网重建版 Dockerfile 由 install.sh 安装到 docker/（compose build 的
+    # dockerfile 指向 docker/Dockerfile，context = 项目根），requirements.txt
+    # 安装到应用源码目录（single_app=app/，febe_separation=api/），COPY 路径
+    # 为 context（项目根）相对路径
+    req_path = f"{p.app_dir}/requirements.txt"
     base = {
         **_base_mapping(p),
         # tzdata 内置补装（slim 镜像不带，内置 TZ=Asia/Shanghai 环境变量才生效）；
@@ -653,16 +664,16 @@ def render_src_dockerfile(p, staging):
 
 def _app_start_block(p):
     """app 服务的启动方式：启动命令由镜像 ENTRYPOINT（docker-run.sh）承载，
-    compose 置空 command 并挂载项目根 docker-run.sh 覆盖镜像内副本。
+    compose 置空 command 并挂载 docker/docker-run.sh 覆盖镜像内副本。
 
     镜像内已 COPY 一份 docker-run.sh 并设为 ENTRYPOINT；项目根的同名脚本由
-    install.sh 安装、compose 只读挂载到同一路径，用户改根目录脚本即可调整
+    install.sh 安装、compose 只读挂载到同一路径，用户改 docker/docker-run.sh 即可调整
     启动方式（默认 cd /app 后运行预置入口），无需重建镜像。
     """
     return (
         "    # ---- 启动方式：镜像 ENTRYPOINT 为 /usr/local/bin/docker-run.sh ----\n"
         "    # 默认行为：cd /app 后运行预置入口（python main.py / go run main.go）。\n"
-        "    # 项目根的 docker-run.sh 已只读挂载到镜像内同一路径，直接改根目录的\n"
+        "    # docker/docker-run.sh 已只读挂载到镜像内同一路径，直接改 docker/ 的\n"
         "    # docker-run.sh 即可自定义启动方式（无需重建镜像）；command: [] 表示\n"
         "    # 不向 ENTRYPOINT 追加参数。临时调试可透传命令：\n"
         "    #   docker compose run --rm app <命令>   # docker-run.sh 会 exec 该命令\n"
@@ -694,8 +705,9 @@ def _app_options_block(p):
             lines.append(f"      - \"{host_port}:{container_port}\"\n")
     if p.env_file_list:
         lines.append("    env_file:\n")
-        # env 文件相对应用根目录（docker-compose.yml 由 install.sh 复制到项目根，
-        # ${SRC_ROOT:-./app/} 默认为项目根下的 app/ 目录）；绝对路径原样保留
+        # env 文件相对应用根目录（docker-compose.yml 由 install.sh 复制到
+        # docker/，${SRC_ROOT:-../app/} 默认为项目根下的 app/ 目录）；绝对路径
+        # 原样保留
         lines.extend(
             f"      - {json.dumps(_env_file_path(p, x))}\n" for x in p.env_file_list
         )
@@ -706,7 +718,7 @@ def _app_options_block(p):
 def _env_file_path(p, path):
     if path.startswith("/"):
         return path
-    return "${SRC_ROOT:-./" + p.app_dir + "/}/" + path
+    return "${SRC_ROOT:-../" + p.app_dir + "/}/" + path
 
 
 def _depends_on_block(p):
@@ -719,14 +731,16 @@ def _depends_on_block(p):
 
 
 def _nginx_service(p):
-    """独立 nginx 服务（nginx_service 模式）：挂载项目根 nginx/ 配置模板，
-    api_web 布局另挂载 web 静态产物目录（web/dist → /usr/share/nginx/html）。"""
+    """独立 nginx 服务（nginx_service 模式）：挂载 nginx/ 配置模板，
+    febe_separation 布局另挂载 web 静态产物目录（web/dist →
+    /usr/share/nginx/html）。相对路径相对 compose 项目目录 docker/ 解析。"""
     mounts = [
         "    volumes:\n",
-        "      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro\n",
+        "      - ../nginx/default.conf:/etc/nginx/conf.d/default.conf:ro\n",
     ]
-    if p.is_api_web:
-        mounts.append(f"      - ./{p.src_dirs[-1]}/dist:/usr/share/nginx/html:ro\n")
+    if p.is_febe_separation:
+        mounts.append(
+            f"      - ../{p.src_dirs[-1]}/dist:/usr/share/nginx/html:ro\n")
     return _sub(
         _load("compose.service.nginx.tmpl"),
         {**_base_mapping(p), "NGINX_CONF_MOUNT": "".join(mounts)},
@@ -794,14 +808,14 @@ def _nginx_proxy_location(p):
 def render_nginx_conf(p):
     """项目根 nginx/default.conf 配置模板（nginx_mode 启用时生成）。
 
-    - single 布局：全部请求反代到应用；
-    - api_web 布局：/api/ 反代到后端，/ 由静态产物目录托管
+    - single 布局（single_app）：全部请求反代到应用；
+    - febe_separation 布局：/api/ 反代到后端，/ 由静态产物目录托管
       （service 模式挂载进 nginx 容器 /usr/share/nginx/html，
         binary 模式挂载进 app 容器同名路径）。
     用户可直接修改该文件（manifest 已包含 nginx/，修改会随 bundle 同步）。
     """
     lines = []
-    if p.is_api_web:
+    if p.is_febe_separation:
         if p.has_app_port:
             lines.append(_nginx_proxy_location(p).replace("location / {",
                                                           "location /api/ {", 1))
@@ -865,11 +879,12 @@ def render_gitignore(p):
 
 
 def _env_example_npm_block(p):
-    """根目录 .env.example 的 npm 变量段（enable_node 时）。"""
+    """docker/.env.example 的 npm 变量段（enable_node 时）。"""
     if not p.enable_node:
         return ""
     return (
-        "# npm 离线包目录（Npm Download Action 产物 packages/ 内容的宿主机位置，\n"
+        "# npm 离线包目录（Npm Download Action 产物 packages/ 内容的宿主机位置；\n"
+        "# 相对值相对 docker/ 目录解析，默认 deps/packages = docker/deps/packages；\n"
         "# compose 只读挂载到容器 /opt/npm-packages）\n"
         f"NPM_PACKAGES_DIR={p.npm_packages_dir}\n"
         "\n"
@@ -877,7 +892,7 @@ def _env_example_npm_block(p):
 
 
 def _env_example_oracle_block(p):
-    """根目录 .env.example 的 Oracle 变量段（runtime_deps_only 挂载模式时）。"""
+    """docker/.env.example 的 Oracle 变量段（runtime_deps_only 挂载模式时）。"""
     if not p.oracle_client_mount:
         return ""
     return (
@@ -899,14 +914,58 @@ def render_env_example(p):
 
 def render_main_py():
     """占位入口（target_codec 预装 Python 时随包分发）：install.sh 在应用源码
-    目录 <项目根>/src 无 main.py 时复制过去。"""
+    目录 <项目根>/app（febe_separation 布局为 api/）无 main.py 时复制过去。"""
     return _load("main.py.tmpl")
 
 
 def render_main_go():
     """占位入口（target_codec 预装 Golang 时随包分发）：install.sh 在应用源码
-    目录（<项目根>/app 或 api_web 布局的 api/）无 main.go 时复制过去。"""
+    目录（<项目根>/app 或 febe_separation 布局的 api/）无 main.go 时复制过去。"""
     return _load("main.go.tmpl")
+
+
+def render_init_deps_sh():
+    """docker/init-deps.sh：在 docker/ 下生成 deps/ 离线依赖目录（静态脚本）。"""
+    return _load("init-deps.sh.tmpl")
+
+
+def render_agents_md(p):
+    """项目根 AGENTS.md：告知 AI Agent 如何用本 devcontainer 机制离线开发
+    测试部署（详细手册见 docs/DEVCONTAINER.md）。"""
+    services = []
+    if p.enable_nginx:
+        services.append("nginx")
+    for service in ("postgres16", "mysql8.4", "mongo9"):
+        if service in p.db_service:
+            services.append(service)
+    db_summary = "、".join(services) if services else "无"
+    if p.is_febe_separation:
+        web_note = "，前端源码在 `web/`（静态产物输出到 `web/dist/`）；"
+    else:
+        web_note = "；"
+    return _sub(_load("AGENTS.md.tmpl"), {
+        **_base_mapping(p),
+        "SERVICES_SUMMARY": db_summary,
+        "WEB_DIR_NOTE": web_note,
+    })
+
+
+def render_clean_sh(p, out_file):
+    """渲染 bundle 清理脚本 clean.sh 到 dist/（与 install.sh 同级分发）。"""
+    content = _sub(_load("clean.sh.tmpl"), _base_mapping(p))
+    path = Path(out_file)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def render_images_txt(p):
+    """images.txt：本次 bundle 的镜像清单（clean.sh 按它停容器/删镜像）。"""
+    return _sub(_load("images.txt.tmpl"), {
+        "TS": p.ts,
+        "IMAGE_LIST_LINES": "\n".join(p.image_refs),
+    })
 
 
 def render_manifest(p):
@@ -919,7 +978,7 @@ def render_manifest(p):
 
 
 def render_web_index_html(p):
-    """web/index.html 占位静态页（api_web 布局；nginx 托管 web/dist 产物）。"""
+    """web/index.html 占位静态页（febe_separation 布局；nginx 托管 web/dist 产物）。"""
     return _sub(_load("index.html.tmpl"), {
         "WEB_DIR": p.src_dirs[-1],
         "NGINX_ENABLED": "1" if p.enable_nginx else "0",
@@ -927,7 +986,8 @@ def render_web_index_html(p):
 
 
 def render_web_package_json(p):
-    """web/package.json 前端工程占位（api_web 布局且预装 Node 时）。"""
+    """package.json 前端工程占位：febe_separation 布局放 web/，single_app
+    布局放 app/（预装 Node 时）。"""
     return _load("package.json.tmpl")
 
 
@@ -939,7 +999,7 @@ def render_docker_run_sh(p):
     - nginx_binary 模式：默认启动时先拉起容器内 nginx（APT 安装，反代/静态托管）。
     带参数调用时透传执行（`docker compose run --rm app <命令>` 仍可用）。
     SRC Bundle 随包分发，install.sh 安装到项目根，compose 只读挂载覆盖镜像内
-    副本，改根目录脚本即可调整启动方式，无需重建镜像。
+    副本，改 docker/docker-run.sh 即可调整启动方式，无需重建镜像。
     """
     default_cmd = "python main.py" if p.python_enabled else "go run main.go"
     return _sub(_load("docker-run.sh.tmpl"), {
@@ -997,13 +1057,14 @@ def _npm_notice_block(p):
     if d.startswith("/"):
         target = d
     else:
-        target = f"项目根目录下的 {d}"
+        target = f"docker/ 目录下的 {d}（即 docker/{d}）"
     return f'''
 echo ""
 printf '%s\\n' "${{C_BOLD}}Node.js / npm 前端离线开发（本包已启用）${{C_RESET}}"
 note "1. 在内网用 Npm Download Action 下载依赖，得到 npm_packages 产物（顶层 packages/）"
 note "2. 解压产物后把 packages/ 内容放到 {target}（也可 export NPM_PACKAGES_DIR=/your/packages）"
-note "3. bash build.sh 一键离线加载，或 make npm-install    # 用 {NPM_PACKAGES_CONTAINER_DIR} 里的离线 tarball 把依赖装到 /app"
+note "   目录不存在时先执行: bash docker/init-deps.sh"
+note "3. bash docker/build.sh 一键离线加载，或 make npm-install    # 用 {NPM_PACKAGES_CONTAINER_DIR} 里的离线 tarball 把依赖装到 /app"
 note "4. make shell 后运行 npm run dev -- --host 0.0.0.0（vite 默认 5173，webpack 默认 8080；按需设置 app_port）"
 '''
 
@@ -1169,6 +1230,7 @@ def _npm_html_section(p):
     if not p.enable_node:
         return ""
     d = p.npm_packages_dir
+    host = d if d.startswith("/") else f"docker/{d}"
     step_no = "07" if p.oracle_enabled else "06"
     return f"""
     <section class="card">
@@ -1183,13 +1245,14 @@ def _npm_html_section(p):
           <div>
             <h3>准备离线 npm 包</h3>
             <p>在内网用 <strong>Npm Download</strong> Action 下载依赖，把产物中的
-            <code>packages/</code> 内容放到 <code>{d}</code>（默认项目根目录下），
-            或直接在项目根执行 <code>bash build.sh</code> 一键离线加载。</p>
+            <code>packages/</code> 内容放到 <code>{host}</code>（默认 docker/deps/packages，
+            目录不存在时先执行 <code>bash docker/init-deps.sh</code>），
+            或直接在项目根执行 <code>bash docker/build.sh</code> 一键离线加载。</p>
           </div>
         </div>
         <div class="codeblock">
           <div class="codebar"><span class="code-label">项目根目录</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
-          <pre><code>ls {d}/*.tgz</code></pre>
+          <pre><code>ls {host}/*.tgz</code></pre>
         </div>
       </div>
 
@@ -1410,6 +1473,7 @@ def _npm_readme_section(p):
     if not p.enable_node:
         return ""
     d = p.npm_packages_dir
+    host = d if d.startswith("/") else f"docker/{d}"
     return f"""
 ## 前端离线开发（Node.js / npm）
 
@@ -1417,23 +1481,24 @@ def _npm_readme_section(p):
 产物（顶层 `packages/`）以只读卷挂载到容器 `{NPM_PACKAGES_CONTAINER_DIR}`。
 
 1. 在内网用 Npm Download Action 下载依赖（见 `docs/npm-offline-package-guide.md`），
-   把产物中的 `packages/` 内容放到 `{d}`（默认项目根目录下）。
+   把产物中的 `packages/` 内容放到 `{host}`（默认 docker/deps/packages，
+   由 `bash docker/init-deps.sh` 生成目录结构）。
 2. 安装依赖到 `/app`（二选一）：
-   - 一键加载（推荐）：项目根执行 `bash build.sh`（检测到 `deps/packages/*.tgz`
-     即通过容器离线安装）；
+   - 一键加载（推荐）：项目根执行 `bash docker/build.sh`（检测到
+     `docker/deps/packages/*.tgz` 即通过容器离线安装）；
    - 或：
    ```bash
    make npm-install
    ```
    等价于容器内 `npm install --offline {NPM_PACKAGES_CONTAINER_DIR}/*.tgz`。
 3. 开发调试（二选一）：
-   - 推荐：把项目根 `docker-run.sh` 的默认命令改为 `npm run dev -- --host 0.0.0.0`，
+   - 推荐：把 `docker/docker-run.sh` 的默认命令改为 `npm run dev -- --host 0.0.0.0`，
      `app_port` 设为前端端口映射（vite `5173:5173` / webpack `8080:8080`），`make up` 即带
      宿主机端口映射；源码经 `/app` 挂载，支持热更新；
    - 临时：`docker compose run --rm -p 5173:5173 dev npm run dev -- --host 0.0.0.0`
      （`make shell` 进入容器手动启动时需要自行发布端口）。
-4. 离线包目录不在项目根时：`export NPM_PACKAGES_DIR=/data/packages`，或
-   `make npm-install NPM_PACKAGES_DIR=/data/packages`。
+4. 离线包目录不在 docker/ 下时：`export NPM_PACKAGES_DIR=/data/packages`（绝对路径），
+   或 `make npm-install NPM_PACKAGES_DIR=/data/packages`；相对路径相对 docker/ 目录解析。
 """
 
 
@@ -1497,8 +1562,8 @@ def _agent_readme_section(p):
   终端会等待输入，不要用于自动化。
 - 首次使用先执行 `make check` 确认镜像已导入；离线机器不要执行 `make build` 或
   `docker compose build`。
-- 缺 Python 包时不要在宿主机 `pip install`：把 wheel 放进项目根 `deps/wheels/` 后执行
-  `bash build.sh`（见下文「离线补装 Python 包」）。
+- 缺 Python 包时不要在宿主机 `pip install`：把 wheel 放进 `docker/deps/wheels/`
+  后执行 `bash docker/build.sh`（见下文「离线补装 Python 包」）。
 - 不要用宿主机 `python -m venv` / `conda` / 全局 `pytest` / 全局 `npm install`
   代替容器内环境。
 """
@@ -1555,8 +1620,8 @@ def _agent_html_section(p):
       <div class="tip"><strong>禁止：</strong>在宿主机执行 <code>python</code> /
       <code>pip</code> / <code>pytest</code> / <code>npm</code>（宿主机即使存在这些命令，
       版本与依赖也与镜像不一致，所有验证以容器内结果为准）；缺 Python 包时不要
-      在宿主机安装，请把 wheel 放进项目根 <code>deps/wheels/</code> 后执行
-      <code>bash build.sh</code> 离线补装。离线机器也不要执行 <code>make build</code>。</div>
+      在宿主机安装，请把 wheel 放进 <code>docker/deps/wheels/</code> 后执行
+      <code>bash docker/build.sh</code> 离线补装。离线机器也不要执行 <code>make build</code>。</div>
     </section>
 """
 
@@ -1650,26 +1715,32 @@ def render_all(p, staging):
     files = {
         "Dockerfile": render_dockerfile(p),
         # .tpl 后缀：不会被 docker compose 自动发现/被 -f 误用，
-        # 由 install.sh 原样复制到项目根目录为 docker-compose.yml
-        # （模板内 ${SRC_ROOT:-./app/} / ${SRC_ROOT_NAME:-app} 由 compose 运行时解析）
+        # 由 install.sh 原样复制到 docker/ 目录为 docker-compose.yml
+        # （模板内 ${SRC_ROOT:-../app/} / ${SRC_ROOT_NAME:-app} 由 compose 运行时解析）
         "docker-compose.yml.tpl": render_compose(p),
         "Makefile": render_makefile(p),
-        "requirements.txt": render_requirements(p),
-        # 容器默认启动脚本（镜像 ENTRYPOINT；install.sh 安装到项目根，
+        # 容器默认启动脚本（镜像 ENTRYPOINT；install.sh 安装到 docker/，
         # compose 只读挂载覆盖镜像内副本，用户可随时改写）
         "docker-run.sh": render_docker_run_sh(p),
         # 快速上手说明（install.sh 安装为 docs/DEVCONTAINER.md，根目录不放 README）
         "README.md": render_src_readme(p),
-        # 联网重建版 Dockerfile（install.sh 安装到项目根；compose build 使用）
+        # 联网重建版 Dockerfile（install.sh 安装到 docker/；compose build 使用）
         # 离线补装：wheel 打进现有镜像生成 addon 镜像（build.sh 引用）
         "Dockerfile.addon": render_dockerfile_addon(p),
         "build.sh": render_build_sh(p),
+        # docker/init-deps.sh：需要离线依赖目录时由用户在项目根执行
+        # `bash docker/init-deps.sh` 生成 docker/deps/（不再默认安装 deps/）
+        "init-deps.sh": render_init_deps_sh(),
+        # 项目根 AGENTS.md：AI Agent 使用约定（完全离线开发 / 容器内操作）
+        "AGENTS.md": render_agents_md(p),
         # .gitignore 随 install.sh 安装/合并到项目根目录（src root）。
         # 注意：.dockerignore 不能在这里写入——staging 即 CI 构建上下文，
         # 其 wheels/ 排除规则会让构建期的 wheels 引用失败；
         # 它在 docker 构建完成后由 main.py 写入，仅供 src 产物分发
+        # （.dockerignore 保留在项目根：compose build 的 context 是项目根，
+        #  docker 只按构建上下文根目录查找 .dockerignore）
         ".gitignore": render_gitignore(p),
-        # 根目录 .env.example：docker-compose.yml 运行时变量模板（默认值一致，
+        # docker/.env.example：docker-compose.yml 运行时变量模板（默认值一致，
         # 仅缺失时安装）。部署脚本的 SYNC_REMOTE_* 变量模板是 scripts/.env.example
         ".env.example": render_env_example(p),
     }
@@ -1678,14 +1749,24 @@ def render_all(p, staging):
         files["main.py"] = render_main_py()
     if p.go_enabled:
         files["main.go"] = render_main_go()
-    # 前端目录占位（api_web 布局）：web/index.html 静态页样例，
-    # web/package.json（预装 Node 时）为前端工程样例
-    if p.is_api_web:
+    # 前端占位：febe_separation 布局 web/ 放 index.html（静态页样例），
+    # package.json（预装 Node 时）为前端工程样例；single_app 布局的
+    # package.json 由 install.sh 放入 app/
+    if p.is_febe_separation:
         files["index.html"] = render_web_index_html(p)
-        if p.enable_node:
-            files["package.json"] = render_web_package_json(p)
+    if p.enable_node:
+        files["package.json"] = render_web_package_json(p)
     for name, content in files.items():
         (staging / name).write_text(content, encoding="utf-8")
+    # requirements.txt 写入应用源码目录子目录（single_app=app/，
+    # febe_separation=api/；CI 构建上下文与安装布局一致，Dockerfile 的
+    # COPY 路径与 pip download -r 均按此路径）
+    req_content = render_requirements(p)
+    if req_content and not req_content.endswith("\n"):
+        req_content += "\n"
+    app_dir = staging / p.app_dir
+    app_dir.mkdir(exist_ok=True)
+    (app_dir / "requirements.txt").write_text(req_content, encoding="utf-8")
     # 保留可执行位（tar 会随包保留；artifact zip 解压可能丢失，文档引导 bash 调用）
     (staging / "build.sh").chmod(0o755)
     (staging / "docker-run.sh").chmod(0o755)

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # 由 scripts/devcontainer-builder 生成（时间戳: {{TS}}，镜像 TAG: {{TAG}}），请勿手工编辑。
 #
-# 用法：把本脚本与 devcontainer-src_{{ARCH}}_{{TS}}.tgz 放在同一目录（建议放在项目
-# 根目录的 downloads/ 下），然后执行：
+# 用法：把本脚本与 devcontainer-src_{{ARCH}}_{{TS}}.tgz（以及 clean.sh /
+# images.txt）放在同一目录（建议放在项目根目录的 downloads/ 下），然后执行：
 #   bash install.sh /path/to/your/project-root     # 在 downloads/ 中即 bash install.sh ../
 #   bash install.sh --load /path/to/your/project-root
 #                                                  # 安装开始前自动 docker load
@@ -25,26 +25,30 @@
 #   downloads/ 解压 → 在 downloads/ 内执行本脚本）：
 #   1. 把 devcontainer-src_{{ARCH}}_{{TS}}.tgz 解压到临时目录（安装完成后清理，
 #      不在项目内保留副本）；
-#   2. 把包内 docker-compose.yml.tpl 原样复制到 INSTALL_PATH，命名为去掉 .tpl
-#      后缀的 docker-compose.yml（模板内 ${SRC_ROOT:-./{{APP_DIR}}/} 与
-#      ${SRC_ROOT_NAME:-app} 由 docker compose 运行时解析）
-#   3. 把 Makefile / build.sh / Dockerfile（联网重建版）/
-#      Dockerfile.addon（离线补装，build.sh 引用）/ requirements.txt /
-#      docker-run.sh / README.md（安装为 docs/DEVCONTAINER.md）/
-#      devcontainer.json（workflow 输入参数快照）安装到项目根，并把包内
-#      scripts/（manifest.txt / push-bundle.sh / apply-bundle.sh /
-#      rollback-bundle.sh / clean-images.sh / .env.example）安装到
-#      <INSTALL_PATH>/scripts/，同时安装/合并 .dockerignore 与 .gitignore，
-#      另安装根目录 .env.example（docker-compose.yml 运行时变量模板）
-#   4. 在 INSTALL_PATH/docs 下创建 .gitkeep；创建 deps/wheels/requirements.gitkeep.txt
-#      离线安装头与 deps/packages/packages.gitkeep.json 占位文件
-#   5. 准备应用源码目录：single 布局为 INSTALL_PATH/{{APP_DIR}}（compose 默认把
-#      ./{{APP_DIR}}/ 挂载为 /app）；api_web 布局为 api/ + web/。按预装语言环境
-#      放置占位入口（api 侧 main.py / main.go；web 侧 index.html / package.json）
+#   2. 把包内 docker-compose.yml.tpl 原样复制到 INSTALL_PATH/docker/，命名为
+#      去掉 .tpl 后缀的 docker-compose.yml（模板内 ${SRC_ROOT:-../{{APP_DIR}}/}
+#      与 ${SRC_ROOT_NAME:-app} 由 docker compose 运行时解析；compose 项目
+#      目录 = docker/，SRC_ROOT 相对 docker/ 解析，../ 即项目根）
+#   3. 把 Makefile / devcontainer.json（workflow 输入参数快照）安装到项目根，
+#      把 Dockerfile（联网重建版）/ Dockerfile.addon（离线补装，build.sh 引用）/
+#      build.sh / docker-run.sh / init-deps.sh / .env.example 安装到
+#      INSTALL_PATH/docker/，requirements.txt 安装到应用源码目录
+#      （{{APP_DIR}}/requirements.txt），包内 scripts/（manifest.txt /
+#      push-bundle.sh / apply-bundle.sh / rollback-bundle.sh / clean-images.sh /
+#      .env.example）安装到 <INSTALL_PATH>/scripts/，同时安装/合并
+#      .dockerignore 与 .gitignore，并安装项目根 AGENTS.md（AI Agent 使用约定）
+#   4. 在 INSTALL_PATH/docs 下创建 .gitkeep；README.md 安装为
+#      docs/DEVCONTAINER.md。deps/ 不再默认安装：需要离线依赖目录时在项目根
+#      执行 bash docker/init-deps.sh 生成 docker/deps/
+#   5. 准备应用源码目录：single_app 布局为 INSTALL_PATH/{{APP_DIR}}（compose
+#      默认把 ../{{APP_DIR}}/ 挂载为 /app），requirements.txt 与 package.json
+#      都放在 {{APP_DIR}}/；febe_separation 布局为 api/ + web/，
+#      requirements.txt 放 api/、package.json 放 web/。按预装语言环境放置
+#      占位入口（api 侧 main.py / main.go；web 侧 index.html）
 #   6. nginx_mode 启用时创建 <INSTALL_PATH>/nginx/ 并安装配置模板 default.conf
 #      （nginx_service 由独立 nginx 服务挂载；nginx_binary 由容器内 nginx 加载）
-#   7. docker-run.sh（容器默认启动脚本）安装到项目根目录后由 compose 只读
-#      挂载覆盖镜像内副本，改根目录脚本即可调整启动方式（无需重建镜像）
+#   7. docker-run.sh（容器默认启动脚本）安装到 docker/ 后由 compose 只读
+#      挂载覆盖镜像内副本，改 docker/docker-run.sh 即可调整启动方式（无需重建镜像）
 set -euo pipefail
 
 NEEDS_MAIN_PY={{PYTHON_ENABLED}}   # 1 = target_codec 预装 Python（占位 main.py）
@@ -70,17 +74,23 @@ ${C_BOLD}用法:${C_RESET} bash $0 [--load | --no-load] [--load-target <dev|prod
        bash $0 --load-only [--load-target <dev|prod|app|all>]
 
 在项目根目录安装离线 devcontainer 开发环境：解压源码/模板包到临时目录，安装
-Makefile、build.sh、Dockerfile（联网重建版）、Dockerfile.addon（离线补装）、
-requirements.txt、docker-run.sh、docker-compose.yml、devcontainer.json（workflow
-输入参数快照）、.dockerignore / .gitignore 与根目录 .env.example，把部署辅助
+Makefile 与 devcontainer.json（workflow 输入参数快照）到项目根；Dockerfile
+（联网重建版）、Dockerfile.addon（离线补装）、build.sh、docker-run.sh、
+init-deps.sh、docker-compose.yml 与 .env.example 安装到 <项目根>/docker/；
+requirements.txt 安装到应用源码目录（{{APP_DIR}}/requirements.txt）；部署辅助
 脚本 manifest.txt / push-bundle.sh / apply-bundle.sh / rollback-bundle.sh /
-clean-images.sh（及其变量模板 scripts/.env.example）安装到 <项目根>/scripts/，
-并准备应用源码目录（single=app/；api_web=api/ + web/）。
+clean-images.sh（及其变量模板 scripts/.env.example）安装到 <项目根>/scripts/；
+安装/合并 .dockerignore / .gitignore 与项目根 AGENTS.md（AI Agent 使用约定），
+并准备应用源码目录（single_app={{APP_DIR}}/；febe_separation=api/ + web/）。
 
 ${C_BOLD}参数:${C_RESET}
-  INSTALL_PATH          项目根目录（必须已存在）。根目录操作文件安装到 INSTALL_PATH；
-                        快速上手说明安装为 <INSTALL_PATH>/docs/DEVCONTAINER.md；
-                        应用源码放在 <INSTALL_PATH>/{{APP_DIR}}（compose 默认挂载为 /app）。
+  INSTALL_PATH          项目根目录（必须已存在）。Makefile / AGENTS.md /
+                        devcontainer.json / .dockerignore / .gitignore 安装到
+                        INSTALL_PATH；docker 相关文件安装到
+                        <INSTALL_PATH>/docker/；快速上手说明安装为
+                        <INSTALL_PATH>/docs/DEVCONTAINER.md；
+                        应用源码放在 <INSTALL_PATH>/{{APP_DIR}}（compose 默认
+                        挂载为 /app）。
 
 ${C_BOLD}选项:${C_RESET}
   -d, --default         默认安装：自动启用 --load，且无需指定 INSTALL_PATH，
@@ -312,19 +322,24 @@ if [ "${#tgzs[@]}" -gt 1 ]; then
 fi
 TGZ=${tgzs[0]}
 
-COMPOSE_FILE="$INSTALL_PATH/docker-compose.yml"
-# 应用源码目录（compose 默认把项目根下的 {{APP_DIR}}/ 挂载为 /app；
-# api_web 布局另有前端目录 {{WEB_DIR}}/）
+COMPOSE_FILE="$INSTALL_PATH/docker/docker-compose.yml"
+DOCKER_DIR="$INSTALL_PATH/docker"
+# 应用源码目录（compose 项目目录 = docker/，默认把 ../{{APP_DIR}}/ 挂载为 /app；
+# febe_separation 布局另有前端目录 {{WEB_DIR}}/）
 APP_DIR_SRC="$INSTALL_PATH/{{APP_DIR}}"
 WEB_DIR_SRC="$INSTALL_PATH/{{WEB_DIR}}"
 
-# 复制到项目根目录的根目录操作文件：包内文件名 -> 根目录文件名
-# （Dockerfile = 联网重建版，compose build / make build 使用；
-#   Dockerfile.addon = 离线补装版，build.sh 引用；requirements.txt 供
-#   联网重建版 COPY；README.md 安装为 docs/DEVCONTAINER.md；
-#   docker-run.sh 按原名安装。devcontainer.json 不在包内，由 install.sh
-#   同目录的 bundle 文件提供，同样安装到项目根目录）
-COPY_ROOT_FILES=("Makefile:Makefile" "build.sh:build.sh" "Dockerfile:Dockerfile" "Dockerfile.addon:Dockerfile.addon" "requirements.txt:requirements.txt" "docker-run.sh:docker-run.sh")
+# 复制到 docker/ 目录的 docker 相关文件：包内文件名 -> docker/ 下文件名
+# （Dockerfile = 联网重建版，compose build / make build 使用，context 为
+#   项目根、COPY {{APP_DIR}}/requirements.txt；Dockerfile.addon = 离线补装版，
+#   build.sh 引用；build.sh / docker-run.sh / init-deps.sh 按原名安装。
+#   requirements.txt 安装到应用源码目录，见 COPY_APP_FILES）
+COPY_DOCKER_FILES=("Dockerfile:Dockerfile" "Dockerfile.addon:Dockerfile.addon" "build.sh:build.sh" "docker-run.sh:docker-run.sh" "init-deps.sh:init-deps.sh")
+
+# 安装到应用源码目录的文件：requirements.txt（联网重建版 Dockerfile 的 COPY
+# 依赖；容器内挂载为 /app/requirements.txt，可直接查看/修改）。包内路径为
+# {{APP_DIR}}/requirements.txt（与 CI 构建上下文一致）
+COPY_APP_FILES=("{{APP_DIR}}/requirements.txt:requirements.txt")
 
 # 安装到项目根 scripts/ 的部署辅助脚本（包内 scripts/ -> <根>/scripts/，
 # Makefile 的 push/apply/rollback/clean 目标按 ./scripts/<脚本> 调用）
@@ -342,14 +357,35 @@ if [ -e "$COMPOSE_FILE" ]; then
     echo "  请先移动/重命名该文件后重试。"
     fail=1
 fi
-for pair in "${COPY_ROOT_FILES[@]}"; do
+# docker/ 目录文件（Makefile 仍在项目根，单独检查）
+for pair in "${COPY_DOCKER_FILES[@]}"; do
     dst_name=${pair##*:}
-    if [ -e "$INSTALL_PATH/$dst_name" ]; then
-        err "$INSTALL_PATH/$dst_name 已存在，避免覆盖你自己的文件，安装终止。"
+    if [ -e "$DOCKER_DIR/$dst_name" ]; then
+        err "$DOCKER_DIR/$dst_name 已存在，避免覆盖你自己的文件，安装终止。"
         echo "  请先移动/重命名后重试（如为旧版安装残留，确认无需保留后删除）。"
         fail=1
     fi
 done
+if [ -e "$INSTALL_PATH/Makefile" ]; then
+    err "$INSTALL_PATH/Makefile 已存在，避免覆盖你自己的文件，安装终止。"
+    echo "  请先移动/重命名后重试（如为旧版安装残留，确认无需保留后删除）。"
+    fail=1
+fi
+# requirements.txt 安装到应用源码目录
+for pair in "${COPY_APP_FILES[@]}"; do
+    dst_name=${pair##*:}
+    if [ -e "$APP_DIR_SRC/$dst_name" ]; then
+        err "$APP_DIR_SRC/$dst_name 已存在，避免覆盖你自己的文件，安装终止。"
+        echo "  请先移动/重命名后重试。"
+        fail=1
+    fi
+done
+# 项目根 AGENTS.md（AI Agent 使用约定）
+if [ -e "$INSTALL_PATH/AGENTS.md" ]; then
+    err "$INSTALL_PATH/AGENTS.md 已存在，避免覆盖你自己的文件，安装终止。"
+    echo "  请先移动/重命名后重试。"
+    fail=1
+fi
 # 部署辅助脚本安装到 <根>/scripts/：仅当目标脚本同名冲突时终止
 # （scripts/ 目录本身可能属于用户项目，目录已存在但无同名文件时正常合并安装）
 for f in "${SCRIPTS_FILES[@]}"; do
@@ -414,22 +450,46 @@ tar xzf "$TGZ" -C "$DEST" --strip-components=1
 TPL="$DEST/docker-compose.yml.tpl"
 [ -f "$TPL" ] || { err "包内缺少 docker-compose.yml.tpl: $TPL"; exit 1; }
 
-# compose 运行文件：复制模板到项目根目录，仅去掉 .tpl 后缀（不做任何渲染，
-# ${SRC_ROOT:-./{{APP_DIR}}/} / ${SRC_ROOT_NAME:-app} 由 docker compose 运行时解析）
-step "复制 compose 模板"
+# compose 运行文件：复制模板到 docker/ 目录，仅去掉 .tpl 后缀（不做任何渲染，
+# ${SRC_ROOT:-../{{APP_DIR}}/} / ${SRC_ROOT_NAME:-app} 由 docker compose 运行时解析）
+step "复制 compose 模板到 docker/"
+mkdir -p "$DOCKER_DIR"
 cp "$TPL" "$COMPOSE_FILE"
 ok "已创建 ${C_BOLD}$COMPOSE_FILE${C_RESET}"
 
-# 根目录操作文件：从临时目录复制到项目根目录（映射见上）
-step "安装根目录操作文件"
-for pair in "${COPY_ROOT_FILES[@]}"; do
+# docker/ 目录文件：从临时目录复制到 <根>/docker/（映射见上）
+step "安装 docker/ 目录文件"
+for pair in "${COPY_DOCKER_FILES[@]}"; do
     src_name=${pair%%:*}
     dst_name=${pair##*:}
-    cp "$DEST/$src_name" "$INSTALL_PATH/$dst_name"
-    ok "已创建 $INSTALL_PATH/$dst_name ${C_DIM}(来自 $src_name)${C_RESET}"
+    cp "$DEST/$src_name" "$DOCKER_DIR/$dst_name"
+    ok "已创建 $DOCKER_DIR/$dst_name ${C_DIM}(来自 $src_name)${C_RESET}"
 done
 # zip/tar 传输可能丢失可执行位，显式恢复
-chmod 755 "$INSTALL_PATH/build.sh" "$INSTALL_PATH/docker-run.sh"
+chmod 755 "$DOCKER_DIR/build.sh" "$DOCKER_DIR/docker-run.sh" "$DOCKER_DIR/init-deps.sh"
+
+# Makefile 安装到项目根（所有 make 命令都在项目根执行，COMPOSE_FILE 指向
+# docker/docker-compose.yml）
+step "安装项目根 Makefile"
+cp "$DEST/Makefile" "$INSTALL_PATH/Makefile"
+ok "已创建 $INSTALL_PATH/Makefile"
+
+# requirements.txt 安装到应用源码目录（联网重建版 Dockerfile 按
+# context = 项目根 COPY {{APP_DIR}}/requirements.txt）
+step "安装 requirements.txt 到应用源码目录"
+mkdir -p "$APP_DIR_SRC"
+for pair in "${COPY_APP_FILES[@]}"; do
+    src_name=${pair%%:*}
+    dst_name=${pair##*:}
+    cp "$DEST/$src_name" "$APP_DIR_SRC/$dst_name"
+    ok "已创建 $APP_DIR_SRC/$dst_name"
+done
+
+# 项目根 AGENTS.md：AI Agent 使用约定（完全离线开发 / 容器内操作，
+# 详细手册 docs/DEVCONTAINER.md）
+step "安装项目根 AGENTS.md"
+cp "$DEST/AGENTS.md" "$INSTALL_PATH/AGENTS.md"
+ok "已创建 $INSTALL_PATH/AGENTS.md（AI Agent 使用约定）"
 
 # 部署辅助脚本：包内 scripts/ -> <根>/scripts/（Makefile 的 push/apply/
 # rollback/clean 目标按 ./scripts/<脚本> 调用；前置校验已确认无同名冲突，
@@ -443,15 +503,16 @@ done
 # zip/tar 传输可能丢失可执行位，显式恢复
 chmod 755 "$INSTALL_PATH/scripts/push-bundle.sh" "$INSTALL_PATH/scripts/apply-bundle.sh" "$INSTALL_PATH/scripts/rollback-bundle.sh" "$INSTALL_PATH/scripts/clean-images.sh"
 
-# 根目录 .env.example：docker-compose.yml 运行时变量模板（key 与 compose 中
-# ${VAR:-默认值} 一致，docker compose 自动读取项目根 .env）。仅在缺失时安装——
-# 项目通常已有自己的 .env.example，已存在时保留原文件、不中断安装
+# docker/.env.example：docker-compose.yml 运行时变量模板（key 与 compose 中
+# ${VAR:-默认值} 一致，docker compose 的项目目录为 docker/，自动读取
+# docker/.env；需要覆盖默认值时 cp docker/.env.example docker/.env 再改）。
+# 仅在缺失时安装——已存在时保留原文件、不中断安装
 # （部署脚本的 SYNC_REMOTE_* 变量模板随脚本安装在 scripts/.env.example）
-if [ -e "$INSTALL_PATH/.env.example" ]; then
-    note "$INSTALL_PATH/.env.example 已存在，保留原文件（compose 变量默认值可参考包内副本）"
+if [ -e "$DOCKER_DIR/.env.example" ]; then
+    note "$DOCKER_DIR/.env.example 已存在，保留原文件（compose 变量默认值可参考包内副本）"
 else
-    cp "$DEST/.env.example" "$INSTALL_PATH/.env.example"
-    ok "已创建 $INSTALL_PATH/.env.example（docker-compose.yml 运行时变量模板）"
+    cp "$DEST/.env.example" "$DOCKER_DIR/.env.example"
+    ok "已创建 $DOCKER_DIR/.env.example（docker-compose.yml 运行时变量模板）"
 fi
 
 # docs/.gitkeep 与 docs/DEVCONTAINER.md：快速上手说明由包内 README.md 复制
@@ -517,31 +578,16 @@ step "安装 .dockerignore / .gitignore"
 merge_ignore_file ".dockerignore"
 merge_ignore_file ".gitignore"
 
-# deps/：离线依赖目录（deps/wheels 放 Python wheel，deps/packages 放 Npm
-# Download Action 产物）。deps/wheels/requirements.gitkeep.txt：离线安装头
-# （pip 会把 --find-links=./ 解析到本文件所在目录，把 wheel 放进 deps/wheels/
-# 后即可 pip install -r deps/wheels/requirements.gitkeep.txt <包名>）。
-# 两个 gitkeep 占位文件用于让 git 跟踪空目录结构（.gitignore 忽略 deps/ 下
-# 除这两个 gitkeep 占位文件以外的全部内容）
-mkdir -p "$INSTALL_PATH/deps/wheels" "$INSTALL_PATH/deps/packages"
-REQ_FILE="$INSTALL_PATH/deps/wheels/requirements.gitkeep.txt"
-if [ ! -e "$REQ_FILE" ]; then
-    printf -- '--no-index --find-links=./\n' > "$REQ_FILE"
-    ok "已创建 $REQ_FILE（离线安装头）"
-fi
-# deps/packages/packages.gitkeep.json：占位文件。Npm Download Action 的
-# npm_packages 产物（顶层 packages/ 内容：*.tgz + package.json）解压后放入
-# 该目录，bash build.sh 即可一键离线加载前端依赖
-if [ ! -e "$INSTALL_PATH/deps/packages/packages.gitkeep.json" ]; then
-    printf '{}\n' > "$INSTALL_PATH/deps/packages/packages.gitkeep.json"
-    ok "已创建 $INSTALL_PATH/deps/packages/packages.gitkeep.json（占位；放入 Npm Download 产物内容）"
-fi
+# deps/ 离线依赖目录不再默认安装：需要离线补装 Python 包（docker/deps/wheels）
+# 或离线安装前端依赖（docker/deps/packages）时，在项目根执行
+#   bash docker/init-deps.sh
+# 生成 docker/deps/ 目录结构与离线安装头（详见 docker/init-deps.sh 脚本头注释）。
 
-# 应用源码目录（compose 默认把项目根下的 {{APP_DIR}}/ 挂载为 /app）
+# 应用源码目录（compose 默认把 ../{{APP_DIR}}/ 挂载为 /app）
 step "准备应用源码目录"
 mkdir -p "$APP_DIR_SRC"
 ok "已准备源码目录 $APP_DIR_SRC（compose 挂载为 /app）"
-if [ "{{SOURCE_LAYOUT}}" = "api_web" ]; then
+if [ "{{SOURCE_LAYOUT}}" = "febe_separation" ]; then
     mkdir -p "$WEB_DIR_SRC"
     ok "已准备前端目录 $WEB_DIR_SRC（打包产物输出到 $WEB_DIR_SRC/dist/，nginx 启用时由 nginx 托管）"
 fi
@@ -553,8 +599,9 @@ if [ "$NEEDS_MAIN_GO" = "1" ] && [ ! -e "$APP_DIR_SRC/main.go" ]; then
     cp "$DEST/main.go" "$APP_DIR_SRC/main.go"
     ok "已创建占位入口 $APP_DIR_SRC/main.go（docker-run.sh 默认运行 go run main.go，请替换为真实入口）"
 fi
-# 前端目录占位（api_web 布局）：index.html 静态页样例 + package.json（预装 Node 时）
-if [ "{{SOURCE_LAYOUT}}" = "api_web" ]; then
+# 前端占位：febe_separation 布局 web/ 放 index.html 样例与 package.json
+# （预装 Node 时）；single_app 布局把 package.json 放入 app/
+if [ "{{SOURCE_LAYOUT}}" = "febe_separation" ]; then
     if [ ! -e "$WEB_DIR_SRC/index.html" ]; then
         cp "$DEST/index.html" "$WEB_DIR_SRC/index.html"
         ok "已创建占位静态页 $WEB_DIR_SRC/index.html"
@@ -563,6 +610,9 @@ if [ "{{SOURCE_LAYOUT}}" = "api_web" ]; then
         cp "$DEST/package.json" "$WEB_DIR_SRC/package.json"
         ok "已创建前端工程占位 $WEB_DIR_SRC/package.json（请替换为你的前端工程）"
     fi
+elif [ "{{NODE_ENABLED}}" = "1" ] && [ ! -e "$APP_DIR_SRC/package.json" ]; then
+    cp "$DEST/package.json" "$APP_DIR_SRC/package.json"
+    ok "已创建前端工程占位 $APP_DIR_SRC/package.json（请替换为你的前端工程）"
 fi
 
 # ---------- 前端框架（pack_in_artifact）：解压到 <{{VENDOR_BASE_DIR}}>/vendor/<框架标签>-<version> ----------
@@ -574,16 +624,15 @@ if [ "{{FRAMEWORK_ENABLED}}" = "1" ] && [ "{{FRAMEWORK_MODE}}" = "pack_in_artifa
     ok "已安装 $FW_VENDOR_DIR（容器内 /{{VENDOR_BASE_DIR}}/{{FRAMEWORK_VENDOR_DIR}}/{{FRAMEWORK_VENDOR_LABEL}}-$FW_VER/，引用其 dist/ 静态资源）"
 fi
 
-# npm 离线包目录（默认项目根目录 deps/packages/）：提前创建，避免 docker 以 root
-# 身份自动创建空目录；产物由 Npm Download Action 解压后放入该目录。
+# npm 离线包目录不再默认创建（deps/ 已交由 docker/init-deps.sh 按需生成），
+# 仅提示位置；产物由 Npm Download Action 解压后放入该目录。
 if [ "{{NODE_ENABLED}}" = "1" ]; then
     case "{{NPM_PACKAGES_DIR}}" in
         /*)
-            note "npm 离线包目录为绝对路径 {{NPM_PACKAGES_DIR}}（不在项目根内，install.sh 不创建）"
+            note "npm 离线包目录为绝对路径 {{NPM_PACKAGES_DIR}}（需自行创建）"
             ;;
         *)
-            mkdir -p "$INSTALL_PATH/{{NPM_PACKAGES_DIR}}"
-            ok "已准备 npm 离线包目录 $INSTALL_PATH/{{NPM_PACKAGES_DIR}}（放入 Npm Download 产物的 packages/ 内容）"
+            note "npm 离线包目录: docker/{{NPM_PACKAGES_DIR}}（bash docker/init-deps.sh 生成后放入 Npm Download 产物的 packages/ 内容）"
             ;;
     esac
 fi
@@ -591,11 +640,14 @@ fi
 echo ""
 printf '%s\n' "${C_GREEN}${C_BOLD}== 安装完成 ==${C_RESET}"
 echo "项目根目录: ${C_BOLD}$INSTALL_PATH${C_RESET}"
+echo "docker/ 目录: ${C_BOLD}$DOCKER_DIR${C_RESET}（docker-compose.yml / Dockerfile* / build.sh / docker-run.sh / init-deps.sh / .env.example）"
 echo "源码目录: ${C_BOLD}$APP_DIR_SRC${C_RESET}"
-if [ "{{SOURCE_LAYOUT}}" = "api_web" ]; then
+if [ "{{SOURCE_LAYOUT}}" = "febe_separation" ]; then
     echo "前端目录: ${C_BOLD}$WEB_DIR_SRC${C_RESET}"
 fi
 echo "同步清单: ${C_BOLD}$INSTALL_PATH/scripts/manifest.txt${C_RESET}（push/apply/rollback 的目标条目）"
+note "离线依赖目录（可选）: cd \"$INSTALL_PATH\" && bash docker/init-deps.sh  # 生成 docker/deps/（补装 wheel / npm 离线包）"
+note "一键清理镜像与容器: bash \"$SCRIPT_DIR/clean.sh\"  # compose down + 按 images.txt 删除镜像"
 if [ "$LOAD_IMAGES" = "1" ]; then
     if [ "$DEFAULT_MODE" = "1" ]; then
         echo "镜像: 已导入（-d/--default）"

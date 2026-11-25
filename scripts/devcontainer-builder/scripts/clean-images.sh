@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 一键清除本 DevContainer 使用的全部镜像。
-# 镜像清单取自项目根目录 docker-compose.yml（本脚本位于 <项目根>/scripts/，
-# 即脚本所在目录的上一级）的 services 声明（image: 行）：app（prod / dev）
+# 镜像清单取自 docker/docker-compose.yml（本脚本位于 <项目根>/scripts/，即脚本
+# 所在目录的上一级再进 docker/）的 services 声明（image: 行）：app（prod / dev）
 # 与 nginx / postgres 等外挂服务。镜像被运行中的容器占用时无法删除，请先
 # make down；清除后可用 install.sh --load-only 或 docker load -i 重新导入
 # 镜像归档。
@@ -16,14 +16,14 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
-COMPOSE_FILE="$SCRIPT_DIR/../docker-compose.yml"
+COMPOSE_FILE="$SCRIPT_DIR/../docker/docker-compose.yml"
 
 usage() {
     cat <<'EOF'
 用法: bash scripts/clean-images.sh [-y|--yes] [--no-name] [-h|--help]
 
-删除本 DevContainer 使用的镜像：镜像清单取自项目根目录
-docker-compose.yml（脚本所在目录的上一级）的 services 声明（app / dev /
+删除本 DevContainer 使用的镜像：镜像清单取自 docker/docker-compose.yml
+（脚本所在目录的上一级再进 docker/）的 services 声明（app / dev /
 nginx / postgres 等服务的 image: 值），镜像不存在时自动跳过。
 
 选项:

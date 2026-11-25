@@ -359,7 +359,7 @@
           <div class="codebar"><span class="code-label">downloads/ · 等价一键默认</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
           <pre><code>bash install.sh -d</code></pre>
         </div>
-        <p class="muted"><code>-d</code> / <code>--default</code> 固定项目根为 <code>../</code>（自动导入镜像），应用源码放入 <code>../{{APP_DIR}}/</code>（api_web 布局为 <code>../api/</code> + <code>../web/</code>）。prod+dev 镜像模式下可用 <code>--load-target &lt;dev|prod|app|all&gt;</code> 只导入指定镜像（<code>dev</code>=仅 dev 镜像、<code>prod</code>/<code>app</code>=仅 prod 镜像、<code>all</code>=全部，默认；sidecar 镜像 nginx/postgres/mysql/mongo 在任何 target 下都会导入）。</p>
+        <p class="muted"><code>-d</code> / <code>--default</code> 固定项目根为 <code>../</code>（自动导入镜像），应用源码放入 <code>../{{APP_DIR}}/</code>（febe_separation 布局为 <code>../api/</code> + <code>../web/</code>）。prod+dev 镜像模式下可用 <code>--load-target &lt;dev|prod|app|all&gt;</code> 只导入指定镜像（<code>dev</code>=仅 dev 镜像、<code>prod</code>/<code>app</code>=仅 prod 镜像、<code>all</code>=全部，默认；sidecar 镜像 nginx/postgres/mysql/mongo 在任何 target 下都会导入）。</p>
       </div>
 
       <div class="step">
@@ -474,10 +474,10 @@
       <h2><span class="step-dot">05</span>install.sh 做了什么</h2>
       <ul class="checks">
         <li>把 src 包解压到临时目录安装（完成后清理，项目内不留原始副本）。</li>
-        <li>把 <code>Makefile</code> / <code>build.sh</code> / <code>Dockerfile</code>（联网重建版）/ <code>Dockerfile.addon</code>（离线补装版）/ <code>requirements.txt</code> / <code>docker-run.sh</code> / <code>devcontainer.json</code> / <code>.dockerignore</code> / <code>.gitignore</code> 安装到项目根目录，已存在同名文件时终止安装；把 <code>manifest.txt</code>（同步清单）/ <code>push-bundle.sh</code> / <code>apply-bundle.sh</code> / <code>rollback-bundle.sh</code> / <code>clean-images.sh</code> / <code>.env.example</code>（部署辅助脚本）安装到 <code>scripts/</code>（同名冲突时终止）；根目录 <code>.env.example</code>（docker-compose.yml 运行时变量模板）仅在缺失时安装。</li>
-        <li>复制 compose 模板到项目根目录为 <code>docker-compose.yml</code>；把 <code>devcontainer.json</code>（workflow 输入参数快照）安装到项目根目录；快速上手说明安装为 <code>docs/DEVCONTAINER.md</code>（根目录不放 README.md）。<code>docker-run.sh</code>（容器默认启动脚本）由 compose 只读挂载覆盖镜像内副本，改根目录脚本即可调整启动方式，无需重建镜像。</li>
-        <li>准备应用源码目录（single 布局为 <code>app/</code>，api_web 布局为 <code>api/</code> + <code>web/</code>），按预装语言环境放置占位入口；nginx_mode 启用时创建 <code>nginx/</code> 配置模板目录。</li>
-        <li>创建 <code>deps/wheels/requirements.gitkeep.txt</code> 离线安装头（把 wheel 放进 <code>deps/wheels/</code> 后即可离线补装 Python 包）与 <code>deps/packages/packages.gitkeep.json</code> 占位文件（放入 Npm Download Action 产物内容后，<code>bash build.sh</code> 可一键离线加载前端依赖）。</li>
+        <li>把 <code>Makefile</code> / <code>AGENTS.md</code>（AI Agent 使用约定）/ <code>devcontainer.json</code> / <code>.dockerignore</code> / <code>.gitignore</code> 安装到项目根目录；把 <code>Dockerfile</code>（联网重建版）/ <code>Dockerfile.addon</code>（离线补装版）/ <code>build.sh</code> / <code>docker-run.sh</code> / <code>init-deps.sh</code> / <code>docker-compose.yml</code> / <code>.env.example</code> 安装到 <code>docker/</code>；把 <code>requirements.txt</code> 安装到应用源码目录——已存在同名文件时终止安装。把 <code>manifest.txt</code>（同步清单）/ <code>push-bundle.sh</code> / <code>apply-bundle.sh</code> / <code>rollback-bundle.sh</code> / <code>clean-images.sh</code> / <code>.env.example</code>（部署辅助脚本）安装到 <code>scripts/</code>（同名冲突时终止）。</li>
+        <li>复制 compose 模板到 <code>docker/</code> 目录为 <code>docker-compose.yml</code>；把 <code>devcontainer.json</code>（workflow 输入参数快照）安装到项目根目录；快速上手说明安装为 <code>docs/DEVCONTAINER.md</code>（根目录不放 README.md）。<code>docker-run.sh</code>（容器默认启动脚本）由 compose 只读挂载覆盖镜像内副本，改 docker/docker-run.sh 即可调整启动方式，无需重建镜像。</li>
+        <li>准备应用源码目录（single_app 布局为 <code>app/</code>，febe_separation 布局为 <code>api/</code> + <code>web/</code>；<code>requirements.txt</code> 与 <code>package.json</code>（预装 Node 时）按布局放入 <code>app/</code> 或 <code>api/</code>+<code>web/</code>），按预装语言环境放置占位入口；nginx_mode 启用时创建 <code>nginx/</code> 配置模板目录。</li>
+        <li>不再默认安装 <code>deps/</code>：需要离线补装时执行 <code>bash docker/init-deps.sh</code> 生成 <code>docker/deps/</code>（把 wheel 放进 <code>docker/deps/wheels/</code> 后即可离线补装 Python 包；放入 Npm Download Action 产物内容到 <code>docker/deps/packages/</code> 后，<code>bash docker/build.sh</code> 可一键离线加载前端依赖）。</li>
       </ul>
       <p class="muted">详细说明见项目根目录的 <code>docs/DEVCONTAINER.md</code>；push / apply / rollback 的同步范围由 <code>scripts/manifest.txt</code> 决定，备份保存在 <code>bundles/backups/</code>。</p>
     </section>

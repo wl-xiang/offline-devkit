@@ -62,7 +62,10 @@ def download_wheels(p, staging):
     if p.mirror_url:
         cmd += ["--index-url", p.mirror_url]
     if user_pkgs:
-        cmd += ["-r", str(Path(staging) / "requirements.txt")]
+        # requirements.txt 由 render_all 写入应用源码目录子目录
+        # （single_app=app/，febe_separation=api/，与安装布局一致）
+        cmd += ["-r",
+                str(Path(staging) / p.app_dir / "requirements.txt")]
     if dev_tools:
         cmd += dev_tools
 

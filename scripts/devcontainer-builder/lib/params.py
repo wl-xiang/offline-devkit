@@ -60,23 +60,23 @@ DB_SERVICE_IMAGES = {
 #   nginx_binary  = nginx 经 APT 安装进镜像内，容器启动时由 docker-run.sh 拉起，
 #                   对外端口复用 app_port（容器内 nginx 监听 80 反代到应用端口）
 #   nginx_service = 独立 nginx compose 服务（nginx:stable，宿主机 8080 → 容器 80）
-# 两种启用模式下根目录都会生成 nginx/ 配置模板目录；web 静态产物（api_web
-# 布局的 web/dist/）统一托管到 nginx。
+# 两种启用模式下根目录都会生成 nginx/ 配置模板目录；web 静态产物
+# （febe_separation 布局的 web/dist/）统一托管到 nginx。
 NGINX_MODE_CHOICES = ("none", "nginx_binary", "nginx_service")
 
 NGINX_IMAGE = "nginx:stable"
 
 # 源码布局（source_layout，单个下拉参数）：
-#   single = 单体服务：应用源码只在 app/ 目录（compose 默认挂载 ./app/ → /app）
-#   api_web = 前后端分离：后端源码在 api/（app 服务挂载 ./api/ → /app），
+#   single_app = 单体服务：应用源码只在 app/ 目录（compose 默认挂载 ./app/ → /app）
+#   febe_separation = 前后端分离：后端源码在 api/（app 服务挂载 ./api/ → /app），
 #             前端源码在 web/（打包出静态产物 web/dist/ 托管到 nginx）
-SOURCE_LAYOUT_CHOICES = ("single", "api_web")
+SOURCE_LAYOUT_CHOICES = ("single_app", "febe_separation")
 
 # 各布局的应用源码目录（项目根下的相对路径）：app 服务挂载其中第一个，
-# web/ 为前端目录（仅 api_web）
+# web/ 为前端目录（仅 febe_separation）
 SOURCE_LAYOUT_DIRS = {
-    "single": ("app",),
-    "api_web": ("api", "web"),
+    "single_app": ("app",),
+    "febe_separation": ("api", "web"),
 }
 
 # glibc → manylinux 标签（pip 实际使用 manylinux_<glibc>_<arch> 形式，
@@ -315,18 +315,20 @@ class Params:
         return "node24" in self.target_codec
 
     @property
-    def is_api_web(self):
+    def is_febe_separation(self):
         """前后端分离布局（api/ + web/ 目录）。"""
-        return self.source_layout == "api_web"
+        return self.source_layout == "febe_separation"
 
     @property
     def app_dir(self):
-        """app 服务挂载的源码目录（项目根下相对路径）：single=app，api_web=api。"""
+        """app 服务挂载的源码目录（项目根下相对路径）：single_app=app，
+        febe_separation=api。"""
         return SOURCE_LAYOUT_DIRS[self.source_layout][0]
 
     @property
     def src_dirs(self):
-        """本布局的应用源码目录元组：single=(app,)，api_web=(api, web)。"""
+        """本布局的应用源码目录元组：single_app=(app,)，
+        febe_separation=(api, web)。"""
         return SOURCE_LAYOUT_DIRS[self.source_layout]
 
     @property
@@ -581,11 +583,14 @@ class Params:
 
     @property
     def npm_packages_mount_source(self):
-        """宿主机目录（相对项目根或绝对路径），compose 中可用 NPM_PACKAGES_DIR 覆盖。"""
+        """宿主机目录（相对 docker/ 目录或绝对路径），compose 中可用
+        NPM_PACKAGES_DIR 覆盖。compose 项目目录为 docker/（docker-compose.yml
+        所在目录），默认 deps/packages 即 docker/deps/packages（init-deps.sh
+        生成的离线依赖目录）。"""
         path = self.npm_packages_dir.removeprefix("./")
         if self.npm_packages_dir.startswith("/"):
             return "${NPM_PACKAGES_DIR:-" + self.npm_packages_dir + "}"
-        return "${NPM_PACKAGES_DIR:-./" + path + "}"
+        return "${NPM_PACKAGES_DIR:-" + path + "}"
 
     @property
     def oracle_client_mount(self):
@@ -600,11 +605,12 @@ class Params:
 
     @property
     def mount_path(self):
-        """容器 /app 的挂载源。${SRC_ROOT:-./app/}（api_web 布局为
-        ${SRC_ROOT:-./api/}）由 docker compose 在运行时解析（默认 = 项目根下
-        的应用源码目录）；app_source_dir 为相对 SRC_ROOT 的子目录（或绝对路径）。
+        """容器 /app 的挂载源。${SRC_ROOT:-../app/}（febe_separation 布局为
+        ${SRC_ROOT:-../api/}）由 docker compose 在运行时解析（默认 = 项目根下
+        的应用源码目录；SRC_ROOT 相对 compose 项目目录 docker/ 解析，../ 即
+        项目根）；app_source_dir 为相对 SRC_ROOT 的子目录（或绝对路径）。
         SELinux Enforcing 主机可追加 :z 重打标签。"""
-        default_root = "./" + self.app_dir + "/"
+        default_root = "../" + self.app_dir + "/"
         if self.app_source_dir == ".":
             src = "${SRC_ROOT:-" + default_root + "}"
         elif self.app_source_dir.startswith("/"):
@@ -625,7 +631,8 @@ class Params:
 
     @property
     def docker_run_mount(self):
-        """app 服务把项目根 docker-run.sh 只读挂载覆盖镜像内副本的 compose 卷。"""
+        """app/dev 服务把 docker/docker-run.sh 只读挂载覆盖镜像内副本的 compose
+        卷（相对路径相对 compose 项目目录 docker/ 解析）。"""
         return f"./docker-run.sh:{DOCKER_RUN_CONTAINER_PATH}:ro"
 
 
@@ -651,7 +658,7 @@ def load():
         npm_custom_registry_url=_env("NPM_CUSTOM_REGISTRY_URL", ""),
         npm_packages_dir=_env("NPM_PACKAGES_DIR", "deps/packages"),
         css_framework_install=_env("CSS_FRAMEWORK_INSTALL", "none").strip().lower(),
-        source_layout=_env("SOURCE_LAYOUT", "single").strip().lower(),
+        source_layout=_env("SOURCE_LAYOUT", "single_app").strip().lower(),
         nginx_mode=_env("NGINX_MODE", "none").strip().lower(),
         db_service=_env("ENABLE_DB", "none"),
         build_dev_image=_env_bool("BUILD_DEV_IMAGE", True),
@@ -845,7 +852,7 @@ def validate(p):
 WORKFLOW_INPUTS = (
     ("platform", "PLATFORM", "choice", "linux-amd64"),
     ("target_codec", "TARGET_CODEC", "choice", "python3.13"),
-    ("source_layout", "SOURCE_LAYOUT", "choice", "single"),
+    ("source_layout", "SOURCE_LAYOUT", "choice", "single_app"),
     ("pip_packages", "PIP_PACKAGES", "string", ""),
     ("apt_packages", "APT_PACKAGES", "string", ""),
     ("custom_install_cmd", "CUSTOM_INSTALL_CMD", "string", ""),

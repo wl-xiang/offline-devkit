@@ -10,15 +10,9 @@ __pycache__/
 .ruff_cache/
 node_modules/
 
-# deps/ 离线依赖目录：忽略全部内容（wheel / Npm Download 产物等大文件），
-# 仅保留两个 gitkeep 占位文件，让 git 跟踪 deps/wheels 与 deps/packages 目录结构
-deps/*
-!deps/wheels/
-!deps/packages/
-deps/wheels/*
-!deps/wheels/requirements.gitkeep.txt
-deps/packages/*
-!deps/packages/packages.gitkeep.json
+# docker/deps/：离线依赖目录（wheel / Npm Download 产物等大文件，由
+# bash docker/init-deps.sh 按需生成），整体不入库
+docker/deps/
 
 # 所有压缩包与 bundle 产物（push-bundle.sh / apply-bundle.sh / rollback-bundle.sh）
 *.tgz
@@ -30,6 +24,6 @@ deps/packages/*
 # volumes/：DB（postgres/mysql/mongo）数据目录（compose bind mount），不入库
 volumes/
 
-# 本地密钥与变量配置（由 .env.example / scripts/.env.example 复制而来，
-# 含 SSH 密码请勿提交）
+# 本地密钥与变量配置（由 docker/.env.example / scripts/.env.example 复制而来，
+# 含 SSH 密码请勿提交；无路径前缀，docker/.env 同样被忽略）
 .env
