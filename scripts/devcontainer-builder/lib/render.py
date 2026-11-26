@@ -626,7 +626,7 @@ def _node_stage(p):
         return ""
     return (
         "# ---- Node.js 构建阶段：仅用于复制 node/npm，不进入最终镜像 ----\n"
-        f"FROM --platform={p.docker_platform} node:{p.node_version}-slim-bookworm AS node\n"
+        f"FROM --platform={p.docker_platform} node:{p.node_version}-bookworm-slim AS node\n"
         "\n"
     )
 

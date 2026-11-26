@@ -558,7 +558,7 @@ install.sh 复制改名而来）包含
 
 `target_codec` 含 node24 时（如 `python3.13 + node24(npm+pnpm+npx)`），镜像内置
 Node.js 24 + npm + 全局 pnpm + npx（node24 = npm + pnpm + npx，从官方
-`node:24-slim-bookworm` 镜像复制，运行期无需联网），用于
+`node:24-bookworm-slim` 镜像复制，运行期无需联网），用于
 vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download** 工作流
 （仓库 `.github/workflows/npm_download.yml`）的集成方式：
 

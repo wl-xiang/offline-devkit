@@ -1,5 +1,5 @@
 # ---- Node.js {{NODE_VERSION}}（前端离线开发：vite / webpack / vue / react）----
-# 从官方 node:slim-bookworm 镜像复制 node/npm，运行期不再依赖网络或 Debian
+# 从官方 node:bookworm-slim 镜像复制 node/npm，运行期不再依赖网络或 Debian
 # 源里的旧版 nodejs/npm 包；corepack/yarn 不复制，保持镜像精简。
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \

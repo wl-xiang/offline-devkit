@@ -818,6 +818,13 @@ jobs:
           if [ "$NODE_ENABLED" = "true" ]; then
             grep -q 'COPY --from=node' /tmp/Dockerfile \
               || { echo "::error::Dockerfile 缺少 Node.js 安装层"; exit 1; }
+            # 官方 node 镜像 tag 顺序为 <version>-bookworm-slim（非 python 的 slim-bookworm）
+            grep -q 'node:24-bookworm-slim AS node' /tmp/Dockerfile \
+              || { echo "::error::Dockerfile Node.js 基础镜像应为 node:24-bookworm-slim"; exit 1; }
+            if grep -q 'node:24-slim-bookworm' /tmp/Dockerfile; then
+              echo "::error::Dockerfile 使用了不存在的 node:24-slim-bookworm tag"
+              exit 1
+            fi
             grep -q 'NPM_PACKAGES_DIR:-' /tmp/compose.tpl \
               || { echo "::error::compose 模板缺少 npm 离线包挂载"; exit 1; }
             grep -q '/opt/npm-packages' /tmp/compose.tpl \
