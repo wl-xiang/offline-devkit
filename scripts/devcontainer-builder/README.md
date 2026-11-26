@@ -216,7 +216,7 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   [oracle2excel](https://github.com/wl-xiang/oracle2excel/blob/main/Dockerfile)
   在构建期下载官方 Instant Client 19 Basic 包并解压进镜像（客户端随镜像分发，
   不生成挂载）。后两者都追加 `oracledb==2.5.1`；
-  node24（`target_codec` 含 node24）→ 从官方 `node:24-slim-bookworm` 复制
+  node24（`target_codec` 含 node24）→ 从官方 `node:24-bookworm-slim` 复制
   node/npm 并经 npm 全局安装 pnpm（node24 = npm + pnpm + npx），可选
   `npm_packages` 构建期从官方 npm 源全局安装；Npm Download 产物目录由 compose
   只读挂载到 `/opt/npm-packages`，配合 `make npm-install` 离线安装前端依赖
