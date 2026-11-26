@@ -12,7 +12,7 @@
 2. 进入 Fork 后的仓库，点击顶部 **Actions** 标签。
 3. 在左侧工作流列表中选择 **Pip Download**，点击 **Run workflow**。
 4. 填写触发参数（见下表），点击 **Run workflow** 启动。
-5. 运行完成后打开该次运行，在 **Summary** 底部的 **Artifacts** 区域下载 `wheels_<platform>_<arch>_py<version>.zip` 产物。
+5. 运行完成后打开该次运行，在 **Summary** 底部的 **Artifacts** 区域下载 `wheels_<platform>_<python_version>_<mmdd-HHMM>.zip` 产物。
 6. 解压产物后，在内网/目标机器上执行 `pip install -r requirements.txt` 即可离线安装全部依赖。
 
 ### 触发参数（Inputs）
@@ -346,7 +346,7 @@ clear.bat packages node_modules
 ## 内网安装
 
 ### Python 包安装
-1. 下载并解压 Action 产物 `wheels_<platform>_<arch>_py<version>.zip`（或本地打包的 `tarballs/wheels_${PLATFORM}_${ARCH}_py${VERSION}.tar.gz`），得到 `wheels/` 目录。
+1. 下载并解压 Action 产物 `wheels_<platform>_<python_version>_<mmdd-HHMM>.zip`（或本地打包的 `tarballs/wheels_${PLATFORM}_${ARCH}_py${VERSION}.tar.gz`），得到 `wheels/` 目录。
 2. 进入 `wheels/` 目录：
 ```bash
 cd wheels
