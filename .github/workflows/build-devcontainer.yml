@@ -926,6 +926,12 @@ jobs:
               grep -qE "^$tgt:" /tmp/Makefile \
                 || { echo "::error::Makefile 缺少 $tgt 目标"; exit 1; }
             done
+            # 安装后的 docs/DEVCONTAINER.md（包内 README.md）需列出新增 make 命令
+            tar xzf "$SRC_TGZ" -O devcontainer-src/README.md > /tmp/README.src.md
+            for tgt in vue-init vue-dev vue-check vue-build vue-test vue-e2e; do
+              grep -q "make $tgt" /tmp/README.src.md \
+                || { echo "::error::docs/DEVCONTAINER.md 缺少 make $tgt 说明"; exit 1; }
+            done
             grep -q 'make vue-init' "$INSTALL_SH" \
               || { echo "::error::install.sh 缺少 Vue 初始化提示"; exit 1; }
             # 根 .gitignore / .dockerignore 需按布局目录忽略前端依赖与构建产物
@@ -976,6 +982,11 @@ jobs:
             tar xzf "$SRC_TGZ" -O devcontainer-src/.dockerignore > /tmp/dockerignore
             if grep -q 'enable_fe_framework=vue' /tmp/gitignore /tmp/dockerignore; then
               echo "::error::enable_fe_framework=none 时 .gitignore/.dockerignore 不应含 Vue 段"
+              exit 1
+            fi
+            tar xzf "$SRC_TGZ" -O devcontainer-src/README.md > /tmp/README.src.md
+            if grep -q 'make vue-' /tmp/README.src.md; then
+              echo "::error::enable_fe_framework=none 时 docs/DEVCONTAINER.md 不应含 Vue 命令"
               exit 1
             fi
             echo "vue frontend wiring OK (none)"

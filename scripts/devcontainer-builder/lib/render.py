@@ -1421,6 +1421,37 @@ vue-tsc、@vue/test-utils、Stylelint、Commitlint、Playwright（chromium 已�
 """
 
 
+def _vue_readme_quickstart(p):
+    """src README「首次使用」代码块的 Vue 命令段（enable_fe_framework=vue）。"""
+    if not p.vue_enabled:
+        return ""
+    return (
+        "# 5. Vue 前端（仅 dev 镜像；首次先初始化模板）\n"
+        "make vue-init     # 复制模板（含 node_modules）到 "
+        f"{p.vue_dir}/，已存在 package.json 时跳过\n"
+        "make vue-dev      # 启动开发服务器（宿主机 5173）\n"
+        f"make vue-build    # 生产构建，产物 {p.vue_dir}/dist（nginx 托管）\n"
+        "make vue-check    # vp check（格式化 + lint + 类型检查）\n"
+        "make vue-test     # Vitest 单元测试\n"
+        "make vue-e2e      # Playwright E2E（chromium 已内置）\n"
+    )
+
+
+def _vue_readme_notes(p):
+    """src README「说明」列表的 Vue 命令条目（enable_fe_framework=vue）。"""
+    if not p.vue_enabled:
+        return ""
+    return (
+        f"- **Vue 前端命令**（`enable_fe_framework=vue`，仅 dev 镜像）："
+        f"`make vue-init` 初始化模板到 `{p.vue_dir}/`（含 node_modules）、"
+        "`make vue-dev` 启动开发服务器（宿主机 5173）、`make vue-check` 做格式化/"
+        "lint/类型检查、`make vue-build` 生产构建（产物 "
+        f"`{p.vue_dir}/dist`，nginx 托管）、`make vue-test` 跑 Vitest、"
+        "`make vue-e2e` 跑 Playwright E2E（chromium 已内置）。详见下文"
+        "「Vue 前端技术栈」。\n"
+    )
+
+
 def _vue_html_section(p):
     """readme.html 的 Vue 前端技术栈卡片。"""
     if not p.vue_enabled:
@@ -1435,7 +1466,10 @@ def _vue_html_section(p):
         <div class="codebar"><span class="code-label">项目根目录</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
         <pre><code>make vue-init    # 初始化 Vue 模板（含 node_modules）
 make vue-dev     # vp dev --host 0.0.0.0（宿主机 5173）
-make vue-build   # vp build（产物 {p.vue_dir}/dist，nginx 托管）</code></pre>
+make vue-check   # vp check（格式化 + lint + 类型检查）
+make vue-build   # vp build（产物 {p.vue_dir}/dist，nginx 托管）
+make vue-test    # vp test（Vitest）
+make vue-e2e     # Playwright E2E（chromium 已内置）</code></pre>
       </div>
       <div class="tip"><strong>Vite+：</strong>Vue 技术栈内置 Rolldown / Oxlint / Oxfmt / Vitest /
       Vite Task，统一通过 <code>vp dev</code> / <code>vp build</code> / <code>vp check</code> /
@@ -2049,6 +2083,8 @@ def render_src_readme(p):
             "FRAMEWORK_SECTION": _framework_readme_section(p),
             "NPM_SECTION": _npm_readme_section(p),
             "VUE_SECTION": _vue_readme_section(p),
+            "VUE_QUICKSTART": _vue_readme_quickstart(p),
+            "VUE_NOTES": _vue_readme_notes(p),
             "AGENT_SECTION": _agent_readme_section(p),
         },
     )
