@@ -919,6 +919,7 @@ jobs:
               || { echo "::error::vue 模式 Dockerfile 缺少 Playwright chromium"; exit 1; }
             tar tzf "$SRC_TGZ" > /tmp/src_vue.list
             for f in vue-template/package.json vue-template/vite.config.ts \
+                     vue-template/pnpm-workspace.yaml \
                      vue-template/.vscode/extensions.json vue-template/.vscode/settings.json; do
               grep -q "^devcontainer-src/$f$" /tmp/src_vue.list \
                 || { echo "::error::src 包缺少 $f"; exit 1; }
@@ -929,6 +930,15 @@ jobs:
             tar xzf "$SRC_TGZ" -O devcontainer-src/vue-template/.vscode/settings.json > /tmp/vscode_settings.json
             grep -q 'oxc.oxc-vscode' /tmp/vscode_settings.json \
               || { echo "::error::.vscode/settings.json 未把默认 formatter 设为 Oxc"; exit 1; }
+            # pnpm 11+ 默认拒绝未放行的依赖构建脚本（ERR_PNPM_IGNORED_BUILDS）
+            tar xzf "$SRC_TGZ" -O devcontainer-src/vue-template/pnpm-workspace.yaml > /tmp/pnpm_ws.yaml
+            grep -q 'allowBuilds' /tmp/pnpm_ws.yaml \
+              || { echo "::error::pnpm-workspace.yaml 缺少 allowBuilds"; exit 1; }
+            grep -q '@parcel/watcher' /tmp/pnpm_ws.yaml \
+              || { echo "::error::pnpm allowBuilds 未放行 @parcel/watcher"; exit 1; }
+            # Vite+ 环境托管关闭（运行期不联网下载 Node）
+            grep -q 'VP_NODE_MANAGER=no' /tmp/Dockerfile \
+              || { echo "::error::vue 模式 Dockerfile 应设置 VP_NODE_MANAGER=no"; exit 1; }
             for tgt in vue-init vue-dev vue-check vue-build vue-test vue-e2e; do
               grep -qE "^$tgt:" /tmp/Makefile \
                 || { echo "::error::Makefile 缺少 $tgt 目标"; exit 1; }

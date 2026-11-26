@@ -1,0 +1,6 @@
+# pnpm 11+ 默认禁止依赖执行构建脚本（strict_dep_builds=true），
+# 未显式放行的包会让 pnpm install 直接失败（ERR_PNPM_IGNORED_BUILDS）。
+# @parcel/watcher 需要执行 install（node-gyp-build 优先使用预编译二进制）。
+# 新增带 install/postinstall 的依赖时，在此追加 allowBuilds 条目。
+allowBuilds:
+  "@parcel/watcher": true

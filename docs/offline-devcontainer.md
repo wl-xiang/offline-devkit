@@ -687,6 +687,12 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
   `*.tsbuildinfo` 与本地 `.env.local` 等；`vue-template/` 目录本身不整体忽略
   （随同步清单分发，供联网重建镜像 `COPY`），其中预装的 `node_modules/`
   由通用规则排除。
+- **pnpm 兼容**：pnpm 11+ 默认拒绝未放行的依赖构建脚本
+  （`ERR_PNPM_IGNORED_BUILDS`）。模板在 `pnpm-workspace.yaml` 中用
+  `allowBuilds` 放行 `@parcel/watcher`，并把 Vite+ 的 `vite` / `vitest`
+  版本写入同一文件的 `overrides`（pnpm 12 起不再读取 `package.json` 的
+  `pnpm` 字段）。Vite+ 环境托管通过 `VP_NODE_MANAGER=no` / `VP_PM_MANAGER=no`
+  关闭，运行期不联网下载 Node。
 
 ## 设计说明
 
