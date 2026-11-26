@@ -33,7 +33,7 @@ scripts/devcontainer-builder/
     ├── Dockerfile.oracle.full.tmpl # Oracle full 块：运行依赖 + 官方 Basic 包下载解压 + 环境变量
     ├── Dockerfile.node.tmpl       # Node.js/npm 块（从官方 node 镜像复制，target_codec 含 node24 时插入）
     ├── Dockerfile.vue.tmpl        # Vue 3 + TypeScript + Vite Plus 块（仅 dev 阶段；全局 CLI + /opt/vue-template）
-    ├── vue/                       # Vue 启动模板（package.json/.vscode/vite.config/src 等；
+    ├── vue/                       # Vue 启动模板（package.json/pnpm-workspace.yaml/.vscode/vite.config/src 等；
     │                              #   构建期复制为 vue-template/，在 dev 镜像内 pnpm install）
     ├── compose.base.tmpl          # compose 模板骨架（app 服务 + 占位块；输出为 .tpl）
     ├── compose.service.nginx.tmpl # nginx 服务子模板
