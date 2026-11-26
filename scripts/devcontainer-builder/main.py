@@ -74,6 +74,12 @@ def main():
     print(f"  node={p.enable_node}(v{p.node_version}) npm_packages={p.npm_package_list} "
           f"npm_packages_dir={p.npm_packages_dir}")
     print(f"  css_framework_install={p.css_framework_install}")
+    print(f"  enable_fe_framework={p.fe_framework}"
+          + (f" (Vue stack: dev only, dir={p.vue_dir}/, "
+             f"node_dev_only={p.node_dev_only})" if p.vue_enabled else ""))
+    if p.vue_enabled and not p.node_in_target:
+        print("  注意: enable_fe_framework=vue 自动启用 Node 24，"
+              "且前端依赖只安装进 dev 镜像（prod 仅保留后端依赖）")
     print(f"  enable_sync_tool={p.enable_sync_tool}"
           + (f" (push image={p.sync_image})" if p.enable_sync_tool else ""))
 

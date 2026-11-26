@@ -22,6 +22,10 @@ from .params import (
     SYNC_BASE_IMAGE,
     SYNC_CONTAINER_HOME,
     SYNC_CONTAINER_WORKDIR,
+    VUE_GLOBAL_CLI_PACKAGES,
+    VUE_PLAYWRIGHT_DIR,
+    VUE_STACK_NAME,
+    VUE_TEMPLATE_DIR,
 )
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -180,6 +184,39 @@ npm-version: check-dev ## 查看容器内 node / npm 版本
 """
 
 _NPM_PHONY = "npm-install npm-version "
+
+# Vue 前端技术栈（enable_fe_framework=vue）：make 目标。Vue 依赖只安装在 dev
+# 镜像，项目模板固定在镜像内 VUE_TEMPLATE_DIR（含 node_modules），
+# make vue-init 离线复制到前端源码目录（single_app=app/，febe_separation=web/）。
+_VUE_MAKE_TARGETS = """\
+VUE_PORT ?= 5173
+
+vue-init: check-dev ## 初始化 Vue 项目模板（从 dev 镜像 {{VUE_TEMPLATE_DIR}}，含 node_modules）
+\t$(COMPOSE) run --rm --no-deps -v "$(CURDIR)/{{VUE_DIR}}:/vue-target" dev bash -c 'set -e; \\
+\t\tif [ -f /vue-target/package.json ]; then \\
+\t\t\techo "    /vue-target/package.json 已存在，跳过 Vue 模板初始化"; exit 0; \\
+\t\tfi; \\
+\t\tcp -a {{VUE_TEMPLATE_DIR}}/. /vue-target/; \\
+\t\techo "    Vue 模板已初始化到 {{VUE_DIR}}/（容器内 /vue-target）"'
+
+vue-dev: check-dev ## 启动 Vue 开发服务器（Vite+ vp dev，宿主机 $(VUE_PORT) → 容器 5173）
+\t$(COMPOSE) run --rm -p "$(VUE_PORT):5173" -v "$(CURDIR)/{{VUE_DIR}}:/vue-target" -w /vue-target dev bash -c 'pnpm dev --host 0.0.0.0'
+
+vue-check: check-dev ## Vue 项目检查（vp check：格式化 + lint + 类型检查）
+\t$(COMPOSE) run --rm --no-deps -v "$(CURDIR)/{{VUE_DIR}}:/vue-target" -w /vue-target dev bash -c 'pnpm exec vp check'
+
+vue-build: check-dev ## 构建 Vue 生产静态产物到 {{VUE_DIR}}/dist（nginx 托管）
+\t$(COMPOSE) run --rm --no-deps -v "$(CURDIR)/{{VUE_DIR}}:/vue-target" -w /vue-target dev bash -c 'pnpm build'
+
+vue-test: check-dev ## 运行 Vue 单元测试（Vite+ vp test / Vitest）
+\t$(COMPOSE) run --rm --no-deps -v "$(CURDIR)/{{VUE_DIR}}:/vue-target" -w /vue-target dev bash -c 'pnpm exec vp test --run --passWithNoTests'
+
+vue-e2e: check-dev ## 运行 Playwright E2E（chromium 已内置 /opt/ms-playwright）
+\t$(COMPOSE) run --rm --no-deps -v "$(CURDIR)/{{VUE_DIR}}:/vue-target" -w /vue-target dev bash -c 'pnpm test:e2e'
+
+"""
+
+_VUE_PHONY = "vue-init vue-dev vue-check vue-build vue-test vue-e2e "
 
 # Dockerfile.addon 中基于现有镜像的阶段（离线补装 Python 包，配合 build.sh）。
 # requirements.txt 只在含有真实包名（非选项/注释/空行）时才按清单安装，
@@ -368,6 +405,14 @@ def _base_mapping(p):
         "NPM_MAKE_TARGETS": _npm_make_targets(p),
         "NPM_PHONY": _NPM_PHONY if (p.enable_node and p.dev_tools_enabled) else "",
         "NPM_CHECK": _npm_check(p),
+        # ---- 前端完整技术栈（enable_fe_framework=vue，仅 dev 镜像） ----
+        "FE_FRAMEWORK": p.fe_framework,
+        "VUE_ENABLED": "1" if p.vue_enabled else "0",
+        "VUE_DIR": p.vue_dir,
+        "VUE_STACK_NAME": VUE_STACK_NAME,
+        "VUE_TEMPLATE_DIR": VUE_TEMPLATE_DIR,
+        "VUE_GITIGNORE_BLOCK": _vue_gitignore_block(p),
+        "VUE_DOCKERIGNORE_BLOCK": _vue_dockerignore_block(p),
         # ---- 前端框架（Bootstrap / Tailwind CSS）----
         "FRAMEWORK_ENABLED": "1" if p.framework_enabled else "0",
         "FRAMEWORK_NAME": FRAMEWORK_NAMES[p.framework_name],
@@ -453,6 +498,9 @@ def manifest_entries(p):
     entries += ["docs/", "scripts/", "docker/"]
     if p.enable_nginx:
         entries.append("nginx/")
+    if p.vue_enabled:
+        # Vue 模板源码骨架：联网重建 Dockerfile 的 COPY 依赖，随清单同步
+        entries.append("vue-template/")
     entries += list(MANIFEST_ROOT_FILES)
     return entries
 
@@ -638,6 +686,11 @@ def _npm_make_targets(p):
 
 
 def _npm_check(p):
+    if p.vue_enabled:
+        return (
+            '\t@echo "  OK    Vue 前端模板: /opt/vue-template'
+            '（make vue-init 初始化到前端目录，含 node_modules）"\n'
+        )
     if not p.enable_node:
         return ""
     return (
@@ -648,6 +701,22 @@ def _npm_check(p):
         '需要前端离线依赖时请解压 Npm Download Action 产物"; \\\n'
         "\tfi\n"
     )
+
+
+def _vue_block(p):
+    """Vue 前端技术栈块（enable_fe_framework=vue）。
+
+    只插入 dev 镜像阶段：全局 CLI + 预构建 /opt/vue-template（含 node_modules）。
+    prod 镜像保持只含后端依赖，前端静态产物由 nginx 托管。
+    """
+    if not p.vue_enabled:
+        return ""
+    return _sub(_load("Dockerfile.vue.tmpl"), {
+        "NPM_REGISTRY_URL": p.npm_registry_url,
+        "VUE_GLOBAL_PACKAGES": " ".join(VUE_GLOBAL_CLI_PACKAGES),
+        "VUE_TEMPLATE_DIR": VUE_TEMPLATE_DIR,
+        "VUE_PLAYWRIGHT_DIR": VUE_PLAYWRIGHT_DIR,
+    })
 
 
 def _install_block(p, local_wheels, req_path="requirements.txt"):
@@ -708,12 +777,23 @@ def render_dockerfile(p, local_wheels=True):
         "INSTALL_BLOCK": _install_block(p, local_wheels, req_path),
         "DEV_PIP_BLOCK": _dev_pip_block(p, local_wheels),
         "ORACLE_BLOCK": _oracle_block(p),
-        "NODE_BLOCK": _node_block(p),
+        # prod 镜像：仅 target_codec 显式含 node24 时安装 Node（保持既有行为）
+        "NODE_BLOCK": _node_block(p) if p.node_in_prod else "",
+        # dev 镜像：Vue 预设自动带出的 Node 只装在 dev 阶段
+        "DEV_NODE_BLOCK": _node_block(p) if p.node_dev_only else "",
+        # Vue 技术栈只插入 dev 阶段（prod 只保留后端依赖）
+        "VUE_BLOCK": _vue_block(p),
         "PLAYWRIGHT_BLOCK": _playwright_block(p),
     }
     if p.dev_image_only:
-        # 仅 dev 镜像模式：单阶段 Dockerfile，产物只有一个 dev 镜像
-        return _sub(_load("Dockerfile.devonly.tmpl"), base)
+        # 仅 dev 镜像模式：单阶段 Dockerfile，产物只有一个 dev 镜像；
+        # 本阶段即 dev，Node 块直接安装在此
+        devonly = {
+            **base,
+            "NODE_BLOCK": _node_block(p),
+            "DEV_NODE_BLOCK": "",
+        }
+        return _sub(_load("Dockerfile.devonly.tmpl"), devonly)
 
     dev_stage = ""
     if p.build_dev_image:
@@ -922,6 +1002,11 @@ def render_makefile(p):
     if p.dev_tools_enabled and p.python_enabled:
         phony_dev += _PY_PHONY
     npm_phony = _NPM_PHONY if (p.enable_node and p.dev_tools_enabled) else ""
+    vue_targets = ""
+    vue_phony = ""
+    if p.vue_enabled:
+        vue_targets = _sub(_VUE_MAKE_TARGETS, _base_mapping(p))
+        vue_phony = _VUE_PHONY
     sync_targets = ""
     sync_phony = ""
     if p.enable_sync_tool:
@@ -935,6 +1020,8 @@ def render_makefile(p):
             "PHONY_DEV": phony_dev,
             "NPM_TARGETS": _npm_make_targets(p),
             "PHONY_NPM": npm_phony,
+            "VUE_TARGETS": vue_targets,
+            "PHONY_VUE": vue_phony,
             "SYNC_TARGETS": sync_targets,
             "PHONY_SYNC": sync_phony,
         },
@@ -956,6 +1043,52 @@ def render_dockerignore(p):
 def render_gitignore(p):
     """项目根目录 .gitignore（install.sh 安装/合并），忽略离线产物与本地补装缓存。"""
     return _sub(_load("gitignore.tmpl"), _base_mapping(p))
+
+
+def _vue_gitignore_block(p):
+    """根 .gitignore 的 Vue 段（enable_fe_framework=vue）：只按前端目录生效。"""
+    if not p.vue_enabled:
+        return ""
+    d = p.vue_dir
+    return (
+        "\n# ---- Vue 前端（enable_fe_framework=vue）----\n"
+        "# 依赖、构建产物、测试报告与本地环境变量不提交\n"
+        f"{d}/node_modules/\n"
+        f"{d}/dist/\n"
+        f"{d}/.vite/\n"
+        f"{d}/coverage/\n"
+        f"{d}/stats.html\n"
+        f"{d}/playwright-report/\n"
+        f"{d}/test-results/\n"
+        f"{d}/blob-report/\n"
+        f"{d}/*.tsbuildinfo\n"
+        f"{d}/.env.local\n"
+        f"{d}/.env.*.local\n"
+    )
+
+
+def _vue_dockerignore_block(p):
+    """根 .dockerignore 的 Vue 段：仅保留源码，依赖/产物不进构建上下文。"""
+    if not p.vue_enabled:
+        return ""
+    d = p.vue_dir
+    return (
+        "\n# ---- Vue 前端（enable_fe_framework=vue）----\n"
+        "# 仅保留源码：依赖/构建产物/测试报告不进构建上下文\n"
+        f"{d}/node_modules/\n"
+        f"{d}/dist/\n"
+        f"{d}/.vite/\n"
+        f"{d}/coverage/\n"
+        f"{d}/stats.html\n"
+        f"{d}/playwright-report/\n"
+        f"{d}/test-results/\n"
+        f"{d}/blob-report/\n"
+        f"{d}/*.tsbuildinfo\n"
+        f"{d}/.env.local\n"
+        f"{d}/.env.*.local\n"
+        "# vue-template/ 的源码需保留给 COPY（联网重建镜像）；仅排除其预装依赖\n"
+        "vue-template/node_modules/\n"
+    )
 
 
 def _env_example_npm_block(p):
@@ -1027,7 +1160,20 @@ def render_agents_md(p):
         **_base_mapping(p),
         "SERVICES_SUMMARY": db_summary,
         "WEB_DIR_NOTE": web_note,
+        "VUE_NOTE": _vue_agents_note(p),
     })
+
+
+def _vue_agents_note(p):
+    """AGENTS.md 的 Vue 使用约定（enable_fe_framework=vue 时）。"""
+    if not p.vue_enabled:
+        return ""
+    return (
+        f"- **Vue 前端技术栈**（`enable_fe_framework=vue`，仅 dev 镜像）：首次执行 "
+        f"`make vue-init` 初始化模板到 `{p.vue_dir}/`（含 node_modules）；"
+        f"`make vue-dev` 启动开发服务器，`make vue-check` / `make vue-build` 做检查与"
+        f"生产构建（产物 `{p.vue_dir}/dist` 由 nginx 托管）。\n"
+    )
 
 
 def render_clean_sh(p, out_file):
@@ -1227,6 +1373,111 @@ note "升级版本：重新构建即可拉取最新版（tailwindcss 与 @tailwi
 '''
 
 
+def _vue_notice_block(p):
+    """install.sh 中的 Vue 前端技术栈提示（enable_fe_framework=vue）。"""
+    if not p.vue_enabled:
+        return ""
+    return f'''
+echo ""
+printf '%s\\n' "${{C_BOLD}}{VUE_STACK_NAME}（本包已启用，仅 dev 镜像）${{C_RESET}}"
+note "前端依赖已预装在 dev 镜像的 {VUE_TEMPLATE_DIR}（含 node_modules）；prod 镜像只保留后端依赖"
+note "1. 初始化前端工程: make vue-init   # 复制模板到 {p.vue_dir}/（已存在 package.json 时跳过）"
+note "2. 开发调试: make vue-dev        # vp dev --host 0.0.0.0，宿主机 5173"
+note "3. 检查/构建: make vue-check / make vue-build（产物 {p.vue_dir}/dist，nginx 托管）"
+note "4. 测试: make vue-test / make vue-e2e（Vitest / Playwright）"
+note "5. Vite+ 统一提供 dev/build/lint/fmt/test/check/run（vp），无需 ESLint/Prettier"
+'''
+
+
+def _vue_readme_section(p):
+    """src README 的 Vue 前端技术栈章节。"""
+    if not p.vue_enabled:
+        return ""
+    return f"""
+## Vue 前端技术栈（enable_fe_framework=vue）
+
+本次构建只在 **dev 镜像**中预装 {VUE_STACK_NAME}（含 node_modules）；prod 镜像
+只保留后端依赖，前端 `dist/` 由 nginx 托管。项目模板固定在镜像内
+`{VUE_TEMPLATE_DIR}`，首次使用时初始化到 `{p.vue_dir}/`：
+
+```bash
+make vue-init     # 复制模板（含 node_modules）到 {p.vue_dir}/，已存在 package.json 时跳过
+make vue-dev      # vp dev --host 0.0.0.0（宿主机 5173）
+make vue-check    # vp check（格式化 + lint + 类型检查）
+make vue-build    # vp build，静态产物输出到 {p.vue_dir}/dist
+make vue-test     # vp test（Vitest）
+make vue-e2e      # Playwright E2E（chromium 已内置）
+```
+
+技术栈：Vue 3 + TypeScript、Vue Router 4、Pinia + persistedstate、Axios、VueUse、
+Element Plus、Lucide、motion-v、Tailwind CSS v4、Reka UI + shadcn-vue、
+vue-draggable-plus、TipTap；工具链 Vite Plus（Rolldown/Oxlint/Oxfmt/Vitest/Vite Task）、
+vue-tsc、@vue/test-utils、Stylelint、Commitlint、Playwright（chromium 已下载到
+`{VUE_PLAYWRIGHT_DIR}`）、rollup-plugin-visualizer。VS Code 默认 formatter 为 Oxc
+（`.vscode/settings.json`），推荐安装 `oxc.oxc-vscode`。
+
+静态托管：`febe_separation` 布局产物在 `web/dist`，启用 nginx 时由 nginx 托管；
+`single_app` 布局产物在 `app/dist`，请由后端或自定义 nginx 规则托管。
+"""
+
+
+def _vue_readme_quickstart(p):
+    """src README「首次使用」代码块的 Vue 命令段（enable_fe_framework=vue）。"""
+    if not p.vue_enabled:
+        return ""
+    return (
+        "# 5. Vue 前端（仅 dev 镜像；首次先初始化模板）\n"
+        "make vue-init     # 复制模板（含 node_modules）到 "
+        f"{p.vue_dir}/，已存在 package.json 时跳过\n"
+        "make vue-dev      # 启动开发服务器（宿主机 5173）\n"
+        f"make vue-build    # 生产构建，产物 {p.vue_dir}/dist（nginx 托管）\n"
+        "make vue-check    # vp check（格式化 + lint + 类型检查）\n"
+        "make vue-test     # Vitest 单元测试\n"
+        "make vue-e2e      # Playwright E2E（chromium 已内置）\n"
+    )
+
+
+def _vue_readme_notes(p):
+    """src README「说明」列表的 Vue 命令条目（enable_fe_framework=vue）。"""
+    if not p.vue_enabled:
+        return ""
+    return (
+        f"- **Vue 前端命令**（`enable_fe_framework=vue`，仅 dev 镜像）："
+        f"`make vue-init` 初始化模板到 `{p.vue_dir}/`（含 node_modules）、"
+        "`make vue-dev` 启动开发服务器（宿主机 5173）、`make vue-check` 做格式化/"
+        "lint/类型检查、`make vue-build` 生产构建（产物 "
+        f"`{p.vue_dir}/dist`，nginx 托管）、`make vue-test` 跑 Vitest、"
+        "`make vue-e2e` 跑 Playwright E2E（chromium 已内置）。详见下文"
+        "「Vue 前端技术栈」。\n"
+    )
+
+
+def _vue_html_section(p):
+    """readme.html 的 Vue 前端技术栈卡片。"""
+    if not p.vue_enabled:
+        return ""
+    return f"""
+    <section class="card">
+      <h2><span class="step-dot">Vue</span>Vue 前端技术栈（仅 dev 镜像）</h2>
+      <p>本次构建在 <strong>dev 镜像</strong>预装 {VUE_STACK_NAME}（含 node_modules）；
+      prod 镜像只保留后端依赖，前端 <code>dist/</code> 由 nginx 托管。项目模板位于镜像内
+      <code>{VUE_TEMPLATE_DIR}</code>，首次使用初始化到 <code>{p.vue_dir}/</code>。</p>
+      <div class="codeblock">
+        <div class="codebar"><span class="code-label">项目根目录</span><button class="copy-btn" type="button" aria-label="复制命令">复制</button></div>
+        <pre><code>make vue-init    # 初始化 Vue 模板（含 node_modules）
+make vue-dev     # vp dev --host 0.0.0.0（宿主机 5173）
+make vue-check   # vp check（格式化 + lint + 类型检查）
+make vue-build   # vp build（产物 {p.vue_dir}/dist，nginx 托管）
+make vue-test    # vp test（Vitest）
+make vue-e2e     # Playwright E2E（chromium 已内置）</code></pre>
+      </div>
+      <div class="tip"><strong>Vite+：</strong>Vue 技术栈内置 Rolldown / Oxlint / Oxfmt / Vitest /
+      Vite Task，统一通过 <code>vp dev</code> / <code>vp build</code> / <code>vp check</code> /
+      <code>vp test</code> / <code>vp run</code> 使用，无需 ESLint / Prettier。</div>
+    </section>
+"""
+
+
 def render_install_sh(p, out_file):
     """渲染安装脚本到 dist/（独立 artifact，不进 src tgz）。"""
     content = _sub(
@@ -1237,6 +1488,7 @@ def render_install_sh(p, out_file):
             "NPM_NOTICE_BLOCK": _npm_notice_block(p),
             "SYNC_NOTICE_BLOCK": _sync_notice_block(p),
             "FRAMEWORK_NOTICE_BLOCK": _framework_notice_block(p),
+            "VUE_NOTICE_BLOCK": _vue_notice_block(p),
         },
     )
     path = Path(out_file)
@@ -1527,6 +1779,7 @@ def render_readme_html(p, out_file):
             "ORACLE_SECTION": _oracle_html_section(p),
             "NPM_SECTION": _npm_html_section(p),
             "FRAMEWORK_SECTION": _framework_html_section(p),
+            "VUE_SECTION": _vue_html_section(p),
             "AGENT_HTML_SECTION": _agent_html_section(p),
         },
     )
@@ -1806,6 +2059,14 @@ def render_src_readme(p):
         )
     else:
         framework_summary = "未启用"
+    if p.vue_enabled:
+        vue_summary = (
+            f"{VUE_STACK_NAME}（仅 dev 镜像，含 node_modules；"
+            f"`make vue-init` 初始化到 `{p.vue_dir}/`，`make vue-build` 产物 `{p.vue_dir}/dist` "
+            f"由 nginx 托管）"
+        )
+    else:
+        vue_summary = "未启用"
 
     return _sub(
         _load("README.src.tmpl"),
@@ -1817,9 +2078,13 @@ def render_src_readme(p):
             "ORACLE_SUMMARY": oracle_summary,
             "NODE_SUMMARY": node_summary,
             "FRAMEWORK_SUMMARY": framework_summary,
+            "VUE_SUMMARY": vue_summary,
             "ORACLE_SECTION": _oracle_readme_section(p),
             "FRAMEWORK_SECTION": _framework_readme_section(p),
             "NPM_SECTION": _npm_readme_section(p),
+            "VUE_SECTION": _vue_readme_section(p),
+            "VUE_QUICKSTART": _vue_readme_quickstart(p),
+            "VUE_NOTES": _vue_readme_notes(p),
             "AGENT_SECTION": _agent_readme_section(p),
         },
     )
@@ -1873,7 +2138,7 @@ def render_all(p, staging):
     # package.json 由 install.sh 放入 app/
     if p.is_febe_separation:
         files["index.html"] = render_web_index_html(p)
-    if p.enable_node:
+    if p.enable_node and not p.vue_enabled:
         files["package.json"] = render_web_package_json(p)
     for name, content in files.items():
         (staging / name).write_text(content, encoding="utf-8")
@@ -1904,5 +2169,12 @@ def render_all(p, staging):
         nginx_dir.mkdir(exist_ok=True)
         (nginx_dir / "default.conf").write_text(
             render_nginx_conf(p), encoding="utf-8"
+        )
+    # Vue 项目模板（enable_fe_framework=vue）：作为 dev 镜像构建上下文，
+    # Dockerfile COPY 到 /opt/vue-template 并在构建期 pnpm install（含 node_modules）；
+    # make vue-init 在运行期离线复制到前端源码目录。
+    if p.vue_enabled:
+        shutil.copytree(
+            TEMPLATES_DIR / "vue", staging / "vue-template", dirs_exist_ok=True
         )
     return files

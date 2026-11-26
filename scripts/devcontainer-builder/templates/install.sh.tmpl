@@ -53,6 +53,7 @@ set -euo pipefail
 
 NEEDS_MAIN_PY={{PYTHON_ENABLED}}   # 1 = target_codec 预装 Python（占位 main.py）
 NEEDS_MAIN_GO={{GO_ENABLED}}       # 1 = target_codec 预装 Golang（占位 main.go）
+VUE_ENABLED={{VUE_ENABLED}}        # 1 = enable_fe_framework=vue（前端模板由 make vue-init 初始化）
 
 # ---------- 输出着色（仅终端着色；重定向/CI/NO_COLOR 时自动退化为无色） ----------
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -425,6 +426,13 @@ if [ -e "$INSTALL_PATH/AGENTS.md" ]; then
     echo "  请先移动/重命名后重试。"
     fail=1
 fi
+# Vue 模板（enable_fe_framework=vue）：项目根 vue-template/ 供联网重建
+# Dockerfile 的 COPY 使用（运行期 make vue-init 使用镜像内预装模板）
+if [ "{{VUE_ENABLED}}" = "1" ] && [ -e "$INSTALL_PATH/vue-template" ]; then
+    err "$INSTALL_PATH/vue-template 已存在，避免覆盖你自己的文件，安装终止。"
+    echo "  请先移动/重命名后重试。"
+    fail=1
+fi
 # 部署辅助脚本安装到 <根>/scripts/：仅当目标脚本同名冲突时终止
 # （scripts/ 目录本身可能属于用户项目，目录已存在但无同名文件时正常合并安装）
 for f in "${SCRIPTS_FILES[@]}"; do
@@ -529,6 +537,15 @@ done
 step "安装项目根 AGENTS.md"
 cp "$DEST/AGENTS.md" "$INSTALL_PATH/AGENTS.md"
 ok "已创建 $INSTALL_PATH/AGENTS.md（AI Agent 使用约定）"
+
+# Vue 模板（仅 enable_fe_framework=vue）：项目根 vue-template/ 供联网重建
+# Dockerfile 的 COPY 使用；运行期 make vue-init 使用 dev 镜像内预装模板（含
+# node_modules），不依赖这里的副本。
+if [ "{{VUE_ENABLED}}" = "1" ]; then
+    step "安装 Vue 模板目录（联网重建 Dockerfile 的构建上下文）"
+    cp -a "$DEST/vue-template" "$INSTALL_PATH/vue-template"
+    ok "已创建 $INSTALL_PATH/vue-template（仅源码骨架；make vue-init 从镜像内模板初始化，含 node_modules）"
+fi
 
 # 部署辅助脚本：包内 scripts/ -> <根>/scripts/（Makefile 的 push/apply/
 # rollback/clean 目标按 ./scripts/<脚本> 调用；前置校验已确认无同名冲突，
@@ -641,15 +658,15 @@ fi
 # 前端占位：febe_separation 布局 web/ 放 index.html 样例与 package.json
 # （预装 Node 时）；single_app 布局把 package.json 放入 app/
 if [ "{{SOURCE_LAYOUT}}" = "febe_separation" ]; then
-    if [ ! -e "$WEB_DIR_SRC/index.html" ]; then
+    if [ "$VUE_ENABLED" = "0" ] && [ ! -e "$WEB_DIR_SRC/index.html" ]; then
         cp "$DEST/index.html" "$WEB_DIR_SRC/index.html"
         ok "已创建占位静态页 $WEB_DIR_SRC/index.html"
     fi
-    if [ "{{NODE_ENABLED}}" = "1" ] && [ ! -e "$WEB_DIR_SRC/package.json" ]; then
+    if [ "{{NODE_ENABLED}}" = "1" ] && [ "$VUE_ENABLED" = "0" ] && [ ! -e "$WEB_DIR_SRC/package.json" ]; then
         cp "$DEST/package.json" "$WEB_DIR_SRC/package.json"
         ok "已创建前端工程占位 $WEB_DIR_SRC/package.json（请替换为你的前端工程）"
     fi
-elif [ "{{NODE_ENABLED}}" = "1" ] && [ ! -e "$APP_DIR_SRC/package.json" ]; then
+elif [ "{{NODE_ENABLED}}" = "1" ] && [ "$VUE_ENABLED" = "0" ] && [ ! -e "$APP_DIR_SRC/package.json" ]; then
     cp "$DEST/package.json" "$APP_DIR_SRC/package.json"
     ok "已创建前端工程占位 $APP_DIR_SRC/package.json（请替换为你的前端工程）"
 fi
@@ -709,4 +726,4 @@ if [ "$COMPOSE_MODE" = "v1" ]; then
 elif [ "$COMPOSE_MODE" = "missing" ]; then
     printf '%s\n' "${C_RED}${C_BOLD}警告: 未检测到 docker compose 或 docker-compose，make 命令无法执行，请先安装 docker compose。${C_RESET}"
 fi
-{{ORACLE_NOTICE_BLOCK}}{{NPM_NOTICE_BLOCK}}{{SYNC_NOTICE_BLOCK}}{{FRAMEWORK_NOTICE_BLOCK}}
+{{ORACLE_NOTICE_BLOCK}}{{NPM_NOTICE_BLOCK}}{{SYNC_NOTICE_BLOCK}}{{FRAMEWORK_NOTICE_BLOCK}}{{VUE_NOTICE_BLOCK}}

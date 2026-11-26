@@ -32,6 +32,9 @@ scripts/devcontainer-builder/
     ├── Dockerfile.oracle.tmpl     # Oracle runtime_deps_only 块：运行依赖/环境变量（客户端由 compose 挂载）
     ├── Dockerfile.oracle.full.tmpl # Oracle full 块：运行依赖 + 官方 Basic 包下载解压 + 环境变量
     ├── Dockerfile.node.tmpl       # Node.js/npm 块（从官方 node 镜像复制，target_codec 含 node24 时插入）
+    ├── Dockerfile.vue.tmpl        # Vue 3 + TypeScript + Vite Plus 块（仅 dev 阶段；全局 CLI + /opt/vue-template）
+    ├── vue/                       # Vue 启动模板（package.json/.vscode/vite.config/src 等；
+    │                              #   构建期复制为 vue-template/，在 dev 镜像内 pnpm install）
     ├── compose.base.tmpl          # compose 模板骨架（app 服务 + 占位块；输出为 .tpl）
     ├── compose.service.nginx.tmpl # nginx 服务子模板
     ├── compose.service.postgres.tmpl # postgres 服务子模板（服务名固定 db，含健康检查）
@@ -94,6 +97,7 @@ scripts/devcontainer-builder/
 | `NPM_PACKAGES` | 空 | `$` 分隔的全局 npm 包（需 target_codec 含 node24） |
 | `NPM_REGISTRY` | `Official (npmjs.org)` | 固定为官方源（workflow 不再暴露） |
 | `NPM_PACKAGES_DIR` | `deps/packages` | Npm Download 产物目录，只读挂载到 `/opt/npm-packages`；相对值相对 docker/ 目录（compose 项目目录）解析，默认 docker/deps/packages（init-deps.sh 生成） |
+| `ENABLE_FE_FRAMEWORK` | `none` | 前端完整技术栈：`none` / `vue`。`vue` 自动启用 Node 24（npm+pnpm+npx），并只在 dev 镜像预装 Vue 3 + TypeScript + Vite Plus（含 `node_modules`，`make vue-init` 离线初始化到前端目录）；prod 镜像只保留后端依赖，静态产物由 nginx 托管 |
 | `ENABLE_EXTRA_SERVICES` | `none` | 外挂服务原始值透传（`none` / `nginx` / `postgres16` / `mysql8.4` / `mongo9` / `nginx + …`）；`enable_nginx` / `enable_postgres` / `enable_mysql` / `enable_mongo` 布尔由该原始值解析派生，含 DB 服务时 app 自动 depends_on（等待健康检查通过） |
 | `BUILD_DEV_IMAGE` | `true` | 是否构建 dev 镜像 |
 | `DEV_IMAGE_ONLY` | `false` | 仅构建 dev 镜像：不再区分 prod/dev，部署也用 dev 镜像，镜像归档只含该镜像（优先于 `BUILD_DEV_IMAGE`） |

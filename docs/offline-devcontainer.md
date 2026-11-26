@@ -86,6 +86,7 @@ make up (docker-run.sh 预置入口)
 | `npm_packages` | string | 用 `$` 分隔，如 `vite$webpack$webpack-cli$vue$react` | 空 | 构建期全局安装的 npm 包（需要 target_codec 含 node24；构建机联网安装，内网容器可直接使用） |
 | `npm_packages_dir` | string | 相对/绝对路径 | `deps/packages` | **Npm Download 产物所在目录**：把该工作流产出的 `packages/` 内容（`*.tgz` + `package.json`）放这里，compose 会把它只读挂载到容器 `/opt/npm-packages`，供 `make npm-install` 或 `bash build.sh` 一键离线安装前端依赖。相对项目根或绝对路径（需 target_codec 含 node24） |
 | `css_framework_install` | choice | `none` / `bootstrap_pack_in_artifact` / `bootstrap_install_via_npm` / `tailwind_pack_in_artifact` / `tailwind_install_via_npm` | `none` | 预装前端框架（版本固定拉最新版）：`bootstrap` / `tailwind` 各有 `*_pack_in_artifact`（构建期下载离线 tgz 随 Artifact 分发，install.sh 解压到 `<项目根>/src/vendor/`）与 `*_install_via_npm`（镜像内 npm 全局安装）两种方式，详见「前端框架预装」；`*_install_via_npm` 需要 target_codec 含 node24 |
+| `enable_fe_framework` | choice | `none` / `vue` | `none` | 前端完整技术栈：`vue` 时**自动启用 Node.js 24**（npm+pnpm+npx），并只在 **dev 镜像**预装 Vue 3 + TypeScript + Vite Plus 完整技术栈（Element Plus / Pinia / Vue Router / VueUse / Tailwind v4 / Reka UI + shadcn-vue / TipTap / Playwright 等，含 `node_modules`）。prod 镜像只保留后端依赖，前端 `dist/` 由 nginx 托管；`image_mode=prod-only` 时自动补建 dev 镜像 |
 | `nginx_mode` | choice | `none` / `nginx_binary` / `nginx_service` | `none` | nginx 托管：`none` 不启用；`nginx_binary` 把 nginx 经 APT 装进镜像（docker-run.sh 启动时拉起，对外端口复用 `app_port`，容器内监听 80）；`nginx_service` 启动独立 nginx compose 服务（`nginx:stable`，宿主机 8080 → 容器 80）。启用时项目根生成 `nginx/default.conf` 配置模板（`api_web` 布局默认 `/api/` 反代后端、`/` 托管 `web/dist` 静态产物）；web 一律打包静态文件托管到 nginx |
 | `enable_db` | choice | `none` / `postgres16` / `mysql8.4` / `mongo9` | `none` | 外挂数据库服务（nginx 由 `nginx_mode` 单独配置，不在本参数中）：任选一个 DB；含 DB 时 app 服务自动 `depends_on` 该 DB 并等待健康检查通过 |
 | `image_mode` | choice | `prod+dev` / `prod-only` / `dev-only` | `prod-only` | `prod+dev`：同时构建 prod 与 dev 镜像；`prod-only`：只构建 prod；`dev-only`：只构建 dev 镜像并用于部署（镜像归档只含该镜像） |
@@ -108,7 +109,7 @@ make up (docker-run.sh 预置入口)
 
 以下情况会在构建开始前直接失败并给出清晰错误：
 
-- `platform` / `target_codec` / `source_layout` / `nginx_mode` / `enable_db` / `image_tag` / `enable_oracle_instantclient` / `css_framework_install` 不在取值范围内
+- `platform` / `target_codec` / `source_layout` / `nginx_mode` / `enable_db` / `image_tag` / `enable_oracle_instantclient` / `css_framework_install` / `enable_fe_framework` 不在取值范围内
 - `pip_packages` / `enable_playwright` / `enable_oracle_instantclient` 需要 target_codec 预装 Python（python3.13 系列）
 - `npm_packages` / `css_framework_install=*_install_via_npm` 需要 target_codec 含 node24
 - `image_prefix` 含非法字符（仅允许小写字母/数字/`.`/`_`/`-`）
@@ -644,6 +645,48 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
   重新构建即可（自动拉取最新版），替换 vendor 目录。
 - `*_install_via_npm` 模式需要 target_codec 含 node24（不再自动补装 Node.js 24
   + npm 镜像层，缺失时构建前校验报错）。
+
+## Vue 前端技术栈（enable_fe_framework）
+
+`enable_fe_framework=vue` 会**自动启用 Node.js 24**（npm + pnpm + npx），并在
+**dev 镜像**中预装完整的 Vue 3 + TypeScript + Vite Plus 技术栈；prod 镜像只保留
+后端依赖，前端静态产物 `dist/` 由 nginx 托管。
+
+- **Node 自动启用**：即使 `target_codec` 不含 `node24`，选择 `vue` 也会安装
+  Node 24；由 Vue 自动带出的 Node 只装进 dev 镜像（`target_codec` 显式含
+  `node24` 时保持既有行为：prod/dev 都带 Node）。
+- **dev 镜像必建**：`image_mode=prod-only` 时会自动补建 dev 镜像，因此
+  `make vue-init` / `vue-dev` / `vue-build` 始终可用。
+- **依赖落地**：构建期在 dev 镜像内生成 `/opt/vue-template` 并执行
+  `pnpm install`，`node_modules` 一并固化，运行期完全离线。
+- **初始化**：`make vue-init` 把模板复制到前端源码目录（`single_app` → `app/`，
+  `febe_separation` → `web/`；已存在 `package.json` 时跳过）。
+- **常用命令**：
+  ```bash
+  make vue-init     # 初始化模板（含 node_modules）
+  make vue-dev      # vp dev --host 0.0.0.0（宿主机 5173）
+  make vue-check    # vp check（格式化 + lint + 类型检查）
+  make vue-test     # vp test（Vitest）
+  make vue-e2e      # Playwright E2E（chromium 已内置）
+  make vue-build    # vp build，产物输出到 <前端目录>/dist
+  ```
+- **技术栈**：Vue 3、TypeScript、Vue Router 4、Pinia + persistedstate、Axios、
+  VueUse、Element Plus、Lucide（`lucide-vue-next`）、`motion-v`、Tailwind CSS v4、
+  Reka UI + shadcn-vue、`vue-draggable-plus`、TipTap；工具链 Vite Plus
+  （Rolldown / Oxlint / Oxfmt / Vitest / Vite Task）、`vue-tsc`、
+  `@vue/test-utils`、Stylelint、Commitlint、Playwright（chromium 下载到
+  `/opt/ms-playwright`）、`rollup-plugin-visualizer`。
+- **静态托管**：`febe_separation` 布局产物在 `web/dist`，启用 nginx 时由 nginx
+  托管；`single_app` 布局产物在 `app/dist`，请由后端或自定义 nginx 规则托管。
+- **编辑器**：模板自带 `.vscode/extensions.json`（推荐 `oxc.oxc-vscode`）与
+  `.vscode/settings.json`（默认 formatter 为 Oxc）。
+- **环境变量**：仅 `VITE_` 前缀暴露给客户端（模板提供 `.env.example`）。
+- **忽略规则**：生成的根 `.gitignore` / `.dockerignore` 会按布局自动追加
+  `app/`（`single_app`）或 `web/`（`febe_separation`）下的 `node_modules/`、
+  `dist/`、`.vite/`、`coverage/`、`playwright-report/`、`test-results/`、
+  `*.tsbuildinfo` 与本地 `.env.local` 等；`vue-template/` 目录本身不整体忽略
+  （随同步清单分发，供联网重建镜像 `COPY`），其中预装的 `node_modules/`
+  由通用规则排除。
 
 ## 设计说明
 

@@ -7,7 +7,7 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
-{{DEV_PIP_BLOCK}}
+{{DEV_NODE_BLOCK}}{{VUE_BLOCK}}{{DEV_PIP_BLOCK}}
 WORKDIR /app
 
 # CMD ["bash"] 供 make shell / dev 服务使用：镜像 ENTRYPOINT（docker-run.sh）
