@@ -681,6 +681,12 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
 - **编辑器**：模板自带 `.vscode/extensions.json`（推荐 `oxc.oxc-vscode`）与
   `.vscode/settings.json`（默认 formatter 为 Oxc）。
 - **环境变量**：仅 `VITE_` 前缀暴露给客户端（模板提供 `.env.example`）。
+- **忽略规则**：生成的根 `.gitignore` / `.dockerignore` 会按布局自动追加
+  `app/`（`single_app`）或 `web/`（`febe_separation`）下的 `node_modules/`、
+  `dist/`、`.vite/`、`coverage/`、`playwright-report/`、`test-results/`、
+  `*.tsbuildinfo` 与本地 `.env.local` 等；`vue-template/` 目录本身不整体忽略
+  （随同步清单分发，供联网重建镜像 `COPY`），其中预装的 `node_modules/`
+  由通用规则排除。
 
 ## 设计说明
 

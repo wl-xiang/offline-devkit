@@ -411,6 +411,8 @@ def _base_mapping(p):
         "VUE_DIR": p.vue_dir,
         "VUE_STACK_NAME": VUE_STACK_NAME,
         "VUE_TEMPLATE_DIR": VUE_TEMPLATE_DIR,
+        "VUE_GITIGNORE_BLOCK": _vue_gitignore_block(p),
+        "VUE_DOCKERIGNORE_BLOCK": _vue_dockerignore_block(p),
         # ---- 前端框架（Bootstrap / Tailwind CSS）----
         "FRAMEWORK_ENABLED": "1" if p.framework_enabled else "0",
         "FRAMEWORK_NAME": FRAMEWORK_NAMES[p.framework_name],
@@ -1041,6 +1043,52 @@ def render_dockerignore(p):
 def render_gitignore(p):
     """项目根目录 .gitignore（install.sh 安装/合并），忽略离线产物与本地补装缓存。"""
     return _sub(_load("gitignore.tmpl"), _base_mapping(p))
+
+
+def _vue_gitignore_block(p):
+    """根 .gitignore 的 Vue 段（enable_fe_framework=vue）：只按前端目录生效。"""
+    if not p.vue_enabled:
+        return ""
+    d = p.vue_dir
+    return (
+        "\n# ---- Vue 前端（enable_fe_framework=vue）----\n"
+        "# 依赖、构建产物、测试报告与本地环境变量不提交\n"
+        f"{d}/node_modules/\n"
+        f"{d}/dist/\n"
+        f"{d}/.vite/\n"
+        f"{d}/coverage/\n"
+        f"{d}/stats.html\n"
+        f"{d}/playwright-report/\n"
+        f"{d}/test-results/\n"
+        f"{d}/blob-report/\n"
+        f"{d}/*.tsbuildinfo\n"
+        f"{d}/.env.local\n"
+        f"{d}/.env.*.local\n"
+    )
+
+
+def _vue_dockerignore_block(p):
+    """根 .dockerignore 的 Vue 段：仅保留源码，依赖/产物不进构建上下文。"""
+    if not p.vue_enabled:
+        return ""
+    d = p.vue_dir
+    return (
+        "\n# ---- Vue 前端（enable_fe_framework=vue）----\n"
+        "# 仅保留源码：依赖/构建产物/测试报告不进构建上下文\n"
+        f"{d}/node_modules/\n"
+        f"{d}/dist/\n"
+        f"{d}/.vite/\n"
+        f"{d}/coverage/\n"
+        f"{d}/stats.html\n"
+        f"{d}/playwright-report/\n"
+        f"{d}/test-results/\n"
+        f"{d}/blob-report/\n"
+        f"{d}/*.tsbuildinfo\n"
+        f"{d}/.env.local\n"
+        f"{d}/.env.*.local\n"
+        "# vue-template/ 的源码需保留给 COPY（联网重建镜像）；仅排除其预装依赖\n"
+        "vue-template/node_modules/\n"
+    )
 
 
 def _env_example_npm_block(p):

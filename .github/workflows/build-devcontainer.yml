@@ -760,6 +760,7 @@ jobs:
           ORACLE_MODE: ${{ inputs.enable_oracle_instantclient }}
           NODE_ENABLED: ${{ contains(inputs.target_codec, 'node24') || inputs.enable_fe_framework == 'vue' }}
           TARGET_CODEC: ${{ inputs.target_codec }}
+          SOURCE_LAYOUT: ${{ inputs.source_layout }}
           CSS_FRAMEWORK_INSTALL: ${{ inputs.css_framework_install }}
           FE_FRAMEWORK: ${{ inputs.enable_fe_framework }}
           FRAMEWORK_TGZ: ${{ steps.build.outputs.framework_tgz }}
@@ -927,6 +928,27 @@ jobs:
             done
             grep -q 'make vue-init' "$INSTALL_SH" \
               || { echo "::error::install.sh 缺少 Vue 初始化提示"; exit 1; }
+            # 根 .gitignore / .dockerignore 需按布局目录忽略前端依赖与构建产物
+            VDIR=app
+            if [ "$SOURCE_LAYOUT" = "febe_separation" ]; then VDIR=web; fi
+            tar xzf "$SRC_TGZ" -O devcontainer-src/.gitignore > /tmp/gitignore
+            tar xzf "$SRC_TGZ" -O devcontainer-src/.dockerignore > /tmp/dockerignore
+            for entry in "node_modules/" "dist/" ".vite/" "playwright-report/" "test-results/"; do
+              grep -qxF "$VDIR/$entry" /tmp/gitignore \
+                || { echo "::error::.gitignore 缺少 $VDIR/$entry"; exit 1; }
+              grep -qxF "$VDIR/$entry" /tmp/dockerignore \
+                || { echo "::error::.dockerignore 缺少 $VDIR/$entry"; exit 1; }
+            done
+            # vue-template/ 是远程重建镜像的 COPY 源，不能整体忽略；
+            # 其 node_modules/ 已由通用规则排除
+            if grep -qxF '/vue-template/' /tmp/gitignore; then
+              echo "::error::.gitignore 不能整体忽略 vue-template（随清单同步）"
+              exit 1
+            fi
+            if grep -qxF 'vue-template/' /tmp/dockerignore; then
+              echo "::error::.dockerignore 不能整体忽略 vue-template（联网重建镜像需 COPY）"
+              exit 1
+            fi
             # prod 阶段不得包含任何前端依赖（dev-only 镜像没有 prod 阶段）
             if [ "$DEV_IMAGE_ONLY" != "true" ]; then
               awk '/^FROM prod AS dev$/{exit} {print}' /tmp/Dockerfile > /tmp/Dockerfile.prodstage
@@ -948,6 +970,12 @@ jobs:
             tar tzf "$SRC_TGZ" > /tmp/src_vue.list
             if grep -q 'devcontainer-src/vue-template/' /tmp/src_vue.list; then
               echo "::error::enable_fe_framework=none 时 src 包不应包含 vue-template"
+              exit 1
+            fi
+            tar xzf "$SRC_TGZ" -O devcontainer-src/.gitignore > /tmp/gitignore
+            tar xzf "$SRC_TGZ" -O devcontainer-src/.dockerignore > /tmp/dockerignore
+            if grep -q 'enable_fe_framework=vue' /tmp/gitignore /tmp/dockerignore; then
+              echo "::error::enable_fe_framework=none 时 .gitignore/.dockerignore 不应含 Vue 段"
               exit 1
             fi
             echo "vue frontend wiring OK (none)"
