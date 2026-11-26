@@ -170,10 +170,18 @@ jobs:
           fi
           echo "wheels/requirements.txt first line OK: $first_line"
 
+      - name: Generate artifact name timestamp
+        id: artifact_ts
+        run: |
+          set -euo pipefail
+          ts="$(date -u '+%m%d-%H%M')"
+          echo "Using artifact timestamp: $ts"
+          echo "ts=$ts" >> "$GITHUB_OUTPUT"
+
       - name: Upload wheels artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wheels_${{ inputs.platform }}_${{ inputs.arch }}_py${{ inputs.python_version }}
+          name: wheels_${{ inputs.platform }}_${{ inputs.python_version }}_${{ steps.artifact_ts.outputs.ts }}
           path: wheels
           if-no-files-found: error
 
@@ -185,6 +193,7 @@ jobs:
           GLIBC_VERSION: ${{ inputs.glibc_version }}
           PIP_MIRROR: ${{ inputs.pip_mirror }}
           INDEX_URL: ${{ steps.mirror.outputs.url }}
+          ARTIFACT_TS: ${{ steps.artifact_ts.outputs.ts }}
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -261,7 +270,7 @@ jobs:
             echo ""
             echo "### Offline install guide"
             echo ""
-            echo "Download the \`wheels_${PLATFORM}_${ARCH}_py${PYTHON_VERSION}\` artifact from this run, extract it, then install offline on a \`$PLATFORM\`/\`$ARCH\` machine with Python \`$PYTHON_VERSION\`:"
+            echo "Download the \`wheels_${PLATFORM}_${PYTHON_VERSION}_${ARTIFACT_TS}.zip\` artifact from this run, extract it, then install offline on a \`$PLATFORM\`/\`$ARCH\` machine with Python \`$PYTHON_VERSION\`:"
             echo ""
             echo '```bash'
             echo "cd wheels"
