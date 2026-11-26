@@ -86,6 +86,14 @@ on:
           - 'bootstrap_install_via_npm'
           - 'tailwind_pack_in_artifact'
           - 'tailwind_install_via_npm'
+      enable_fe_framework:
+        description: 'Frontend preset: none = install nothing; vue = auto-enable Node.js 24 (npm+pnpm+npx) and preinstall the full Vue 3 + TypeScript + Vite Plus stack (Element Plus, Pinia, Router, VueUse, Tailwind v4, Reka UI/shadcn-vue, TipTap, Playwright, etc.) in the DEV image only. Prod image stays backend-only; static dist is served by nginx. Selecting vue auto-builds the dev image when image_mode=prod-only.'
+        type: choice
+        required: true
+        default: 'none'
+        options:
+          - 'none'
+          - 'vue'
       nginx_mode:
         description: 'Nginx hosting: none = no nginx; nginx_binary = installed into the image via APT (started by docker-run.sh, external port reuses app_port); nginx_service = standalone nginx compose service (host 8080 -> container 80). Web static build (web/dist) is hosted by nginx when enabled'
         type: choice
@@ -206,6 +214,7 @@ jobs:
           NPM_REGISTRY: 'Official (npmjs.org)'
           NPM_PACKAGES_DIR: ${{ inputs.npm_packages_dir }}
           CSS_FRAMEWORK_INSTALL: ${{ inputs.css_framework_install }}
+          ENABLE_FE_FRAMEWORK: ${{ inputs.enable_fe_framework }}
           SOURCE_LAYOUT: ${{ inputs.source_layout }}
           NGINX_MODE: ${{ inputs.nginx_mode }}
           # 原始输入透传（供 devcontainer.json 快照记录；enable_postgres 等
@@ -627,6 +636,7 @@ jobs:
               "npm_packages": ("", "string"),
               "npm_packages_dir": ("deps/packages", "string"),
               "css_framework_install": ("none", "choice"),
+              "enable_fe_framework": ("none", "choice"),
               "nginx_mode": ("none", "choice"),
               "enable_db": ("none", "choice"),
               "image_mode": ("prod-only", "choice"),
@@ -748,11 +758,13 @@ jobs:
       - name: Verify oracle / npm / frontend framework wiring
         env:
           ORACLE_MODE: ${{ inputs.enable_oracle_instantclient }}
-          NODE_ENABLED: ${{ contains(inputs.target_codec, 'node24') }}
+          NODE_ENABLED: ${{ contains(inputs.target_codec, 'node24') || inputs.enable_fe_framework == 'vue' }}
           TARGET_CODEC: ${{ inputs.target_codec }}
           CSS_FRAMEWORK_INSTALL: ${{ inputs.css_framework_install }}
+          FE_FRAMEWORK: ${{ inputs.enable_fe_framework }}
           FRAMEWORK_TGZ: ${{ steps.build.outputs.framework_tgz }}
-          DEV_ENABLED: ${{ inputs.image_mode == 'prod+dev' || inputs.image_mode == 'dev-only' }}
+          DEV_ENABLED: ${{ inputs.image_mode == 'prod+dev' || inputs.image_mode == 'dev-only' || inputs.enable_fe_framework == 'vue' }}
+          DEV_IMAGE_ONLY: ${{ inputs.image_mode == 'dev-only' }}
           SRC_TGZ: ${{ steps.build.outputs.src_tgz }}
           INSTALL_SH: ${{ steps.build.outputs.install_sh }}
           README_HTML: ${{ steps.build.outputs.readme_html }}
@@ -887,6 +899,58 @@ jobs:
               exit 1
             fi
             echo "frontend framework wiring OK (none)"
+          fi
+
+          # 前端技术栈（enable_fe_framework）：Vue 只进 dev 镜像，prod 保持后端依赖
+          if [ "$FE_FRAMEWORK" = "vue" ]; then
+            grep -q 'vite-plus' /tmp/Dockerfile \
+              || { echo "::error::vue 模式 Dockerfile 缺少 Vite+（vite-plus）"; exit 1; }
+            grep -q 'COPY vue-template/ /opt/vue-template/' /tmp/Dockerfile \
+              || { echo "::error::vue 模式 Dockerfile 缺少 vue-template 复制层"; exit 1; }
+            grep -q 'playwright install --with-deps chromium' /tmp/Dockerfile \
+              || { echo "::error::vue 模式 Dockerfile 缺少 Playwright chromium"; exit 1; }
+            tar tzf "$SRC_TGZ" > /tmp/src_vue.list
+            for f in vue-template/package.json vue-template/vite.config.ts \
+                     vue-template/.vscode/extensions.json vue-template/.vscode/settings.json; do
+              grep -q "^devcontainer-src/$f$" /tmp/src_vue.list \
+                || { echo "::error::src 包缺少 $f"; exit 1; }
+            done
+            tar xzf "$SRC_TGZ" -O devcontainer-src/vue-template/.vscode/extensions.json > /tmp/vscode_ext.json
+            grep -q 'oxc.oxc-vscode' /tmp/vscode_ext.json \
+              || { echo "::error::.vscode/extensions.json 未推荐 oxc.oxc-vscode"; exit 1; }
+            tar xzf "$SRC_TGZ" -O devcontainer-src/vue-template/.vscode/settings.json > /tmp/vscode_settings.json
+            grep -q 'oxc.oxc-vscode' /tmp/vscode_settings.json \
+              || { echo "::error::.vscode/settings.json 未把默认 formatter 设为 Oxc"; exit 1; }
+            for tgt in vue-init vue-dev vue-check vue-build vue-test vue-e2e; do
+              grep -qE "^$tgt:" /tmp/Makefile \
+                || { echo "::error::Makefile 缺少 $tgt 目标"; exit 1; }
+            done
+            grep -q 'make vue-init' "$INSTALL_SH" \
+              || { echo "::error::install.sh 缺少 Vue 初始化提示"; exit 1; }
+            # prod 阶段不得包含任何前端依赖（dev-only 镜像没有 prod 阶段）
+            if [ "$DEV_IMAGE_ONLY" != "true" ]; then
+              awk '/^FROM prod AS dev$/{exit} {print}' /tmp/Dockerfile > /tmp/Dockerfile.prodstage
+              if grep -q 'vue-template' /tmp/Dockerfile.prodstage; then
+                echo "::error::prod 镜像阶段不应包含 Vue 前端依赖"
+                exit 1
+              fi
+            fi
+            echo "vue frontend wiring OK"
+          else
+            if grep -q 'vue-template' /tmp/Dockerfile; then
+              echo "::error::enable_fe_framework=none 时 Dockerfile 不应包含 Vue 技术栈"
+              exit 1
+            fi
+            if grep -q '^vue-init:' /tmp/Makefile; then
+              echo "::error::enable_fe_framework=none 时 Makefile 不应包含 vue 目标"
+              exit 1
+            fi
+            tar tzf "$SRC_TGZ" > /tmp/src_vue.list
+            if grep -q 'devcontainer-src/vue-template/' /tmp/src_vue.list; then
+              echo "::error::enable_fe_framework=none 时 src 包不应包含 vue-template"
+              exit 1
+            fi
+            echo "vue frontend wiring OK (none)"
           fi
 
           # install.sh / readme.html 的 --load-target 文档

@@ -1,0 +1,29 @@
+# ---- Vue 3 + TypeScript + Vite Plus 前端技术栈（enable_fe_framework=vue）----
+# 仅安装进 dev 镜像：prod 镜像只保留后端依赖，前端静态产物（dist/）由 nginx 托管。
+# 全局 CLI：构建期联网安装，运行期离线可用。
+RUN npm install -g --no-audit --no-fund --registry {{NPM_REGISTRY_URL}} \
+        {{VUE_GLOBAL_PACKAGES}} \
+    && npm cache clean --force \
+    && rm -rf /tmp/npm-cache
+
+# Vite+ 全局 CLI 默认会接管 Node 版本管理；容器内 Node 已固定为 24，
+# 关闭该行为，避免运行期联网下载 Node。
+RUN vp env off || true
+
+# 预构建 Vue 项目模板（含 node_modules），make vue-init 离线复制到前端目录。
+# package.json 使用 latest，版本在构建期解析；lockfile 与 node_modules 一并固化，
+# 运行期无需任何网络。
+ENV PLAYWRIGHT_BROWSERS_PATH={{VUE_PLAYWRIGHT_DIR}}
+COPY vue-template/ {{VUE_TEMPLATE_DIR}}/
+RUN set -eux; \
+    cd {{VUE_TEMPLATE_DIR}}; \
+    pnpm install --no-frozen-lockfile --registry {{NPM_REGISTRY_URL}}; \
+    node -e "const fs=require('fs'); \
+        const vp=require('./node_modules/vite-plus/package.json'); \
+        const p=JSON.parse(fs.readFileSync('package.json','utf8')); \
+        p.pnpm={...(p.pnpm||{}),overrides:{vite:vp.dependencies.vite,vitest:vp.dependencies.vitest}}; \
+        fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"; \
+    pnpm install --no-frozen-lockfile --registry {{NPM_REGISTRY_URL}}; \
+    pnpm exec vp fmt; \
+    pnpm exec playwright install --with-deps chromium; \
+    chmod -R a+rX {{VUE_TEMPLATE_DIR}} {{VUE_PLAYWRIGHT_DIR}}

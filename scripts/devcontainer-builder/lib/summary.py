@@ -5,7 +5,13 @@ import os
 from pathlib import Path
 
 from .package import human_size
-from .params import FRAMEWORK_NAMES, FRAMEWORK_VENDOR_DIR, Params
+from .params import (
+    FRAMEWORK_NAMES,
+    FRAMEWORK_VENDOR_DIR,
+    Params,
+    VUE_STACK_NAME,
+    VUE_TEMPLATE_DIR,
+)
 
 
 def _yes_no(flag):
@@ -96,9 +102,16 @@ def build_markdown(p, results):
             node_mode += f"（含 {' '.join(p.framework_npm_packages)} 全局预装）"
         if p.npm_package_list:
             node_mode += f"（含 {', '.join(p.npm_package_list)} 全局预装）"
+        if p.node_dev_only:
+            node_mode += "（Vue 预设自动启用，仅 dev 镜像）"
     else:
         node_mode = "未启用"
     out.append(f"| Node.js / npm | {node_mode} |")
+    if p.vue_enabled:
+        out.append(
+            f"| Vue 前端技术栈 | {VUE_STACK_NAME}（仅 dev 镜像，含 node_modules；"
+            f"模板 `{VUE_TEMPLATE_DIR}`，`make vue-init` 初始化到 `{p.vue_dir}/`） |"
+        )
     if p.enable_sync_tool:
         out.append(
             "| 代码同步工具 (v-push) | 已启用：`python:3.11-slim` + paramiko"
@@ -385,6 +398,11 @@ def build_markdown(p, results):
     if p.enable_node:
         out.append("### 前端离线开发（Node.js / npm）")
         out.append("")
+        if p.vue_enabled:
+            out.append("> Vue 预设：依赖已预装在 dev 镜像 `/opt/vue-template`（含"
+                       " `node_modules`），`make vue-init` 后无需 Npm Download；下列流程"
+                       " 用于额外依赖。")
+            out.append("")
         out.append(f"镜像内置 Node.js {p.node_version} + npm + pnpm；Npm Download Action 的"
                    " `npm_packages` 产物（顶层 `packages/`）由 compose 只读挂载到"
                    " `/opt/npm-packages`：")

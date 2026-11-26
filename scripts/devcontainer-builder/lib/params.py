@@ -193,6 +193,35 @@ FRAMEWORK_NPM_PACKAGES = {
 # 内的安装位置
 FRAMEWORK_VENDOR_DIR = "vendor"
 
+# 前端完整技术栈（enable_fe_framework，单个下拉参数）：
+#   none = 不安装
+#   vue  = 自动启用 Node.js 24（npm + pnpm + npx），并在 **dev 镜像** 内预装
+#          Vue 3 + TypeScript + Vite Plus 完整技术栈；prod 镜像只保留后端依赖，
+#          静态产物由 nginx 托管（前端依赖不进 prod 镜像，减小体积）
+FE_FRAMEWORK_CHOICES = ("none", "vue")
+
+VUE_STACK_NAME = "Vue 3 + TypeScript + Vite Plus"
+
+# 全局安装的 Vue 工具链 CLI（构建期联网安装，运行期离线可用）
+VUE_GLOBAL_CLI_PACKAGES = (
+    "vite-plus",
+    "vue-tsc",
+    "stylelint",
+    "@commitlint/cli",
+    "@commitlint/config-conventional",
+    "@playwright/test",
+    "rollup-plugin-visualizer",
+    "shadcn-vue",
+    "tailwindcss",
+    "@tailwindcss/cli",
+)
+
+# Vue 项目模板在镜像内的固定位置（含 node_modules，make vue-init 从此复制）
+VUE_TEMPLATE_DIR = "/opt/vue-template"
+
+# Playwright 浏览器固定目录（与 enable_playwright 的 pip Playwright 共用）
+VUE_PLAYWRIGHT_DIR = "/opt/ms-playwright"
+
 # 预设环境变量的分隔符（workflow 输入框无法换行）
 ENV_PRESET_SEPARATOR = "》"
 
@@ -281,6 +310,7 @@ class Params:
     npm_custom_registry_url: str
     npm_packages_dir: str
     css_framework_install: str
+    fe_framework: str
     source_layout: str
     nginx_mode: str
     db_service: str
@@ -324,9 +354,37 @@ class Params:
         return "golang1.26" in self.target_codec
 
     @property
-    def enable_node(self):
-        """target_codec 预装 Node.js 24（npm + 全局 pnpm + npx）。"""
+    def vue_enabled(self):
+        """enable_fe_framework=vue：安装 Vue 3 + TypeScript + Vite Plus 技术栈。"""
+        return self.fe_framework == "vue"
+
+    @property
+    def node_in_target(self):
+        """target_codec 显式预装 Node.js 24（既有行为：prod/dev 都带 Node）。"""
         return "node24" in self.target_codec
+
+    @property
+    def enable_node(self):
+        """有效启用 Node.js 24（npm + 全局 pnpm + npx）。
+
+        target_codec 含 node24，或 enable_fe_framework=vue（自动激活 Node）。
+        """
+        return self.node_in_target or self.vue_enabled
+
+    @property
+    def node_in_prod(self):
+        """prod 镜像是否包含 Node：仅 target_codec 显式含 node24 时。"""
+        return self.node_in_target
+
+    @property
+    def node_dev_only(self):
+        """Node 由 Vue 预设自动带出且 target_codec 未显式含 node24：只装进 dev 镜像。"""
+        return self.vue_enabled and not self.node_in_target
+
+    @property
+    def vue_dir(self):
+        """Vue 项目目录：single_app=app/，febe_separation=web/。"""
+        return "web" if self.is_febe_separation else self.app_dir
 
     @property
     def is_febe_separation(self):
@@ -681,6 +739,7 @@ def load():
         npm_custom_registry_url=_env("NPM_CUSTOM_REGISTRY_URL", ""),
         npm_packages_dir=_env("NPM_PACKAGES_DIR", "deps/packages"),
         css_framework_install=_env("CSS_FRAMEWORK_INSTALL", "none").strip().lower(),
+        fe_framework=_env("ENABLE_FE_FRAMEWORK", "none").strip().lower(),
         source_layout=_env("SOURCE_LAYOUT", "single_app").strip().lower(),
         nginx_mode=_env("NGINX_MODE", "none").strip().lower(),
         db_service=_env("ENABLE_DB", "none"),
@@ -747,6 +806,11 @@ def validate(p):
         raise ParamError(
             f"不支持的 css_framework_install: {p.css_framework_install!r}，"
             f"可选: {', '.join(CSS_FRAMEWORK_INSTALL_CHOICES)}"
+        )
+    if p.fe_framework not in FE_FRAMEWORK_CHOICES:
+        raise ParamError(
+            f"不支持的 enable_fe_framework: {p.fe_framework!r}，"
+            f"可选: {', '.join(FE_FRAMEWORK_CHOICES)}"
         )
     # Python 生态参数仅在 target_codec 预装 Python 时可用
     if not p.python_enabled:
@@ -862,6 +926,10 @@ def validate(p):
     # 规范化挂载路径：去掉多余的尾部斜杠
     if len(p.app_source_dir) > 1 and p.app_source_dir != "/":
         p.app_source_dir = p.app_source_dir.rstrip("/") or "."
+    # Vue 前端技术栈只安装在 dev 镜像；prod-only 时自动补建 dev 镜像，
+    # 保证 prod 镜像保持只含后端依赖（前端静态产物由 nginx 托管）
+    if p.vue_enabled and not p.dev_tools_enabled:
+        p.build_dev_image = True
     return p
 
 
@@ -886,6 +954,7 @@ WORKFLOW_INPUTS = (
     ("npm_packages", "NPM_PACKAGES", "string", ""),
     ("npm_packages_dir", "NPM_PACKAGES_DIR", "string", "deps/packages"),
     ("css_framework_install", "CSS_FRAMEWORK_INSTALL", "choice", "none"),
+    ("enable_fe_framework", "ENABLE_FE_FRAMEWORK", "choice", "none"),
     ("nginx_mode", "NGINX_MODE", "choice", "none"),
     ("enable_db", "ENABLE_DB", "choice", "none"),
     ("image_mode", "IMAGE_MODE", "choice", "prod-only"),

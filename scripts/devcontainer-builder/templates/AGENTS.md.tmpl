@@ -43,6 +43,7 @@
 | 打包并上传 bundle | `make push`（宿主机需 Python 3.8+ + paramiko）或 `make v-push`（容器内执行，需构建时勾选 enable_sync_tool） |
 | 外挂服务 | {{SERVICES_SUMMARY}}（compose 服务名见 docker/docker-compose.yml） |
 
+{{VUE_NOTE}}
 非交互场景（Agent / CI）统一用 `make run dev <命令>`
 （等价 `docker compose run --rm dev <命令>`）；不要用 `make shell` /
 交互式 bash 等待输入。

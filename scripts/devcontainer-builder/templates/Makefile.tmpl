@@ -97,7 +97,7 @@ rollback: ## 回滚到 bundles/backups/ 下最新备份（make rollback ARGS="-y
 clean: ## 清除 compose 声明的镜像（make clean ARGS="--no-name" 清除悬空镜像）
 	./scripts/clean-images.sh $(ARGS)
 
-{{DEV_TARGETS}}{{NPM_TARGETS}}.PHONY: help check build up down ps exec logs push apply rollback clean {{PHONY_DEV}}{{PHONY_NPM}}{{PHONY_SYNC}}
+{{DEV_TARGETS}}{{NPM_TARGETS}}{{VUE_TARGETS}}.PHONY: help check build up down ps exec logs push apply rollback clean {{PHONY_DEV}}{{PHONY_NPM}}{{PHONY_VUE}}{{PHONY_SYNC}}
 
 # run 的服务名与命令只是 make 的目标占位（解析见文件顶部 RUN_*），
 # 声明为空规则，避免 make 报 "No rule to make target 'python'" 之类错误。
