@@ -76,6 +76,7 @@ def main():
     print(f"  css_framework_install={p.css_framework_install}")
     print(f"  enable_fe_framework={p.fe_framework}"
           + (f" (Vue stack: dev only, dir={p.vue_dir}/, "
+             f"source_layout 联动 febe_separation, "
              f"node_dev_only={p.node_dev_only})" if p.vue_enabled else ""))
     if p.vue_enabled and not p.node_in_target:
         print("  注意: enable_fe_framework=vue 自动启用 Node 24，"

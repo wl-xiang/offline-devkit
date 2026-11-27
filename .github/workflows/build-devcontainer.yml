@@ -236,10 +236,15 @@ jobs:
         env:
           TARGET_CODEC: ${{ inputs.target_codec }}
           SOURCE_LAYOUT: ${{ inputs.source_layout }}
+          FE_FRAMEWORK: ${{ inputs.enable_fe_framework }}
           NGINX_MODE: ${{ inputs.nginx_mode }}
           ENABLE_SYNC_TOOL: ${{ inputs.enable_sync_tool }}
         run: |
           set -euo pipefail
+          # 有效源码布局：enable_fe_framework=vue 时联动 febe_separation（前端
+          # 固定 web/），与 lib/params.py validate() 的联动逻辑保持一致
+          LAYOUT="$SOURCE_LAYOUT"
+          if [ "$FE_FRAMEWORK" = "vue" ]; then LAYOUT="febe_separation"; fi
           echo "--- ${{ steps.build.outputs.src_name }} (top entries) ---"
           # List to a file first: piping tar into head triggers SIGPIPE (exit 2) under pipefail
           tar tzf "${{ steps.build.outputs.src_tgz }}" > /tmp/src_tgz.list
@@ -262,9 +267,9 @@ jobs:
           grep -q '^    command: \[\]$' /tmp/compose.start.tpl \
             || { echo "::error::compose 模板 app 服务缺少 command: []（清空 CMD，启动命令由 docker-run.sh 承载）"; exit 1; }
           tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/Dockerfile > /tmp/Dockerfile.check
-          # 源码布局接线：app 服务挂载默认值按 source_layout 决定（single_app=app/，
+          # 源码布局接线：app 服务挂载默认值按有效布局决定（single_app=app/，
           # febe_separation=api/，web/ 为前端目录）；febe_separation 时 compose 必须出现 web 相关路径
-          if [ "$SOURCE_LAYOUT" = "febe_separation" ]; then
+          if [ "$LAYOUT" = "febe_separation" ]; then
             grep -q 'SRC_ROOT:-../api/' /tmp/compose.start.tpl \
               || { echo "::error::febe_separation 布局 compose 挂载默认值应为 \${SRC_ROOT:-../api/}"; exit 1; }
             grep -q 'web' /tmp/compose.start.tpl \
@@ -289,7 +294,7 @@ jobs:
               || { echo "::error::nginx_binary 模式 Dockerfile 未安装 nginx"; exit 1; }
           fi
           # febe_separation 布局：web 目录占位（index.html 固有；package.json 预装 Node 时）
-          if [ "$SOURCE_LAYOUT" = "febe_separation" ]; then
+          if [ "$LAYOUT" = "febe_separation" ]; then
             grep -q 'devcontainer-src/index.html$' /tmp/src_tgz.list \
               || { echo "::error::febe_separation 布局 src 包缺少 web 占位 index.html"; exit 1; }
           fi
@@ -328,7 +333,7 @@ jobs:
           grep -q 'devcontainer-src/scripts/manifest.txt$' /tmp/src_tgz.list \
             || { echo "::error::src 包缺少 scripts/manifest.txt"; exit 1; }
           tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/scripts/manifest.txt > /tmp/manifest.txt
-          if [ "$SOURCE_LAYOUT" = "febe_separation" ]; then
+          if [ "$LAYOUT" = "febe_separation" ]; then
             grep -q 'api/$' /tmp/manifest.txt \
               || { echo "::error::febe_separation 布局 manifest 缺少 api/ 条目"; exit 1; }
             grep -q 'web/$' /tmp/manifest.txt \
@@ -467,9 +472,14 @@ jobs:
       - name: Verify install.sh (layout & wiring)
         env:
           SOURCE_LAYOUT: ${{ inputs.source_layout }}
+          FE_FRAMEWORK: ${{ inputs.enable_fe_framework }}
           NGINX_MODE: ${{ inputs.nginx_mode }}
         run: |
           set -euo pipefail
+          # 有效源码布局：enable_fe_framework=vue 时联动 febe_separation（与
+          # lib/params.py validate() 一致）
+          LAYOUT="$SOURCE_LAYOUT"
+          if [ "$FE_FRAMEWORK" = "vue" ]; then LAYOUT="febe_separation"; fi
           if [ -n "${{ steps.build.outputs.install_sh }}" ]; then
             echo "--- install.sh ---"
             test -x "${{ steps.build.outputs.install_sh }}" \
@@ -495,8 +505,8 @@ jobs:
               || { echo "::error::install.sh 缺少 -d/--default 选项"; exit 1; }
             grep -q 'INSTALL_PATH="../"' "${{ steps.build.outputs.install_sh }}" \
               || { echo "::error::install.sh 的 -d/--default 未使用默认项目根 ../"; exit 1; }
-            # 应用源码目录按 source_layout 安装（single_app=app；febe_separation=api + web）
-            if [ "$SOURCE_LAYOUT" = "febe_separation" ]; then
+            # 应用源码目录按有效布局安装（single_app=app；febe_separation=api + web）
+            if [ "$LAYOUT" = "febe_separation" ]; then
               grep -q 'APP_DIR_SRC="$INSTALL_PATH/api"' "${{ steps.build.outputs.install_sh }}" \
                 || { echo "::error::install.sh 未把后端源码放入 <项目根>/api"; exit 1; }
               grep -q 'WEB_DIR_SRC="$INSTALL_PATH/web"' "${{ steps.build.outputs.install_sh }}" \
@@ -525,7 +535,7 @@ jobs:
             grep -q 'COPY_DOCKER_FILES=("Dockerfile:Dockerfile" "Dockerfile.addon:Dockerfile.addon" "build.sh:build.sh" "docker-run.sh:docker-run.sh" "init-deps.sh:init-deps.sh")' "${{ steps.build.outputs.install_sh }}" \
               || { echo "::error::install.sh 未把 Dockerfile/addon/build.sh/docker-run.sh/init-deps.sh 安装到 <项目根>/docker/"; exit 1; }
             # requirements.txt 安装到应用源码目录（single_app=app/，febe_separation=api/）
-            LAYOUT_DIR=$([ "$SOURCE_LAYOUT" = "febe_separation" ] && echo api || echo app)
+            LAYOUT_DIR=$([ "$LAYOUT" = "febe_separation" ] && echo api || echo app)
             grep -q "COPY_APP_FILES=(\"$LAYOUT_DIR/requirements.txt:requirements.txt\")" "${{ steps.build.outputs.install_sh }}" \
               || { echo "::error::install.sh 未把 requirements.txt 安装到应用源码目录 ($LAYOUT_DIR/)"; exit 1; }
             grep -q 'INSTALL_PATH/AGENTS.md' "${{ steps.build.outputs.install_sh }}" \
@@ -913,25 +923,26 @@ jobs:
           if [ "$FE_FRAMEWORK" = "vue" ]; then
             grep -q 'vite-plus' /tmp/Dockerfile \
               || { echo "::error::vue 模式 Dockerfile 缺少 Vite+（vite-plus）"; exit 1; }
-            grep -q 'COPY vue-template/ /opt/vue-template/' /tmp/Dockerfile \
-              || { echo "::error::vue 模式 Dockerfile 缺少 vue-template 复制层"; exit 1; }
+            grep -q 'COPY docker/vue-template/ /opt/vue-template/' /tmp/Dockerfile \
+              || { echo "::error::vue 模式 Dockerfile 缺少 docker/vue-template 复制层"; exit 1; }
             grep -q 'playwright install --with-deps chromium' /tmp/Dockerfile \
               || { echo "::error::vue 模式 Dockerfile 缺少 Playwright chromium"; exit 1; }
             tar tzf "$SRC_TGZ" > /tmp/src_vue.list
-            for f in vue-template/package.json vue-template/vite.config.ts \
-                     vue-template/pnpm-workspace.yaml \
-                     vue-template/.vscode/extensions.json vue-template/.vscode/settings.json; do
+            for f in docker/vue-template/package.json docker/vue-template/vite.config.ts \
+                     docker/vue-template/pnpm-workspace.yaml \
+                     docker/vue-template/.vscode/extensions.json \
+                     docker/vue-template/.vscode/settings.json; do
               grep -q "^devcontainer-src/$f$" /tmp/src_vue.list \
                 || { echo "::error::src 包缺少 $f"; exit 1; }
             done
-            tar xzf "$SRC_TGZ" -O devcontainer-src/vue-template/.vscode/extensions.json > /tmp/vscode_ext.json
+            tar xzf "$SRC_TGZ" -O devcontainer-src/docker/vue-template/.vscode/extensions.json > /tmp/vscode_ext.json
             grep -q 'oxc.oxc-vscode' /tmp/vscode_ext.json \
               || { echo "::error::.vscode/extensions.json 未推荐 oxc.oxc-vscode"; exit 1; }
-            tar xzf "$SRC_TGZ" -O devcontainer-src/vue-template/.vscode/settings.json > /tmp/vscode_settings.json
+            tar xzf "$SRC_TGZ" -O devcontainer-src/docker/vue-template/.vscode/settings.json > /tmp/vscode_settings.json
             grep -q 'oxc.oxc-vscode' /tmp/vscode_settings.json \
               || { echo "::error::.vscode/settings.json 未把默认 formatter 设为 Oxc"; exit 1; }
             # pnpm 11+ 默认拒绝未放行的依赖构建脚本（ERR_PNPM_IGNORED_BUILDS）
-            tar xzf "$SRC_TGZ" -O devcontainer-src/vue-template/pnpm-workspace.yaml > /tmp/pnpm_ws.yaml
+            tar xzf "$SRC_TGZ" -O devcontainer-src/docker/vue-template/pnpm-workspace.yaml > /tmp/pnpm_ws.yaml
             grep -q 'allowBuilds' /tmp/pnpm_ws.yaml \
               || { echo "::error::pnpm-workspace.yaml 缺少 allowBuilds"; exit 1; }
             grep -q '@parcel/watcher' /tmp/pnpm_ws.yaml \
@@ -952,8 +963,12 @@ jobs:
             grep -q 'make vue-init' "$INSTALL_SH" \
               || { echo "::error::install.sh 缺少 Vue 初始化提示"; exit 1; }
             # 根 .gitignore / .dockerignore 需按布局目录忽略前端依赖与构建产物
-            VDIR=app
-            if [ "$SOURCE_LAYOUT" = "febe_separation" ]; then VDIR=web; fi
+            # （有效布局：vue 联动 febe_separation，与 params.py validate() 一致）
+            if [ "$FE_FRAMEWORK" = "vue" ] || [ "$SOURCE_LAYOUT" = "febe_separation" ]; then
+              VDIR=web
+            else
+              VDIR=app
+            fi
             tar xzf "$SRC_TGZ" -O devcontainer-src/.gitignore > /tmp/gitignore
             tar xzf "$SRC_TGZ" -O devcontainer-src/.dockerignore > /tmp/dockerignore
             for entry in "node_modules/" "dist/" ".vite/" "playwright-report/" "test-results/"; do
@@ -962,14 +977,14 @@ jobs:
               grep -qxF "$VDIR/$entry" /tmp/dockerignore \
                 || { echo "::error::.dockerignore 缺少 $VDIR/$entry"; exit 1; }
             done
-            # vue-template/ 是远程重建镜像的 COPY 源，不能整体忽略；
+            # docker/vue-template/ 是远程重建镜像的 COPY 源，不能整体忽略；
             # 其 node_modules/ 已由通用规则排除
-            if grep -qxF '/vue-template/' /tmp/gitignore; then
-              echo "::error::.gitignore 不能整体忽略 vue-template（随清单同步）"
+            if grep -qE '^/?docker/vue-template/$' /tmp/gitignore; then
+              echo "::error::.gitignore 不能整体忽略 docker/vue-template（随清单同步）"
               exit 1
             fi
-            if grep -qxF 'vue-template/' /tmp/dockerignore; then
-              echo "::error::.dockerignore 不能整体忽略 vue-template（联网重建镜像需 COPY）"
+            if grep -qE '^/?docker/vue-template/$' /tmp/dockerignore; then
+              echo "::error::.dockerignore 不能整体忽略 docker/vue-template（联网重建镜像需 COPY）"
               exit 1
             fi
             # prod 阶段不得包含任何前端依赖（dev-only 镜像没有 prod 阶段）
@@ -991,7 +1006,7 @@ jobs:
               exit 1
             fi
             tar tzf "$SRC_TGZ" > /tmp/src_vue.list
-            if grep -q 'devcontainer-src/vue-template/' /tmp/src_vue.list; then
+            if grep -q 'devcontainer-src/docker/vue-template/' /tmp/src_vue.list; then
               echo "::error::enable_fe_framework=none 时 src 包不应包含 vue-template"
               exit 1
             fi

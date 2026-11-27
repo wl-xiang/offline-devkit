@@ -70,6 +70,8 @@ NGINX_IMAGE = "nginx:stable"
 #   single_app = 单体服务：应用源码只在 app/ 目录（compose 默认挂载 ./app/ → /app）
 #   febe_separation = 前后端分离：后端源码在 api/（app 服务挂载 ./api/ → /app），
 #             前端源码在 web/（打包出静态产物 web/dist/ 托管到 nginx）
+# enable_fe_framework=vue 时本参数联动为 febe_separation（前端代码固定放 web/），
+# 见 validate()
 SOURCE_LAYOUT_CHOICES = ("single_app", "febe_separation")
 
 # 各布局的应用源码目录（项目根下的相对路径）：app 服务挂载其中第一个，
@@ -197,7 +199,9 @@ FRAMEWORK_VENDOR_DIR = "vendor"
 #   none = 不安装
 #   vue  = 自动启用 Node.js 24（npm + pnpm + npx），并在 **dev 镜像** 内预装
 #          Vue 3 + TypeScript + Vite Plus 完整技术栈；prod 镜像只保留后端依赖，
-#          静态产物由 nginx 托管（前端依赖不进 prod 镜像，减小体积）
+#          静态产物由 nginx 托管（前端依赖不进 prod 镜像，减小体积）。
+#          同时 source_layout 联动为 febe_separation：前端代码固定放 web/，
+#          后端放 api/（不在源码根目录散落前端目录）
 FE_FRAMEWORK_CHOICES = ("none", "vue")
 
 VUE_STACK_NAME = "Vue 3 + TypeScript + Vite Plus"
@@ -385,8 +389,9 @@ class Params:
 
     @property
     def vue_dir(self):
-        """Vue 项目目录：single_app=app/，febe_separation=web/。"""
-        return "web" if self.is_febe_separation else self.app_dir
+        """Vue 项目目录：固定 web/（enable_fe_framework=vue 时 source_layout
+        联动为 febe_separation，见 validate()——前端代码不进 app/ 或源码根目录）。"""
+        return "web"
 
     @property
     def is_febe_separation(self):
@@ -928,6 +933,10 @@ def validate(p):
     # 规范化挂载路径：去掉多余的尾部斜杠
     if len(p.app_source_dir) > 1 and p.app_source_dir != "/":
         p.app_source_dir = p.app_source_dir.rstrip("/") or "."
+    # 前端完整技术栈（enable_fe_framework 非 none）联动源码布局：前端代码按约定
+    # 只能放 web/（前后端分离），不允许散落在源码根目录或 app/
+    if p.fe_framework != "none" and p.source_layout != "febe_separation":
+        p.source_layout = "febe_separation"
     # Vue 前端技术栈只安装在 dev 镜像；prod-only 时自动补建 dev 镜像，
     # 保证 prod 镜像保持只含后端依赖（前端静态产物由 nginx 托管）
     if p.vue_enabled and not p.dev_tools_enabled:

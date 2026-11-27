@@ -47,7 +47,7 @@ ENV VP_NODE_MANAGER=no \
 # @playwright/test 与镜像内 pip 版 playwright 锁定同一版本；lockfile 与
 # node_modules 一并固化，运行期无需任何网络。
 ENV PLAYWRIGHT_BROWSERS_PATH={{VUE_PLAYWRIGHT_DIR}}
-COPY vue-template/ {{VUE_TEMPLATE_DIR}}/
+COPY docker/vue-template/ {{VUE_TEMPLATE_DIR}}/
 RUN set -eux; \
     cd {{VUE_TEMPLATE_DIR}}; \
     if command -v python3 >/dev/null 2>&1 \
