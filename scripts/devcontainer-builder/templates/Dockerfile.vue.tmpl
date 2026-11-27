@@ -1,10 +1,32 @@
 # ---- Vue 3 + TypeScript + Vite Plus 前端技术栈（enable_fe_framework=vue）----
 # 仅安装进 dev 镜像：prod 镜像只保留后端依赖，前端静态产物（dist/）由 nginx 托管。
 # 全局 CLI：构建期联网安装，运行期离线可用。
-RUN npm install -g --no-audit --no-fund --registry {{NPM_REGISTRY_URL}} \
-        {{VUE_GLOBAL_PACKAGES}} \
-    && npm cache clean --force \
-    && rm -rf /tmp/npm-cache
+#
+# JS 版 @playwright/test（前端 E2E 测试）与 pip 版 playwright（后端浏览器
+# 自动化）共存策略（enable_playwright 时两者同时安装）：
+#   1. 版本对齐：Playwright 各语言同版本号发布、浏览器 revision 完全一致。
+#      检测到镜像内已装 pip 版时，JS 版锁定同一版本号，Vue 模板
+#      package.json 同步锁定 —— chromium 在 prod 阶段只下载一次，
+#      两版共用 /opt/ms-playwright 的同一 revision，不重复占用镜像体积。
+#   2. bin 让位：pip 版 CLI 占用 /usr/local/bin/playwright（npm 会报
+#      EEXIST），全局安装 JS 版前先把它改名为 playwright-py，JS 版接管
+#      playwright 命令（同版本下 install/codegen 行为一致、下载目录相同）。
+#      仅 enable_fe_framework=vue 时发生改名，纯后端镜像不受影响。
+RUN set -eux; \
+    PW_SPEC="@playwright/test"; \
+    if command -v python3 >/dev/null 2>&1 \
+        && python3 -m pip show playwright >/dev/null 2>&1; then \
+        PW_SPEC="@playwright/test@$(python3 -m pip show playwright \
+            | awk '/^Version/{print $2}')"; \
+    fi; \
+    if [ -e /usr/local/bin/playwright ] \
+        && [ ! -L /usr/local/bin/playwright ]; then \
+        mv /usr/local/bin/playwright /usr/local/bin/playwright-py; \
+    fi; \
+    npm install -g --no-audit --no-fund --registry {{NPM_REGISTRY_URL}} \
+        {{VUE_GLOBAL_PACKAGES}} ${PW_SPEC}; \
+    npm cache clean --force; \
+    rm -rf /tmp/npm-cache
 
 # Vite+ 默认会接管 Node 版本与包管理器管理（可能联网下载 Node）；
 # 容器内 Node 已固定为 24，按官方文档用环境变量关闭托管模式，运行期保持离线。
@@ -12,12 +34,22 @@ ENV VP_NODE_MANAGER=no \
     VP_PM_MANAGER=no
 
 # 预构建 Vue 项目模板（含 node_modules），make vue-init 离线复制到前端目录。
-# package.json 使用 latest，版本在构建期解析；lockfile 与 node_modules 一并固化，
-# 运行期无需任何网络。
+# package.json 使用 latest，版本在构建期解析；enable_playwright 时
+# @playwright/test 与镜像内 pip 版 playwright 锁定同一版本；lockfile 与
+# node_modules 一并固化，运行期无需任何网络。
 ENV PLAYWRIGHT_BROWSERS_PATH={{VUE_PLAYWRIGHT_DIR}}
 COPY vue-template/ {{VUE_TEMPLATE_DIR}}/
 RUN set -eux; \
     cd {{VUE_TEMPLATE_DIR}}; \
+    if command -v python3 >/dev/null 2>&1 \
+        && python3 -m pip show playwright >/dev/null 2>&1; then \
+        export PW_VERSION="$(python3 -m pip show playwright \
+            | awk '/^Version/{print $2}')"; \
+        node -e "const fs=require('fs'); \
+            const j=JSON.parse(fs.readFileSync('package.json')); \
+            j.devDependencies['@playwright/test']=process.env.PW_VERSION; \
+            fs.writeFileSync('package.json', JSON.stringify(j, null, 2) + '\n')"; \
+    fi; \
     pnpm install --no-frozen-lockfile --registry {{NPM_REGISTRY_URL}}; \
     node -e "const fs=require('fs'); \
         const vp=require('./node_modules/vite-plus/package.json'); \
