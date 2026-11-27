@@ -8,6 +8,9 @@
 #      检测到镜像内已装 pip 版时，JS 版锁定同一版本号，Vue 模板
 #      package.json 同步锁定 —— chromium 在 prod 阶段只下载一次，
 #      两版共用 /opt/ms-playwright 的同一 revision，不重复占用镜像体积。
+#      兜底：npm 与 PyPI 偶发版本错位（如 npm 仅发 1.65.1、PyPI 已发
+#      1.65.2），锁定前用 npm view 校验该版本在 npm 上存在，缺失则
+#      回退 npm latest（patch 版本间浏览器 revision 通常一致）。
 #   2. bin 让位：pip 版 CLI 占用 /usr/local/bin/playwright（npm 会报
 #      EEXIST），全局安装 JS 版前先把它改名为 playwright-py，JS 版接管
 #      playwright 命令（同版本下 install/codegen 行为一致、下载目录相同）。
@@ -16,8 +19,14 @@ RUN set -eux; \
     PW_SPEC="@playwright/test"; \
     if command -v python3 >/dev/null 2>&1 \
         && python3 -m pip show playwright >/dev/null 2>&1; then \
-        PW_SPEC="@playwright/test@$(python3 -m pip show playwright \
+        PW_VERSION="$(python3 -m pip show playwright \
             | awk '/^Version/{print $2}')"; \
+        if npm view "@playwright/test@${PW_VERSION}" version \
+            --registry {{NPM_REGISTRY_URL}} >/dev/null 2>&1; then \
+            PW_SPEC="@playwright/test@${PW_VERSION}"; \
+        else \
+            echo "WARN: npm registry 无 @playwright/test@${PW_VERSION}，回退 latest"; \
+        fi; \
     fi; \
     if [ -e /usr/local/bin/playwright ] \
         && [ ! -L /usr/local/bin/playwright ]; then \
@@ -45,6 +54,12 @@ RUN set -eux; \
         && python3 -m pip show playwright >/dev/null 2>&1; then \
         export PW_VERSION="$(python3 -m pip show playwright \
             | awk '/^Version/{print $2}')"; \
+        if ! npm view "@playwright/test@${PW_VERSION}" version \
+            --registry {{NPM_REGISTRY_URL}} >/dev/null 2>&1; then \
+            export PW_VERSION="$(npm view @playwright/test version \
+                --registry {{NPM_REGISTRY_URL}})"; \
+            echo "WARN: npm registry 无 pip 版对应 @playwright/test，package.json 回退 latest（${PW_VERSION}）"; \
+        fi; \
         node -e "const fs=require('fs'); \
             const j=JSON.parse(fs.readFileSync('package.json')); \
             j.devDependencies['@playwright/test']=process.env.PW_VERSION; \
