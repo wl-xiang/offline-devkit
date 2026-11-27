@@ -76,7 +76,7 @@ make up (docker-run.sh 预置入口)
 |------|------|------------|--------|------|
 | `platform` | choice | `linux-amd64` / `linux-arm64` | `linux-amd64` | 目标平台（需与内网机器 CPU 架构一致） |
 | `target_codec` | choice | `python3.13` / `python3.13 + node24(npm+pnpm+npx)` / `golang1.26` / `golang1.26 + node24(npm+pnpm+npx)` / `python3.13 + golang1.26` / `python3.13 + golang1.26 + node24(npm+pnpm+npx)` | `python3.13` | 预装语言环境：Python 固定 3.13、Go 固定 1.26、Node 固定 24，`node24` = npm + 全局 pnpm + npx；纯 golang 变体无 Python/pip（基础镜像 `golang:1.26-slim-bookworm`），python+go 组合在 `python:3.13-slim-bookworm` 基础上复制 Go 工具链 |
-| `source_layout` | choice | `single` / `api_web` | `single` | 源码布局：`single` = 单体服务，应用源码只在 `app/`（compose 默认挂载 `./app/` → `/app`）；`api_web` = 前后端分离，后端在 `api/`（挂载 `/app`），前端在 `web/`（构建产物输出到 `web/dist/`，nginx_mode 启用时由 nginx 托管）。`api_web` 时 install.sh 额外创建 `web/` 并放置占位 `index.html`（预装 Node 时含 `package.json`） |
+| `source_layout` | choice | `single` / `api_web` | `single` | 源码布局：`single` = 单体服务，应用源码只在 `app/`（compose 默认挂载 `./app/` → `/app`）；`api_web` = 前后端分离，后端在 `api/`（挂载 `/app`），前端在 `web/`（构建产物输出到 `web/dist/`，nginx_mode 启用时由 nginx 托管）。`api_web` 时 install.sh 额外创建 `web/` 并放置占位 `index.html`（预装 Node 时含 `package.json`）。`enable_fe_framework=vue` 时本参数联动为前后端分离（前端代码固定放 `web/`） |
 | `pip_packages` | string | 用 `$` 分隔，如 `numpy$pandas$requests` | 空 | 附加 pip 包（空 = 无附加依赖；需要 target_codec 预装 Python） |
 | `apt_packages` | string | 空格分隔，如 `git vim curl` | 空 | 镜像内安装的 APT 工具 |
 | `custom_install_cmd` | string | shell 命令 | 空 | 个性化安装命令，在镜像内 `RUN` 执行 |
@@ -86,7 +86,7 @@ make up (docker-run.sh 预置入口)
 | `npm_packages` | string | 用 `$` 分隔，如 `vite$webpack$webpack-cli$vue$react` | 空 | 构建期全局安装的 npm 包（需要 target_codec 含 node24；构建机联网安装，内网容器可直接使用） |
 | `npm_packages_dir` | string | 相对/绝对路径 | `deps/packages` | **Npm Download 产物所在目录**：把该工作流产出的 `packages/` 内容（`*.tgz` + `package.json`）放这里，compose 会把它只读挂载到容器 `/opt/npm-packages`，供 `make npm-install` 或 `bash build.sh` 一键离线安装前端依赖。相对项目根或绝对路径（需 target_codec 含 node24） |
 | `css_framework_install` | choice | `none` / `bootstrap_pack_in_artifact` / `bootstrap_install_via_npm` / `tailwind_pack_in_artifact` / `tailwind_install_via_npm` | `none` | 预装前端框架（版本固定拉最新版）：`bootstrap` / `tailwind` 各有 `*_pack_in_artifact`（构建期下载离线 tgz 随 Artifact 分发，install.sh 解压到 `<项目根>/src/vendor/`）与 `*_install_via_npm`（镜像内 npm 全局安装）两种方式，详见「前端框架预装」；`*_install_via_npm` 需要 target_codec 含 node24 |
-| `enable_fe_framework` | choice | `none` / `vue` | `none` | 前端完整技术栈：`vue` 时**自动启用 Node.js 24**（npm+pnpm+npx），并只在 **dev 镜像**预装 Vue 3 + TypeScript + Vite Plus 完整技术栈（Element Plus / Pinia / Vue Router / VueUse / Tailwind v4 / Reka UI + shadcn-vue / TipTap / Playwright 等，含 `node_modules`）。prod 镜像只保留后端依赖，前端 `dist/` 由 nginx 托管；`image_mode=prod-only` 时自动补建 dev 镜像。`enable_playwright` 同开时 JS 版 `@playwright/test` 与 pip 版 playwright 版本对齐并共用 chromium（pip 版 CLI 改名 `playwright-py`） |
+| `enable_fe_framework` | choice | `none` / `vue` | `none` | 前端完整技术栈：`vue` 时**自动启用 Node.js 24**（npm+pnpm+npx），并只在 **dev 镜像**预装 Vue 3 + TypeScript + Vite Plus 完整技术栈（Element Plus / Pinia / Vue Router / VueUse / Tailwind v4 / Reka UI + shadcn-vue / TipTap / Playwright 等，含 `node_modules`）。同时 **`source_layout` 联动为 `febe_separation`**：前端模板由 `make vue-init` 初始化到 `web/`（不在源码根目录或 `app/`），Vue 模板骨架随 `docker/vue-template/` 分发。prod 镜像只保留后端依赖，前端 `dist/` 由 nginx 托管；`image_mode=prod-only` 时自动补建 dev 镜像。`enable_playwright` 同开时 JS 版 `@playwright/test` 与 pip 版 playwright 版本对齐并共用 chromium（pip 版 CLI 改名 `playwright-py`） |
 | `nginx_mode` | choice | `none` / `nginx_binary` / `nginx_service` | `none` | nginx 托管：`none` 不启用；`nginx_binary` 把 nginx 经 APT 装进镜像（docker-run.sh 启动时拉起，对外端口复用 `app_port`，容器内监听 80）；`nginx_service` 启动独立 nginx compose 服务（`nginx:stable`，宿主机 8080 → 容器 80）。启用时项目根生成 `nginx/default.conf` 配置模板（`api_web` 布局默认 `/api/` 反代后端、`/` 托管 `web/dist` 静态产物）；web 一律打包静态文件托管到 nginx |
 | `enable_db` | choice | `none` / `postgres16` / `mysql8.4` / `mongo9` | `none` | 外挂数据库服务（nginx 由 `nginx_mode` 单独配置，不在本参数中）：任选一个 DB；含 DB 时 app 服务自动 `depends_on` 该 DB 并等待健康检查通过 |
 | `image_mode` | choice | `prod+dev` / `prod-only` / `dev-only` | `prod-only` | `prod+dev`：同时构建 prod 与 dev 镜像；`prod-only`：只构建 prod；`dev-only`：只构建 dev 镜像并用于部署（镜像归档只含该镜像） |
@@ -648,19 +648,22 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
 
 ## Vue 前端技术栈（enable_fe_framework）
 
-`enable_fe_framework=vue` 会**自动启用 Node.js 24**（npm + pnpm + npx），并在
-**dev 镜像**中预装完整的 Vue 3 + TypeScript + Vite Plus 技术栈；prod 镜像只保留
-后端依赖，前端静态产物 `dist/` 由 nginx 托管。
+`enable_fe_framework=vue` 会**自动启用 Node.js 24**（npm + pnpm + npx），并把
+**`source_layout` 联动为 `febe_separation`**（前端代码按约定固定放 `web/`，
+后端在 `api/`），同时在 **dev 镜像**中预装完整的 Vue 3 + TypeScript + Vite Plus
+技术栈；prod 镜像只保留后端依赖，前端静态产物 `dist/` 由 nginx 托管。
 
 - **Node 自动启用**：即使 `target_codec` 不含 `node24`，选择 `vue` 也会安装
   Node 24；由 Vue 自动带出的 Node 只装进 dev 镜像（`target_codec` 显式含
   `node24` 时保持既有行为：prod/dev 都带 Node）。
+- **布局联动**：无论 `source_layout` 传什么，`vue` 一律按 `febe_separation`
+  生效——后端源码在 `api/`、前端在 `web/`，源码根目录不出现散落的前端目录。
 - **dev 镜像必建**：`image_mode=prod-only` 时会自动补建 dev 镜像，因此
   `make vue-init` / `vue-dev` / `vue-build` 始终可用。
 - **依赖落地**：构建期在 dev 镜像内生成 `/opt/vue-template` 并执行
   `pnpm install`，`node_modules` 一并固化，运行期完全离线。
-- **初始化**：`make vue-init` 把模板复制到前端源码目录（`single_app` → `app/`，
-  `febe_separation` → `web/`；已存在 `package.json` 时跳过）。
+- **初始化**：`make vue-init` 把模板复制到前端目录 `web/`（已存在
+  `package.json` 时跳过）。
 - **常用命令**：
   ```bash
   make vue-init     # 初始化模板（含 node_modules）
@@ -681,17 +684,16 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
   `/opt/ms-playwright` 的同一 revision，只下载一次。`enable_playwright`
   开启时 `playwright` 命令为 JS 版 CLI，pip 版 CLI 为 `playwright-py`
   （如 `playwright-py codegen`）；项目内测试统一走 `pnpm exec playwright`。
-- **静态托管**：`febe_separation` 布局产物在 `web/dist`，启用 nginx 时由 nginx
-  托管；`single_app` 布局产物在 `app/dist`，请由后端或自定义 nginx 规则托管。
+- **静态托管**：前端产物在 `web/dist`（`vue` 联动 `febe_separation` 布局），
+  启用 nginx 时由 nginx 托管。
 - **编辑器**：模板自带 `.vscode/extensions.json`（推荐 `oxc.oxc-vscode`）与
   `.vscode/settings.json`（默认 formatter 为 Oxc）。
 - **环境变量**：仅 `VITE_` 前缀暴露给客户端（模板提供 `.env.example`）。
-- **忽略规则**：生成的根 `.gitignore` / `.dockerignore` 会按布局自动追加
-  `app/`（`single_app`）或 `web/`（`febe_separation`）下的 `node_modules/`、
-  `dist/`、`.vite/`、`coverage/`、`playwright-report/`、`test-results/`、
-  `*.tsbuildinfo` 与本地 `.env.local` 等；`vue-template/` 目录本身不整体忽略
-  （随同步清单分发，供联网重建镜像 `COPY`），其中预装的 `node_modules/`
-  由通用规则排除。
+- **忽略规则**：生成的根 `.gitignore` / `.dockerignore` 会按 `web/` 自动追加
+  `node_modules/`、`dist/`、`.vite/`、`coverage/`、`playwright-report/`、
+  `test-results/`、`*.tsbuildinfo` 与本地 `.env.local` 等；Vue 模板骨架放在
+  `docker/vue-template/`（不占用源码根目录），该目录本身不整体忽略（随同步
+  清单分发，供联网重建镜像 `COPY`），其中预装的 `node_modules/` 由通用规则排除。
 - **pnpm 兼容**：pnpm 11+ 默认拒绝未放行的依赖构建脚本
   （`ERR_PNPM_IGNORED_BUILDS`）。模板在 `pnpm-workspace.yaml` 中用
   `allowBuilds` 放行 `@parcel/watcher`，并把 Vite+ 的 `vite` / `vitest`

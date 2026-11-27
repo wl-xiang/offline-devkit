@@ -187,7 +187,8 @@ _NPM_PHONY = "npm-install npm-version "
 
 # Vue 前端技术栈（enable_fe_framework=vue）：make 目标。Vue 依赖只安装在 dev
 # 镜像，项目模板固定在镜像内 VUE_TEMPLATE_DIR（含 node_modules），
-# make vue-init 离线复制到前端源码目录（single_app=app/，febe_separation=web/）。
+# make vue-init 离线复制到前端目录 web/（enable_fe_framework=vue 时
+# source_layout 联动 febe_separation，前端代码固定放 web/）。
 _VUE_MAKE_TARGETS = """\
 VUE_PORT ?= 5173
 
@@ -498,9 +499,8 @@ def manifest_entries(p):
     entries += ["docs/", "scripts/", "docker/"]
     if p.enable_nginx:
         entries.append("nginx/")
-    if p.vue_enabled:
-        # Vue 模板源码骨架：联网重建 Dockerfile 的 COPY 依赖，随清单同步
-        entries.append("vue-template/")
+    # Vue 模板骨架已并入 docker/（docker/vue-template/，联网重建 Dockerfile 的
+    # COPY 源），随 docker/ 条目同步，不再单列
     entries += list(MANIFEST_ROOT_FILES)
     return entries
 
@@ -1090,8 +1090,8 @@ def _vue_dockerignore_block(p):
         f"{d}/*.tsbuildinfo\n"
         f"{d}/.env.local\n"
         f"{d}/.env.*.local\n"
-        "# vue-template/ 的源码需保留给 COPY（联网重建镜像）；仅排除其预装依赖\n"
-        "vue-template/node_modules/\n"
+        "# docker/vue-template/ 的源码需保留给 COPY（联网重建镜像）；仅排除其预装依赖\n"
+        "docker/vue-template/node_modules/\n"
     )
 
 
@@ -2174,11 +2174,12 @@ def render_all(p, staging):
         (nginx_dir / "default.conf").write_text(
             render_nginx_conf(p), encoding="utf-8"
         )
-    # Vue 项目模板（enable_fe_framework=vue）：作为 dev 镜像构建上下文，
-    # Dockerfile COPY 到 /opt/vue-template 并在构建期 pnpm install（含 node_modules）；
-    # make vue-init 在运行期离线复制到前端源码目录。
+    # Vue 项目模板（enable_fe_framework=vue）：作为 dev 镜像构建上下文的
+    # docker/vue-template/（不落在源码根目录，避免前端目录散落在项目根），
+    # Dockerfile COPY 到 /opt/vue-template 并在构建期 pnpm install（含
+    # node_modules）；make vue-init 在运行期离线复制到 web/。
     if p.vue_enabled:
-        shutil.copytree(
-            TEMPLATES_DIR / "vue", staging / "vue-template", dirs_exist_ok=True
-        )
+        vue_ctx = staging / "docker" / "vue-template"
+        vue_ctx.parent.mkdir(exist_ok=True)
+        shutil.copytree(TEMPLATES_DIR / "vue", vue_ctx, dirs_exist_ok=True)
     return files

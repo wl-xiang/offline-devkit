@@ -426,10 +426,10 @@ if [ -e "$INSTALL_PATH/AGENTS.md" ]; then
     echo "  请先移动/重命名后重试。"
     fail=1
 fi
-# Vue 模板（enable_fe_framework=vue）：项目根 vue-template/ 供联网重建
-# Dockerfile 的 COPY 使用（运行期 make vue-init 使用镜像内预装模板）
-if [ "{{VUE_ENABLED}}" = "1" ] && [ -e "$INSTALL_PATH/vue-template" ]; then
-    err "$INSTALL_PATH/vue-template 已存在，避免覆盖你自己的文件，安装终止。"
+# Vue 模板骨架（enable_fe_framework=vue）：docker/vue-template/ 供联网重建
+# Dockerfile 的 COPY 使用（运行期 make vue-init 使用镜像内预装模板初始化到 web/）
+if [ "{{VUE_ENABLED}}" = "1" ] && [ -e "$DOCKER_DIR/vue-template" ]; then
+    err "$DOCKER_DIR/vue-template 已存在，避免覆盖你自己的文件，安装终止。"
     echo "  请先移动/重命名后重试。"
     fail=1
 fi
@@ -538,13 +538,13 @@ step "安装项目根 AGENTS.md"
 cp "$DEST/AGENTS.md" "$INSTALL_PATH/AGENTS.md"
 ok "已创建 $INSTALL_PATH/AGENTS.md（AI Agent 使用约定）"
 
-# Vue 模板（仅 enable_fe_framework=vue）：项目根 vue-template/ 供联网重建
-# Dockerfile 的 COPY 使用；运行期 make vue-init 使用 dev 镜像内预装模板（含
-# node_modules），不依赖这里的副本。
+# Vue 模板骨架（仅 enable_fe_framework=vue）：docker/vue-template/ 供联网重建
+# Dockerfile 的 COPY 使用（随 docker/ 目录分发，不在源码根目录）；运行期
+# make vue-init 使用 dev 镜像内预装模板（含 node_modules）初始化到 web/。
 if [ "{{VUE_ENABLED}}" = "1" ]; then
-    step "安装 Vue 模板目录（联网重建 Dockerfile 的构建上下文）"
-    cp -a "$DEST/vue-template" "$INSTALL_PATH/vue-template"
-    ok "已创建 $INSTALL_PATH/vue-template（仅源码骨架；make vue-init 从镜像内模板初始化，含 node_modules）"
+    step "安装 Vue 模板骨架到 docker/（联网重建 Dockerfile 的 COPY 源）"
+    cp -a "$DEST/docker/vue-template" "$DOCKER_DIR/vue-template"
+    ok "已创建 $DOCKER_DIR/vue-template（仅源码骨架；make vue-init 从镜像内模板初始化到 web/，含 node_modules）"
 fi
 
 # 部署辅助脚本：包内 scripts/ -> <根>/scripts/（Makefile 的 push/apply/
