@@ -711,9 +711,17 @@ def _vue_block(p):
     """
     if not p.vue_enabled:
         return ""
+    # enable_playwright 时 pip 版 playwright 已在 prod 阶段占用了
+    # /usr/local/bin/playwright；JS 版 @playwright/test 的同名 bin 会让
+    # npm install -g 报 EEXIST。此时不再全局安装 JS CLI——Vue 项目模板的
+    # devDependencies 已含 @playwright/test，pnpm exec playwright 在项目内可用。
+    global_packages = tuple(
+        pkg for pkg in VUE_GLOBAL_CLI_PACKAGES
+        if not (p.enable_playwright and pkg == "@playwright/test")
+    )
     return _sub(_load("Dockerfile.vue.tmpl"), {
         "NPM_REGISTRY_URL": p.npm_registry_url,
-        "VUE_GLOBAL_PACKAGES": " ".join(VUE_GLOBAL_CLI_PACKAGES),
+        "VUE_GLOBAL_PACKAGES": " ".join(global_packages),
         "VUE_TEMPLATE_DIR": VUE_TEMPLATE_DIR,
         "VUE_PLAYWRIGHT_DIR": VUE_PLAYWRIGHT_DIR,
     })
