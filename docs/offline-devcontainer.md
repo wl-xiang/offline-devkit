@@ -80,13 +80,13 @@ make up (docker-run.sh 预置入口)
 | `pip_packages` | string | 用 `$` 分隔，如 `numpy$pandas$requests` | 空 | 附加 pip 包（空 = 无附加依赖；需要 target_codec 预装 Python） |
 | `apt_packages` | string | 空格分隔，如 `git vim curl` | 空 | 镜像内安装的 APT 工具 |
 | `custom_install_cmd` | string | shell 命令 | 空 | 个性化安装命令，在镜像内 `RUN` 执行 |
-| `enable_playwright` | boolean | — | `false` | 预装 Playwright（pip 包 + chromium 浏览器，有头/无头共用同一浏览器；浏览器固定在 `/opt/ms-playwright`，CLI 全局安装，容器内任意用户可用）。需要 target_codec 预装 Python |
+| `enable_playwright` | boolean | — | `false` | 预装 Playwright（pip 包 + chromium 浏览器，有头/无头共用同一浏览器；浏览器固定在 `/opt/ms-playwright`，CLI 全局安装，容器内任意用户可用）。需要 target_codec 预装 Python。与 `enable_fe_framework=vue` 同开时：JS 版 `@playwright/test` 按 pip 版同一版本号安装并共用同一份 chromium（不重复下载），pip 版 CLI 改名 `playwright-py`，`playwright` 命令归 JS 版 |
 | `enable_oracle_instantclient` | choice | `none` / `runtime_deps_only` / `full` | `none` | Oracle Instant Client 19 安装模式：`none` 不安装；`runtime_deps_only` 只装运行依赖（`libaio1`/`libnsl2`）+ `oracledb==2.5.1` + 环境变量，客户端本体由 compose 从宿主机只读挂载到 `/opt/oracle/instantclient19`（多容器共用）；`full` 完整安装，构建期从 Oracle 官方直链下载 Basic 包解压进镜像（客户端随镜像分发，无需挂载）。需要 target_codec 预装 Python |
 | `preset_envs` | string | 用单个 `》` 分隔，如 `DB_HOST=10.0.0.1》DB_PORT=1521` | 空 | 预设环境变量，注入 app 与 dev 服务（同名值覆盖 Oracle 默认变量；值按字面量处理，`$` 无需转义） |
 | `npm_packages` | string | 用 `$` 分隔，如 `vite$webpack$webpack-cli$vue$react` | 空 | 构建期全局安装的 npm 包（需要 target_codec 含 node24；构建机联网安装，内网容器可直接使用） |
 | `npm_packages_dir` | string | 相对/绝对路径 | `deps/packages` | **Npm Download 产物所在目录**：把该工作流产出的 `packages/` 内容（`*.tgz` + `package.json`）放这里，compose 会把它只读挂载到容器 `/opt/npm-packages`，供 `make npm-install` 或 `bash build.sh` 一键离线安装前端依赖。相对项目根或绝对路径（需 target_codec 含 node24） |
 | `css_framework_install` | choice | `none` / `bootstrap_pack_in_artifact` / `bootstrap_install_via_npm` / `tailwind_pack_in_artifact` / `tailwind_install_via_npm` | `none` | 预装前端框架（版本固定拉最新版）：`bootstrap` / `tailwind` 各有 `*_pack_in_artifact`（构建期下载离线 tgz 随 Artifact 分发，install.sh 解压到 `<项目根>/src/vendor/`）与 `*_install_via_npm`（镜像内 npm 全局安装）两种方式，详见「前端框架预装」；`*_install_via_npm` 需要 target_codec 含 node24 |
-| `enable_fe_framework` | choice | `none` / `vue` | `none` | 前端完整技术栈：`vue` 时**自动启用 Node.js 24**（npm+pnpm+npx），并只在 **dev 镜像**预装 Vue 3 + TypeScript + Vite Plus 完整技术栈（Element Plus / Pinia / Vue Router / VueUse / Tailwind v4 / Reka UI + shadcn-vue / TipTap / Playwright 等，含 `node_modules`）。prod 镜像只保留后端依赖，前端 `dist/` 由 nginx 托管；`image_mode=prod-only` 时自动补建 dev 镜像 |
+| `enable_fe_framework` | choice | `none` / `vue` | `none` | 前端完整技术栈：`vue` 时**自动启用 Node.js 24**（npm+pnpm+npx），并只在 **dev 镜像**预装 Vue 3 + TypeScript + Vite Plus 完整技术栈（Element Plus / Pinia / Vue Router / VueUse / Tailwind v4 / Reka UI + shadcn-vue / TipTap / Playwright 等，含 `node_modules`）。prod 镜像只保留后端依赖，前端 `dist/` 由 nginx 托管；`image_mode=prod-only` 时自动补建 dev 镜像。`enable_playwright` 同开时 JS 版 `@playwright/test` 与 pip 版 playwright 版本对齐并共用 chromium（pip 版 CLI 改名 `playwright-py`） |
 | `nginx_mode` | choice | `none` / `nginx_binary` / `nginx_service` | `none` | nginx 托管：`none` 不启用；`nginx_binary` 把 nginx 经 APT 装进镜像（docker-run.sh 启动时拉起，对外端口复用 `app_port`，容器内监听 80）；`nginx_service` 启动独立 nginx compose 服务（`nginx:stable`，宿主机 8080 → 容器 80）。启用时项目根生成 `nginx/default.conf` 配置模板（`api_web` 布局默认 `/api/` 反代后端、`/` 托管 `web/dist` 静态产物）；web 一律打包静态文件托管到 nginx |
 | `enable_db` | choice | `none` / `postgres16` / `mysql8.4` / `mongo9` | `none` | 外挂数据库服务（nginx 由 `nginx_mode` 单独配置，不在本参数中）：任选一个 DB；含 DB 时 app 服务自动 `depends_on` 该 DB 并等待健康检查通过 |
 | `image_mode` | choice | `prod+dev` / `prod-only` / `dev-only` | `prod-only` | `prod+dev`：同时构建 prod 与 dev 镜像；`prod-only`：只构建 prod；`dev-only`：只构建 dev 镜像并用于部署（镜像归档只含该镜像） |
@@ -676,6 +676,11 @@ vite / webpack / vue / react 等前端框架的离线开发。与 **Npm Download
   （Rolldown / Oxlint / Oxfmt / Vitest / Vite Task）、`vue-tsc`、
   `@vue/test-utils`、Stylelint、Commitlint、Playwright（chromium 下载到
   `/opt/ms-playwright`）、`rollup-plugin-visualizer`。
+- **Playwright 共存**：JS 版 `@playwright/test`（前端 E2E）与 pip 版
+  `playwright`（后端浏览器自动化）版本对齐安装，chromium 共用
+  `/opt/ms-playwright` 的同一 revision，只下载一次。`enable_playwright`
+  开启时 `playwright` 命令为 JS 版 CLI，pip 版 CLI 为 `playwright-py`
+  （如 `playwright-py codegen`）；项目内测试统一走 `pnpm exec playwright`。
 - **静态托管**：`febe_separation` 布局产物在 `web/dist`，启用 nginx 时由 nginx
   托管；`single_app` 布局产物在 `app/dist`，请由后端或自定义 nginx 规则托管。
 - **编辑器**：模板自带 `.vscode/extensions.json`（推荐 `oxc.oxc-vscode`）与
