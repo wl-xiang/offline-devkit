@@ -444,15 +444,15 @@ jobs:
           if [ -n "${{ steps.build.outputs.images_txt }}" ]; then
             test -s "${{ steps.build.outputs.images_txt }}" \
               || { echo "::error::images.txt 未生成"; exit 1; }
-            # images.txt 必须覆盖归档内的全部镜像（Makefile IMAGES 同源）
+            # images.txt 必须覆盖归档内的全部镜像（Makefile IMAGES 同源）。
+            # IMAGES := 为单行空格分隔的多镜像清单，须按词拆分逐一核对
+            # （不能按行迭代，否则整行被当作一个镜像名导致误报）
             tar xzf "${{ steps.build.outputs.src_tgz }}" -O devcontainer-src/Makefile > /tmp/Makefile.imgs
             imgs_make=$(grep -s '^IMAGES := ' /tmp/Makefile.imgs | sed 's/^IMAGES := //')
-            while IFS= read -r img; do
-              [ -n "$img" ] || continue
-              case "$img" in '#'*) continue ;; esac
+            for img in $imgs_make; do
               grep -qxF "$img" "${{ steps.build.outputs.images_txt }}" \
                 || { echo "::error::images.txt 缺少镜像: $img"; exit 1; }
-            done <<< "$imgs_make"
+            done
             echo "--- images.txt ---"
             cat "${{ steps.build.outputs.images_txt }}"
           else
