@@ -228,6 +228,10 @@ manylinux 平台标签 + `--python-version` 交叉下载 + 镜像源），但**�
   `playwright install --with-deps chromium`（有头/无头共用同一浏览器；
   `PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright` 固定浏览器目录，容器内
   任意用户可用，playwright CLI 全局安装于 /usr/local/bin）。
+  与 `enable_fe_framework=vue` 同开时，JS 版 `@playwright/test` 按 pip 版
+  同一版本号全局安装（两版共用 /opt/ms-playwright 的同一 chromium，
+  不重复下载），pip 版 CLI 改名为 `playwright-py`，`playwright` 命令归
+  JS 版（详见 Dockerfile.vue.tmpl 内注释）。
 - **预设环境变量**：`preset_envs`（单个 `》` 分隔的 `KEY=VALUE`）渲染为 compose
   app/dev 服务的 `environment`；与 Oracle 默认变量合并（同名覆盖），值中的
   `$` 转义为 `$$` 保证按字面量注入。

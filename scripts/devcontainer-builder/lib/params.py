@@ -203,13 +203,15 @@ FE_FRAMEWORK_CHOICES = ("none", "vue")
 VUE_STACK_NAME = "Vue 3 + TypeScript + Vite Plus"
 
 # 全局安装的 Vue 工具链 CLI（构建期联网安装，运行期离线可用）
+# 注意：@playwright/test 不在此清单——由 Dockerfile.vue.tmpl 检测镜像内 pip 版
+# playwright 并按同一版本号追加安装，保证 JS/pip 两版共用同一份 chromium
+# （/opt/ms-playwright）且 /usr/local/bin/playwright bin 不冲突（详见模板注释）。
 VUE_GLOBAL_CLI_PACKAGES = (
     "vite-plus",
     "vue-tsc",
     "stylelint",
     "@commitlint/cli",
     "@commitlint/config-conventional",
-    "@playwright/test",
     "rollup-plugin-visualizer",
     "shadcn-vue",
     "tailwindcss",

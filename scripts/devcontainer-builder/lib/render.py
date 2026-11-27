@@ -708,6 +708,10 @@ def _vue_block(p):
 
     只插入 dev 镜像阶段：全局 CLI + 预构建 /opt/vue-template（含 node_modules）。
     prod 镜像保持只含后端依赖，前端静态产物由 nginx 托管。
+
+    @playwright/test 不走 VUE_GLOBAL_CLI_PACKAGES：由 Dockerfile.vue.tmpl
+    检测镜像内 pip 版 playwright 并按同一版本号追加（两版共用 chromium，
+    且避免 /usr/local/bin/playwright bin 冲突），详见模板内注释。
     """
     if not p.vue_enabled:
         return ""

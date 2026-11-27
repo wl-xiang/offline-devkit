@@ -24,3 +24,12 @@ pnpm analyze        # 构建分析报告 dist/stats.html
 
 环境变量只暴露 `VITE_` 前缀（见 `.env.example`）。VS Code 默认 formatter 为 Oxc
 （`.vscode/settings.json`），推荐安装 `oxc.oxc-vscode`。
+
+## Playwright 说明
+
+- 本项目的 `@playwright/test`（JS 版，前端 E2E 测试）与镜像内 pip 安装的
+  `playwright`（Python 版，后端浏览器自动化）**版本对齐**，chromium 共用
+  `/opt/ms-playwright` 的同一 revision，不会重复下载。
+- 项目内测试统一走 `pnpm exec playwright`（即 `pnpm test:e2e`）。
+- 全局命令 `playwright` 为 JS 版 CLI；镜像同时启用 pip Playwright 时，
+  Python 版 CLI 为 `playwright-py`（如 `playwright-py codegen`）。
