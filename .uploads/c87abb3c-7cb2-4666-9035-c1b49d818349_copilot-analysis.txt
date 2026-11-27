@@ -1,0 +1,22 @@
+The ARM64 dev image build failed while running `npm install -g` during Docker step `[dev 7/11]`.
+
+The immediate error is:
+
+```text
+npm error code EEXIST
+npm error path /usr/local/bin/playwright
+npm error EEXIST: file already exists
+```
+
+NPM is trying to install `@playwright/test` and create the global `/usr/local/bin/playwright` executable, but that file already exists—likely due to another package or Playwright installation in the base image.
+
+Deprecated-package warnings are unrelated and non-fatal. The fix is to remove or account for the existing executable before installing these packages, for example:
+
+```dockerfile
+RUN rm -f /usr/local/bin/playwright \
+    && npm install -g --no-audit --no-fund --registry https://registry.npmjs.org \
+       vite-plus vue-tsc stylelint @commitlint/cli @commitlint/config-conventional \
+       @playwright/test rollup-plugin-visualizer shadcn-vue tailwindcss @tailwindcss/cli
+```
+
+Alternatively, use `npm install -g --force ...`, although removing the specific conflicting file is safer.
